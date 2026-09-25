@@ -165,6 +165,16 @@ fn write_flutter_package_config(
     project_root: &Path,
     pub_cache: &Path,
 ) -> MgResult<()> {
+    let (sdk_root, _) = crate::manifest::flutter::flutter_sdk_packages(project_root)?;
+    write_flutter_package_config_with_sdk_root(graph, project_root, pub_cache, sdk_root.as_deref())
+}
+
+fn write_flutter_package_config_with_sdk_root(
+    graph: &ResolvedGraph,
+    project_root: &Path,
+    pub_cache: &Path,
+    sdk_root: Option<&Path>,
+) -> MgResult<()> {
     let config_dir = project_root.join(".dart_tool");
     match std::fs::symlink_metadata(&config_dir) {
         Ok(meta) if meta.file_type().is_symlink() || !meta.is_dir() => {
@@ -173,18 +183,18 @@ fn write_flutter_package_config(
             ));
         }
         Ok(_) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            std::fs::create_dir(&config_dir)
-                .map_err(|e| MgError::Other(format!("create .dart_tool directory: {e}")))?;
-        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => {
             return Err(MgError::Other(format!(
                 "inspect .dart_tool directory: {error}"
             )));
         }
     }
-
-    let mut entries = Vec::with_capacity(graph.packages.len());
+    let sdk_packages = match sdk_root {
+        Some(root) => crate::manifest::flutter::flutter_sdk_package_names(project_root, root)?,
+        None => Vec::new(),
+    };
+    let mut entries = Vec::with_capacity(graph.packages.len() + sdk_packages.len());
     let mut seen = std::collections::BTreeSet::new();
     for package in &graph.packages {
         let name = package.id.name_str();
@@ -244,7 +254,80 @@ fn write_flutter_package_config(
             language_version,
         });
     }
+
+    if !sdk_packages.is_empty() {
+        let sdk_root = sdk_root.ok_or_else(|| {
+            MgError::Other(
+                "Flutter SDK dependencies are declared but no Flutter SDK root was found; set FLUTTER_ROOT or install flutter on PATH".to_string(),
+            )
+        })?;
+        for name in sdk_packages {
+            if !seen.insert(name.clone()) {
+                return Err(MgError::Integrity(format!(
+                    "Flutter SDK package '{name}' conflicts with a registry package in the resolved graph"
+                )));
+            }
+            let canonical_package_root =
+                crate::manifest::flutter::flutter_sdk_package_root(sdk_root, &name)?;
+            let package_manifest_path = canonical_package_root.join("pubspec.yaml");
+            let package_manifest_meta =
+                std::fs::symlink_metadata(&package_manifest_path).map_err(|error| {
+                    MgError::Other(format!(
+                        "inspect Flutter SDK package manifest '{}': {error}",
+                        package_manifest_path.display()
+                    ))
+                })?;
+            if !package_manifest_meta.file_type().is_file() {
+                return Err(MgError::Integrity(format!(
+                    "Flutter SDK package '{name}' has a linked or non-regular pubspec.yaml"
+                )));
+            }
+            let manifest_text =
+                std::fs::read_to_string(&package_manifest_path).map_err(|error| {
+                    MgError::Other(format!(
+                        "read Flutter SDK package manifest '{}': {error}",
+                        package_manifest_path.display()
+                    ))
+                })?;
+            let manifest: serde_yaml::Value =
+                serde_yaml::from_str(&manifest_text).map_err(|error| {
+                    MgError::Other(format!(
+                        "parse Flutter SDK package manifest '{}': {error}",
+                        package_manifest_path.display()
+                    ))
+                })?;
+            if manifest.get("name").and_then(serde_yaml::Value::as_str) != Some(name.as_str()) {
+                return Err(MgError::Integrity(format!(
+                    "Flutter SDK package identity mismatch for '{name}'"
+                )));
+            }
+            let lib_dir = canonical_package_root.join("lib");
+            if !std::fs::symlink_metadata(&lib_dir).is_ok_and(|meta| meta.is_dir()) {
+                return Err(MgError::Integrity(format!(
+                    "Flutter SDK package '{name}' has no regular lib directory"
+                )));
+            }
+            let language_version = manifest
+                .get("environment")
+                .and_then(|value| value.get("sdk"))
+                .and_then(serde_yaml::Value::as_str)
+                .and_then(dart_language_version_floor);
+            let root_uri = url::Url::from_directory_path(&canonical_package_root)
+                .map_err(|_| MgError::Other("cannot encode Flutter SDK package URI".to_string()))?
+                .to_string();
+            entries.push(FlutterPackageConfigEntry {
+                name,
+                root_uri,
+                package_uri: "lib/",
+                language_version,
+            });
+        }
+    }
     entries.sort_by(|left, right| left.name.cmp(&right.name));
+    if !config_dir.exists() {
+        std::fs::create_dir(&config_dir)
+            .map_err(|error| MgError::Other(format!("create .dart_tool directory: {error}")))?;
+    }
     let config = FlutterPackageConfig {
         config_version: 2,
         generator: "MagiCore",

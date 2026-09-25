@@ -7,8 +7,8 @@ use std::path::Path;
 
 /// Whether the MGC native Python engine can own this project's dependency
 /// declarations without silently ignoring another tool's lock or source.
-/// This is intentionally conservative: the current parser implements only
-/// PEP 621 `[project].dependencies` and does not import foreign lockfiles.
+/// PEP 621 optional dependency groups are metadata unless explicitly selected;
+/// MGC currently installs only the default `dependencies` set.
 /// (Chỉ nhận lane Python native khi MGC sở hữu đủ khai báo và không bỏ qua
 /// lockfile/nguồn dependency do tool khác quản lý.)
 pub fn supports_native_python_project(root: &Path) -> bool {
@@ -29,13 +29,15 @@ pub fn supports_native_python_project(root: &Path) -> bool {
         || project
             .get("dependencies")
             .is_some_and(|dependencies| dependencies.as_array().is_none())
-        || project
-            .get("optional-dependencies")
-            .is_some_and(|dependencies| {
-                !dependencies
-                    .as_table()
-                    .is_some_and(toml::map::Map::is_empty)
+        || project.get("optional-dependencies").is_some_and(|groups| {
+            !groups.as_table().is_some_and(|table| {
+                table.values().all(|items| {
+                    items
+                        .as_array()
+                        .is_some_and(|items| items.iter().all(toml::Value::is_str))
+                })
             })
+        })
     {
         return false;
     }

@@ -362,9 +362,17 @@ impl DependencyResolver for AppAdapter {
         match self.language {
             AppLanguage::Flutter => {
                 let protocol = PubProtocol::from_env();
-                let resolution =
-                    resolve_with_protocol(&protocol, EcosystemTag::Dart, "pub://pub.dev", manifest)
-                        .await?;
+                let expanded = crate::manifest::flutter::expand_flutter_sdk_dependencies(
+                    &self.project_root,
+                    manifest,
+                )?;
+                let resolution = resolve_with_protocol(
+                    &protocol,
+                    EcosystemTag::Dart,
+                    "pub://pub.dev",
+                    &expanded,
+                )
+                .await?;
                 *self.pending_lock.lock().expect("app pending lock poisoned") =
                     resolution.lock_packages;
                 Ok(resolution.graph)

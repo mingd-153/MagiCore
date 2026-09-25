@@ -158,6 +158,7 @@ LANES = [
         # (TypeScript đi trên engine WEB (mgc resolve+lock+fetch+CAS)
         # — ứng viên native-engine (P0-D).)
         "install_owner": "native-engine",
+        "recovery_probe": True,
         # P0-D: the web engine IS mgc — lib/typescript is mgc-native.
         # (P0-D: engine web CHÍNH LÀ mgc — lib/typescript là mgc-native.)
         "dependency_owner": "mgc-native",
@@ -286,6 +287,7 @@ LANES = [
         # (Engine WEB (chính mgc) giữ resolve+lock+fetch+CAS — install
         # native-engine duy nhất hôm nay (taxonomy P0-D).)
         "install_owner": "native-engine",
+        "recovery_probe": True,
         # P0-D: the web engine IS mgc — the flagship mgc-native lane.
         # (P0-D: engine web CHÍNH LÀ mgc — lane mgc-native chủ lực.)
         "dependency_owner": "mgc-native",
@@ -1857,7 +1859,7 @@ def run_lane(mgc_bin: str, lane: dict) -> dict:
                 launcher = "python"
             try:
                 proc = subprocess.run(
-                    [launcher, "-m", "pip", "install", "-q", "build", "pytest"],
+                    [launcher, "-m", "pip", "install", "-q", "build==1.3.0", "pytest==8.4.2", "setuptools==80.9.0"],
                     capture_output=True, text=True,
                     cwd=os.path.join(sandbox, project_dir), timeout=timeout_s,
                 )
@@ -2313,25 +2315,25 @@ def run_lane(mgc_bin: str, lane: dict) -> dict:
     # at after-generation-begin (READY marker fsync'd by the binary), the
     # harness SIGKILLs it, then `mgc store doctor --repair` must leave the
     # store HEALTHY with 0 stale staging (Rust contract:
-    # cli/tests/kill_injection_matrix.rs). Only lanes whose install runs
-    # the mgc web orchestrator (install_owner=native-engine — web/js, and
-    # lib/ts which delegates to web.install) HAVE this crash surface;
-    # other lanes are honestly unsupported. POSIX only: no signal support
+    # cli/tests/kill_injection_matrix.rs). Only lanes explicitly marked
+    # `recovery_probe: true` (web/js and lib/ts using web.install) HAVE this
+    # crash surface; native ownership alone is not recovery evidence.
+    # Other lanes are honestly unsupported. POSIX only: no signal support
     # → unverified, never faked.
     # (recovery — dimension QUAN TRỌNG NHẤT (Gate 11-C): crash thật + sửa
     # chữa thật qua handshake failpoint có sẵn. `mgc install` đỗ tại
     # after-generation-begin (marker READY do binary fsync), harness
     # SIGKILL, rồi `mgc store doctor --repair` phải để store HEALTHY với
     # 0 stale staging (hợp đồng Rust: cli/tests/kill_injection_matrix.rs).
-    # Chỉ lane có install chạy orchestrator web của mgc (install_owner=
-    # native-engine — web/js, và lib/ts delegate sang web.install) CÓ mặt
-    # crash này; lane khác là unsupported trung thực. Chỉ POSIX: không
+    # Chỉ lane khai `recovery_probe: true` (web/js và lib/ts dùng đúng
+    # web.install) CÓ bề mặt crash này; native ownership không tự chứng
+    # minh recovery. Lane khác unsupported trung thực. Chỉ POSIX: không
     # hỗ trợ signal → unverified, không bao giờ bịa.)
-    if lane.get("install_owner") != "native-engine":
+    if not lane.get("recovery_probe", False):
         dims["recovery"] = STATUS_UNSUPPORTED
         detail["recovery_output"] = (
-            "failpoint crash surface exists only in the mgc web install "
-            "orchestrator (native-engine lanes)"
+            "no lane-specific crash-recovery probe is implemented; "
+            "native dependency ownership does not imply recovery evidence"
         )
     elif os.name == "nt":
         dims["recovery"] = STATUS_UNVERIFIED

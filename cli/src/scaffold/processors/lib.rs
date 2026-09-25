@@ -33,7 +33,7 @@ impl LibProcessor {
                 write_file(
                     &target.join("pyproject.toml"),
                     &format!(
-                        "[project]\nname = \"{}\"\nversion = \"0.1.0\"\nrequires-python = \">=3.11\"\n",
+                        "[build-system]\nrequires = [\"setuptools>=80\"]\nbuild-backend = \"setuptools.build_meta\"\n\n[project]\nname = \"{}\"\nversion = \"0.1.0\"\nrequires-python = \">=3.11\"\n",
                         slugify(name)
                     ),
                 )?;

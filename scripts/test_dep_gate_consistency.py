@@ -127,6 +127,16 @@ class RealLanesShape(unittest.TestCase):
         violations = check_dep_gate_consistency(BINARY, LANES)
         self.assertEqual(violations, [])
 
+    def test_recovery_probe_is_not_inferred_from_native_install_owner(self):
+        lanes_by_key = {(lane["core"], lane["language"]): lane for lane in LANES}
+        self.assertTrue(lanes_by_key[("web", "javascript")].get("recovery_probe"))
+        self.assertTrue(lanes_by_key[("lib", "typescript")].get("recovery_probe"))
+        for key in [("lib", "python"), ("ai", "python"), ("app", "flutter")]:
+            self.assertFalse(
+                lanes_by_key[key].get("recovery_probe", False),
+                f"{key} must not inherit the web store recovery probe",
+            )
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

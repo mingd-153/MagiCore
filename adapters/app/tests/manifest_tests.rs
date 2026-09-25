@@ -51,6 +51,21 @@ fn parse_flutter_pubspec_excludes_flutter_sdk_dependencies() {
 }
 
 #[test]
+fn parse_flutter_pubspec_rejects_non_flutter_sdk_dependencies() {
+    let dir = tmp("non-flutter-sdk-dep");
+    std::fs::write(
+        dir.join("pubspec.yaml"),
+        "name: sdk_app\ndependencies:\n  package_info:\n    sdk: dart\n",
+    )
+    .unwrap();
+
+    let error = parse_manifest(AppLanguage::Flutter, &dir)
+        .expect_err("unsupported SDK dependency must not silently disappear");
+    assert!(matches!(error, mgc_types::MgError::Unsupported { .. }));
+    assert!(error.to_string().contains("non-Flutter SDK dependency"));
+}
+
+#[test]
 fn parse_flutter_pubspec_rejects_unowned_path_git_and_hosted_sources() {
     for (label, dependency) in [
         ("path", "local_pkg:\n    path: ../local_pkg"),

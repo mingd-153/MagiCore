@@ -492,6 +492,12 @@ impl PackageAdapter for WebAdapter {
         Self::CAPABILITIES
     }
 
+    /// MGC owns the npm resolver and package.json writer for this adapter.
+    /// MGC sở hữu resolver npm và writer package.json của adapter này.
+    fn supports_native_update(&self) -> bool {
+        true
+    }
+
     fn manifest_identity(&self) -> Option<mgc_types::ManifestIdentity> {
         Some(mgc_types::ManifestIdentity {
             core: "web".to_string(),

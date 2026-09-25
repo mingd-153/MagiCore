@@ -273,6 +273,29 @@ fn blocked_cell(setup: fn(&std::path::Path), cmd: &[&str]) {
     sandbox.assert_no_spawn(&cmd.join(" "));
 }
 
+/// A default-blocked mutation must preserve its manifest byte-for-byte.
+/// (Mutation bị chặn mặc định phải giữ manifest nguyên từng byte.)
+fn blocked_mutation_unchanged(setup: fn(&std::path::Path), cmd: &[&str], manifest_file: &str) {
+    let project = TempDir::new().unwrap();
+    setup(project.path());
+    let manifest = project.path().join(manifest_file);
+    let before = std::fs::read(&manifest).unwrap();
+    let sandbox = MatrixSandbox::new();
+    let (code, out) = sandbox.run(cmd, project.path());
+    assert_ne!(
+        code,
+        Some(0),
+        "{} must refuse without compat:\n{out}",
+        cmd.join(" ")
+    );
+    assert_eq!(
+        std::fs::read(&manifest).unwrap(),
+        before,
+        "blocked command mutated {manifest_file}"
+    );
+    sandbox.assert_no_spawn(&cmd.join(" "));
+}
+
 #[test]
 fn matrix_lib_python_add_install_list_frozen() {
     let setup = |d: &std::path::Path| {
@@ -455,6 +478,16 @@ fn native_remove_only(
     manifest_file: &str,
     pin: &str,
 ) {
+    native_remove_only_with_env(setup, remove_cmd, manifest_file, pin, &[]);
+}
+
+fn native_remove_only_with_env(
+    setup: fn(&std::path::Path),
+    remove_cmd: &[&str],
+    manifest_file: &str,
+    pin: &str,
+    extra_env: &[(&str, &str)],
+) {
     let project = TempDir::new().unwrap();
     setup(project.path());
     let sandbox = MatrixSandbox::new();
@@ -464,7 +497,7 @@ fn native_remove_only(
         "fixture must carry {pin}:
 {body_before}"
     );
-    let (code, out) = sandbox.run(remove_cmd, project.path());
+    let (code, out) = sandbox.run_with_env(remove_cmd, project.path(), extra_env);
     assert_eq!(
         code,
         Some(0),
@@ -1141,25 +1174,31 @@ fn esp32_with_dep(dir: &std::path::Path) {
 
 #[test]
 fn matrix_native_remove_flutter_swift_kotlin() {
-    // Fixtures ship WITH the dep (add covered elsewhere); remove must
-    // drop it with zero spawn.
-    native_remove_only(
+    // Flutter's journaled writer owns remove. Swift/Kotlin are blocked at
+    // the C0 firewall until their writers join that transaction; never
+    // label a refusal as native remove support.
+    // (Flutter dùng writer có journal; Swift/Kotlin bị chặn tới khi có transaction.)
+    let sdk = TempDir::new().unwrap();
+    let flutter_package = sdk.path().join("packages/flutter");
+    std::fs::create_dir_all(flutter_package.join("lib")).unwrap();
+    write(&flutter_package, "pubspec.yaml", "name: flutter\n");
+    let sdk_root = sdk.path().to_string_lossy().to_string();
+    native_remove_only_with_env(
         flutter_with_meta,
         &["remove-app", "meta"],
         "pubspec.yaml",
         "meta",
+        &[("FLUTTER_ROOT", &sdk_root)],
     );
-    native_remove_only(
+    blocked_mutation_unchanged(
         swift_with_dep,
         &["remove-app", "scope/lib"],
         "Package.swift",
-        "scope.lib",
     );
-    native_remove_only(
+    blocked_mutation_unchanged(
         kotlin_with_dep,
         &["remove-app", "commons-lang3"],
         "gradle/libs.versions.toml",
-        "commons-lang3",
     );
 }
 

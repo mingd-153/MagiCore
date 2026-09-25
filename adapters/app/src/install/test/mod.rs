@@ -3,7 +3,9 @@
 
 use mgc_lockfile::{EcosystemTag, Lockfile, Package, parser, writer};
 
-use super::{write_canonical_lock, write_flutter_package_config};
+use super::{
+    write_canonical_lock, write_flutter_package_config, write_flutter_package_config_with_sdk_root,
+};
 use mgc_types::{PackageId, PackageName, ResolvedGraph, ResolvedPackage, Version};
 
 fn package(name: &str, version: &str, ecosystem: EcosystemTag) -> Package {
@@ -262,6 +264,7 @@ fn atomic_lock_publish_replaces_existing_file_without_leaking_temp() {
 fn flutter_install_writes_package_config_for_verified_materialized_graph() {
     let project = tempfile::tempdir().unwrap();
     let cache = tempfile::tempdir().unwrap();
+    std::fs::write(project.path().join("pubspec.yaml"), "name: sample\n").unwrap();
     let package_root = cache.path().join("hosted/pub.dev/http-1.2.0");
     std::fs::create_dir_all(package_root.join("lib")).unwrap();
     std::fs::write(
@@ -307,6 +310,7 @@ fn flutter_install_writes_package_config_for_verified_materialized_graph() {
 fn flutter_package_config_rejects_archive_identity_mismatch() {
     let project = tempfile::tempdir().unwrap();
     let cache = tempfile::tempdir().unwrap();
+    std::fs::write(project.path().join("pubspec.yaml"), "name: sample\n").unwrap();
     let package_root = cache.path().join("hosted/pub.dev/http-1.2.0");
     std::fs::create_dir_all(&package_root).unwrap();
     std::fs::write(package_root.join("pubspec.yaml"), "name: different\n").unwrap();
@@ -335,6 +339,296 @@ fn flutter_package_config_rejects_archive_identity_mismatch() {
     );
 }
 
+#[test]
+fn flutter_package_config_includes_only_declared_sdk_packages() {
+    let project = tempfile::tempdir().unwrap();
+    let sdk = tempfile::tempdir().unwrap();
+    let cache = tempfile::tempdir().unwrap();
+    std::fs::write(
+        project.path().join("pubspec.yaml"),
+        "name: sample\ndependencies:\n  flutter:\n    sdk: flutter\ndev_dependencies:\n  flutter_test:\n    sdk: flutter\n",
+    )
+    .unwrap();
+    for (name, version) in [
+        ("flutter", ">=3.4.0-0 <4.0.0"),
+        ("flutter_test", ">=3.4.0-0 <4.0.0"),
+    ] {
+        let package = sdk.path().join("packages").join(name);
+        std::fs::create_dir_all(package.join("lib")).unwrap();
+        std::fs::write(
+            package.join("pubspec.yaml"),
+            format!("name: {name}\nenvironment:\n  sdk: '{version}'\n"),
+        )
+        .unwrap();
+    }
+    write_flutter_package_config_with_sdk_root(
+        &ResolvedGraph::empty(),
+        project.path(),
+        cache.path(),
+        Some(sdk.path()),
+    )
+    .unwrap();
+
+    let config: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(project.path().join(".dart_tool/package_config.json")).unwrap(),
+    )
+    .unwrap();
+    let packages = config["packages"].as_array().unwrap();
+    let names: Vec<_> = packages
+        .iter()
+        .filter_map(|entry| entry["name"].as_str())
+        .collect();
+    assert_eq!(names, ["flutter", "flutter_test"]);
+    assert!(
+        packages
+            .iter()
+            .all(|entry| entry["rootUri"].as_str().unwrap().starts_with("file://"))
+    );
+}
+
+#[test]
+fn flutter_sdk_package_dependencies_enter_native_pub_graph() {
+    let project = tempfile::tempdir().unwrap();
+    let sdk = tempfile::tempdir().unwrap();
+    std::fs::write(
+        project.path().join("pubspec.yaml"),
+        "name: sample\ndependencies:\n  flutter:\n    sdk: flutter\n  meta: ^1.17.0\ndev_dependencies:\n  flutter_test:\n    sdk: flutter\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(sdk.path().join("packages/flutter/lib")).unwrap();
+    std::fs::write(
+        sdk.path().join("packages/flutter/pubspec.yaml"),
+        "name: flutter\ndependencies:\n  collection: ^1.18.0\n  meta: ^1.18.0\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(sdk.path().join("packages/flutter_test/lib")).unwrap();
+    std::fs::write(
+        sdk.path().join("packages/flutter_test/pubspec.yaml"),
+        "name: flutter_test\ndependencies:\n  flutter:\n    sdk: flutter\n  sky_engine:\n    sdk: flutter\n  matcher: ^0.12.16\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(sdk.path().join("bin/cache/pkg/sky_engine/lib")).unwrap();
+    std::fs::write(
+        sdk.path().join("bin/cache/pkg/sky_engine/pubspec.yaml"),
+        "name: sky_engine\n",
+    )
+    .unwrap();
+
+    let base =
+        crate::manifest::parse_manifest(crate::AppLanguage::Flutter, project.path()).unwrap();
+    let expanded = crate::manifest::flutter::expand_flutter_sdk_dependencies_with_root(
+        project.path(),
+        &base,
+        sdk.path(),
+    )
+    .unwrap();
+    assert!(expanded.find_dep("collection").is_some());
+    assert!(expanded.find_dep("matcher").is_some());
+    let meta_range = &expanded.find_dep("meta").unwrap().range;
+    assert!(meta_range.matches(&Version::parse("1.18.0").unwrap()));
+    assert!(!meta_range.matches(&Version::parse("1.17.0").unwrap()));
+    assert!(
+        expanded
+            .dependencies
+            .iter()
+            .any(|dependency| dependency.name.as_str() == "collection")
+    );
+    assert!(
+        expanded
+            .dev_dependencies
+            .iter()
+            .any(|dependency| dependency.name.as_str() == "matcher")
+    );
+    assert!(expanded.find_dep("sky_engine").is_none());
+
+    let names =
+        crate::manifest::flutter::flutter_sdk_package_names(project.path(), sdk.path()).unwrap();
+    assert_eq!(names, ["flutter", "flutter_test", "sky_engine"]);
+}
+
+#[test]
+fn flutter_sdk_runtime_dependency_promotes_project_optional_package_to_runtime() {
+    let project = tempfile::tempdir().unwrap();
+    let sdk = tempfile::tempdir().unwrap();
+    std::fs::write(
+        project.path().join("pubspec.yaml"),
+        "name: sample\ndependencies:\n  flutter:\n    sdk: flutter\ndev_dependencies:\n  meta: ^1.17.0\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(sdk.path().join("packages/flutter/lib")).unwrap();
+    std::fs::write(
+        sdk.path().join("packages/flutter/pubspec.yaml"),
+        "name: flutter\ndependencies:\n  meta: ^1.18.0\n",
+    )
+    .unwrap();
+
+    let base =
+        crate::manifest::parse_manifest(crate::AppLanguage::Flutter, project.path()).unwrap();
+    let expanded = crate::manifest::flutter::expand_flutter_sdk_dependencies_with_root(
+        project.path(),
+        &base,
+        sdk.path(),
+    )
+    .unwrap();
+
+    assert!(
+        expanded
+            .dependencies
+            .iter()
+            .any(|dependency| dependency.name.as_str() == "meta"),
+        "a Flutter SDK runtime dependency must promote the same project dev dependency"
+    );
+    assert!(
+        !expanded
+            .dev_dependencies
+            .iter()
+            .any(|dependency| dependency.name.as_str() == "meta"),
+        "meta must not remain dev-only when Flutter requires it at runtime"
+    );
+    assert!(
+        expanded
+            .find_dep("meta")
+            .unwrap()
+            .range
+            .matches(&Version::parse("1.18.0").unwrap())
+    );
+}
+
+#[test]
+fn flutter_sdk_package_malformed_dependency_metadata_fails_closed() {
+    let project = tempfile::tempdir().unwrap();
+    let sdk = tempfile::tempdir().unwrap();
+    std::fs::write(
+        project.path().join("pubspec.yaml"),
+        "name: sample\ndependencies:\n  flutter:\n    sdk: flutter\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(sdk.path().join("packages/flutter/lib")).unwrap();
+    std::fs::write(
+        sdk.path().join("packages/flutter/pubspec.yaml"),
+        "name: flutter\ndependencies: [not, a, mapping]\n",
+    )
+    .unwrap();
+
+    let base =
+        crate::manifest::parse_manifest(crate::AppLanguage::Flutter, project.path()).unwrap();
+    let error = crate::manifest::flutter::expand_flutter_sdk_dependencies_with_root(
+        project.path(),
+        &base,
+        sdk.path(),
+    )
+    .expect_err("malformed SDK dependency metadata must not become an empty graph");
+    assert!(error.to_string().contains("dependencies must be a mapping"));
+}
+
+#[test]
+fn flutter_sdk_disjunctive_constraints_fail_closed_when_intersection_is_needed() {
+    let project = tempfile::tempdir().unwrap();
+    let sdk = tempfile::tempdir().unwrap();
+    std::fs::write(
+        project.path().join("pubspec.yaml"),
+        "name: sample\ndependencies:\n  flutter:\n    sdk: flutter\n  meta: '>=1.17.0 <2.0.0 || >=3.0.0 <4.0.0'\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(sdk.path().join("packages/flutter/lib")).unwrap();
+    std::fs::write(
+        sdk.path().join("packages/flutter/pubspec.yaml"),
+        "name: flutter\ndependencies:\n  meta: '>=1.18.0 <2.0.0'\n",
+    )
+    .unwrap();
+
+    let base =
+        crate::manifest::parse_manifest(crate::AppLanguage::Flutter, project.path()).unwrap();
+    let error = crate::manifest::flutter::expand_flutter_sdk_dependencies_with_root(
+        project.path(),
+        &base,
+        sdk.path(),
+    )
+    .expect_err("constraint intersection must not weaken an OR expression");
+    assert!(error.to_string().contains("disjunctive constraints"));
+}
+
+#[test]
+fn flutter_sdk_dependency_overrides_fail_closed() {
+    let project = tempfile::tempdir().unwrap();
+    let sdk = tempfile::tempdir().unwrap();
+    std::fs::write(
+        project.path().join("pubspec.yaml"),
+        "name: sample\ndependencies:\n  flutter:\n    sdk: flutter\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(sdk.path().join("packages/flutter/lib")).unwrap();
+    std::fs::write(
+        sdk.path().join("packages/flutter/pubspec.yaml"),
+        "name: flutter\ndependency_overrides:\n  meta: 1.0.0\n",
+    )
+    .unwrap();
+
+    let base =
+        crate::manifest::parse_manifest(crate::AppLanguage::Flutter, project.path()).unwrap();
+    let error = crate::manifest::flutter::expand_flutter_sdk_dependencies_with_root(
+        project.path(),
+        &base,
+        sdk.path(),
+    )
+    .expect_err("SDK overrides must not silently be ignored");
+    assert!(error.to_string().contains("override/workspace semantics"));
+}
+
+#[test]
+fn flutter_pubspec_writer_preserves_all_sdk_dependencies() {
+    let project = tempfile::tempdir().unwrap();
+    std::fs::write(
+        project.path().join("pubspec.yaml"),
+        "name: sample\ndependencies:\n  flutter:\n    sdk: flutter\ndev_dependencies:\n  flutter_test:\n    sdk: flutter\n  integration_test:\n    sdk: flutter\n",
+    )
+    .unwrap();
+    let manifest =
+        crate::manifest::parse_manifest(crate::AppLanguage::Flutter, project.path()).unwrap();
+
+    crate::manifest::flutter::write_pubspec(project.path(), &manifest).unwrap();
+
+    let rewritten: serde_yaml::Value = serde_yaml::from_str(
+        &std::fs::read_to_string(project.path().join("pubspec.yaml")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        rewritten["dependencies"]["flutter"]["sdk"].as_str(),
+        Some("flutter")
+    );
+    for name in ["flutter_test", "integration_test"] {
+        assert_eq!(
+            rewritten["dev_dependencies"][name]["sdk"].as_str(),
+            Some("flutter"),
+            "writer dropped SDK test dependency {name}"
+        );
+    }
+}
+
+#[test]
+fn flutter_package_config_fails_closed_when_declared_sdk_package_is_missing() {
+    let project = tempfile::tempdir().unwrap();
+    let sdk = tempfile::tempdir().unwrap();
+    let cache = tempfile::tempdir().unwrap();
+    std::fs::write(
+        project.path().join("pubspec.yaml"),
+        "name: sample\ndependencies:\n  flutter:\n    sdk: flutter\n",
+    )
+    .unwrap();
+    let error = write_flutter_package_config_with_sdk_root(
+        &ResolvedGraph::empty(),
+        project.path(),
+        cache.path(),
+        Some(sdk.path()),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("SDK package 'flutter'"));
+    assert!(
+        !project.path().join(".dart_tool").exists(),
+        "validation error must not leave a partial package config directory"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn flutter_package_config_refuses_symlinked_dart_tool_directory() {
@@ -342,6 +636,7 @@ fn flutter_package_config_refuses_symlinked_dart_tool_directory() {
 
     let project = tempfile::tempdir().unwrap();
     let outside = tempfile::tempdir().unwrap();
+    std::fs::write(project.path().join("pubspec.yaml"), "name: sample\n").unwrap();
     symlink(outside.path(), project.path().join(".dart_tool")).unwrap();
 
     let error =

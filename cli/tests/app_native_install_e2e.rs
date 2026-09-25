@@ -256,6 +256,7 @@ fn flutter_add_app_resolves_and_installs_natively_without_spawning_sdk() {
     );
 }
 
+#[allow(dead_code)] // Kept only for the historical local-registry fixture below. Giữ fixture registry cục bộ cũ.
 fn real_swift() -> Option<std::path::PathBuf> {
     let path = std::env::var_os("PATH")?;
     std::env::split_paths(&path)
@@ -265,6 +266,7 @@ fn real_swift() -> Option<std::path::PathBuf> {
 
 /// Craft a minimal static SwiftPM registry (scope.json + sha256 + zips)
 /// served over HTTP for a hermetic native-update E2E (no outside network).
+#[allow(dead_code)] // Kept as a fixture utility while native Swift update is gated off. Giữ tiện ích fixture khi update Swift còn bị chặn.
 fn serve_fixture_registry(dir: &std::path::Path) -> (std::process::Child, String) {
     // Minimal Package.swift at zip root (no transitive deps).
     fn make_zip() -> Vec<u8> {
@@ -440,6 +442,7 @@ fn serve_fixture_registry(dir: &std::path::Path) -> (std::process::Child, String
     (child, format!("http://127.0.0.1:{port}"))
 }
 
+#[allow(dead_code)] // Kept for the local-registry compatibility fixture. Giữ fixture tương thích registry cục bộ.
 fn swift_registry_project(dir: &std::path::Path) {
     std::fs::write(
         dir.join("mgc.toml"),
@@ -467,96 +470,37 @@ fn swift_registry_project(dir: &std::path::Path) {
     .unwrap();
 }
 
-/// Swift native update end-to-end against a LOCAL static registry:
-/// resolve-latest → Package.swift bump (verified by re-scan) → lock.
-/// The only toolchain use is manifest READING (dump-package); every
-/// lifecycle step runs inside mgc. Skipped without swift/python3.
+/// Swift update is rejected before mutation until its writer is journaled.
+/// Swift update bị từ chối trước khi sửa manifest cho tới khi writer có journal.
 #[test]
-fn swift_update_native_against_local_registry() {
-    let real = real_swift();
-    let has_python = std::process::Command::new("python3")
-        .arg("--version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-    if real.is_none() || !has_python {
-        eprintln!("SKIP: swift toolchain or python3 absent");
-        return;
-    }
-    let real = real.unwrap();
+fn swift_update_fails_closed_without_mutating_project() {
     let project = TempDir::new().unwrap();
     swift_registry_project(project.path());
-    let regdir = TempDir::new().unwrap();
-    let mut server = serve_fixture_registry(regdir.path());
-    let base = server.1.clone();
+    let manifest = std::fs::read(project.path().join("Package.swift")).unwrap();
+    let sandbox = NoSpawnSandbox::multi(&["swift", "pod", "gradle", "java"]);
 
-    // Shim swift: dump-package (manifest READING) delegates to the real
-    // toolchain; every other swift invocation fails closed. This proves
-    // the lifecycle runs inside mgc — the toolchain never resolves,
-    // fetches, or updates anything.
-    let shim_dir = TempDir::new().unwrap();
-    let log = shim_dir.path().join("spawned.log");
-    std::fs::write(
-        shim_dir.path().join("swift"),
-        format!(
-            "#!/bin/sh\nif printf '%s' \"$*\" | grep -q dump-package; then exec {} \"$@\"; else printf '%s\\n' \"swift $*\" >> {}; exit 1; fi\n",
-            real.display(),
-            log.display()
-        ),
-    )
-    .unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let sh = shim_dir.path().join("swift");
-        let mut perms = std::fs::metadata(&sh).unwrap().permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&sh, perms).unwrap();
-    }
-    let mut paths = vec![shim_dir.path().to_path_buf()];
-    if let Some(existing) = std::env::var_os("PATH") {
-        paths.extend(std::env::split_paths(&existing));
-    }
-    let path_env = std::env::join_paths(paths).unwrap();
-    let home = TempDir::new().unwrap();
-
-    let run = |args: &[&str]| -> (Option<i32>, String) {
-        let out = std::process::Command::new(mgc_binary())
-            .args(args)
-            .current_dir(project.path())
-            .env("PATH", &path_env)
-            .env("HOME", home.path())
-            .env("MGC_SWIFT_REGISTRY_URL", &base)
-            .env_remove("MGC_COMPAT_RUNTIME")
-            .output()
-            .expect("spawn mgc");
-        (
-            out.status.code(),
-            format!(
-                "{}{}",
-                String::from_utf8_lossy(&out.stdout),
-                String::from_utf8_lossy(&out.stderr)
-            ),
-        )
-    };
-    let (code, out) = run(&["update-app", "scope/lib"]);
-    // Kill the registry server either way.
-    let _ = server.0.kill();
-    assert_eq!(code, Some(0), "native swift update must succeed:\n{out}");
-    let pkg = std::fs::read_to_string(project.path().join("Package.swift")).unwrap();
-    assert!(
-        pkg.contains("from: \"1.1.0\""),
-        "Package.swift must pin 1.1.0:\n{pkg}"
+    let (code, stdout, stderr) = sandbox.run_mgc(&["update-app", "scope/lib"], project.path());
+    let output = format!("{stdout}{stderr}");
+    assert_ne!(
+        code,
+        Some(0),
+        "unsupported Swift update must fail: {output}"
     );
-    let log_text = std::fs::read_to_string(&log).unwrap_or_default();
     assert!(
-        !log_text.contains("package update") && !log_text.contains("package resolve"),
-        "no lifecycle swift spawn allowed (dump-package reads ok):\n{log_text}"
+        output.to_ascii_lowercase().contains("unsupported")
+            || output.to_ascii_lowercase().contains("not supported"),
+        "failure must explain unsupported ownership: {output}"
     );
-    let lock = std::fs::read_to_string(project.path().join("mgc.lock")).unwrap_or_default();
+    assert_eq!(
+        std::fs::read(project.path().join("Package.swift")).unwrap(),
+        manifest,
+        "fail-closed update must preserve Package.swift"
+    );
+    assert!(!project.path().join("mgc.lock").exists());
     assert!(
-        lock.contains("1.1.0"),
-        "mgc.lock must record 1.1.0:\n{lock}"
+        sandbox.marker_text().is_empty(),
+        "no PM may spawn: {}",
+        sandbox.marker_text()
     );
 }
 
@@ -584,13 +528,13 @@ fn kotlin_catalog_project(dir: &std::path::Path) {
     .unwrap();
 }
 
-/// Kotlin native update through the version catalog (no JVM, no gradle
-/// spawn — pure TOML + Maven Central resolve). canary-shims the whole
-/// toolchain set to prove it.
+/// Kotlin update remains fail-closed until its native lifecycle is complete.
+/// Kotlin update bị chặn cho đến khi native lifecycle hoàn chỉnh.
 #[test]
-fn kotlin_update_native_through_catalog() {
+fn kotlin_update_fails_closed_without_mutating_catalog() {
     let project = TempDir::new().unwrap();
     kotlin_catalog_project(project.path());
+    let catalog_before = std::fs::read(project.path().join("gradle/libs.versions.toml")).unwrap();
     let sandbox = NoSpawnSandbox::multi(&[
         "gradle",
         "java",
@@ -604,30 +548,22 @@ fn kotlin_update_native_through_catalog() {
 
     let (code, stdout, stderr) = sandbox.run_mgc(&["update-app", "commons-lang3"], project.path());
     let output = format!("{stdout}{stderr}");
-    assert_eq!(
+    assert_ne!(
         code,
         Some(0),
-        "native kotlin update must succeed:\n{output}"
+        "unsupported Kotlin update must fail: {output}"
     );
-    let catalog =
-        std::fs::read_to_string(project.path().join("gradle/libs.versions.toml")).unwrap();
     assert!(
-        !catalog.contains("3.12.0"),
-        "old pin must be gone:\n{catalog}"
+        output.to_ascii_lowercase().contains("unsupported")
+            || output.to_ascii_lowercase().contains("not supported"),
+        "failure must explain unsupported ownership: {output}"
     );
-    // Latest commons-lang3 as resolved live (floats with the registry
-    // by design — the bump fn itself fails closed unless the re-parse
-    // reads the new pin back).
-    let bumped = catalog
-        .lines()
-        .find(|l| l.trim_start().starts_with("lang3"))
-        .unwrap_or_default()
-        .to_string();
-    let version = bumped.split('"').nth(1).unwrap_or_default().to_string();
-    assert!(
-        !version.is_empty() && version != "3.12.0",
-        "ref must point past 3.12.0, got {version:?}:\n{catalog}"
+    assert_eq!(
+        std::fs::read(project.path().join("gradle/libs.versions.toml")).unwrap(),
+        catalog_before,
+        "fail-closed update must preserve the version catalog"
     );
+    assert!(!project.path().join("mgc.lock").exists());
     assert!(
         sandbox.marker_text().is_empty(),
         "ZERO toolchain spawn allowed, got:\n{}",

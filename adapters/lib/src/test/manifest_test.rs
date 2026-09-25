@@ -19,7 +19,7 @@ use crate::manifest::{
 };
 
 #[test]
-fn native_python_ownership_accepts_only_supported_pep621_inputs() {
+fn native_python_ownership_accepts_pep621_extras_as_inactive_metadata() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
         dir.path().join("pyproject.toml"),
@@ -27,6 +27,27 @@ fn native_python_ownership_accepts_only_supported_pep621_inputs() {
     )
     .unwrap();
     assert!(supports_native_python_project(dir.path()));
+
+    std::fs::write(
+        dir.path().join("pyproject.toml"),
+        "[project]\nname=\"demo\"\ndependencies=[\"requests>=2\"]\n[project.optional-dependencies]\ntest=[\"pytest>=8\"]\nmodel=[\"torch>=2\"]\n",
+    )
+    .unwrap();
+    assert!(supports_native_python_project(dir.path()));
+    let manifest = parse_pyproject_manifest(dir.path()).unwrap();
+    assert!(manifest.find_dep("requests").is_some());
+    assert!(manifest.find_dep("pytest").is_none());
+    assert!(manifest.find_dep("torch").is_none());
+    write_pyproject_manifest(dir.path(), &manifest).unwrap();
+    let rewritten = std::fs::read_to_string(dir.path().join("pyproject.toml")).unwrap();
+    assert!(
+        rewritten.contains("pytest>=8"),
+        "extras metadata was lost: {rewritten}"
+    );
+    assert!(
+        rewritten.contains("torch>=2"),
+        "extras metadata was lost: {rewritten}"
+    );
 
     for lock in [
         "uv.lock",
@@ -42,7 +63,6 @@ fn native_python_ownership_accepts_only_supported_pep621_inputs() {
     }
 
     for source in [
-        "[project]\nname=\"demo\"\noptional-dependencies={test=[\"pytest\"]}\n",
         "[project]\nname=\"demo\"\ndynamic=[\"dependencies\"]\n",
         "[project]\nname=\"demo\"\n[tool.poetry.dependencies]\nrequests=\"^2\"\n",
         "[project]\nname=\"demo\"\n[tool.uv.sources]\nrequests={git=\"https://example.invalid/r.git\"}\n",
