@@ -287,7 +287,7 @@ fn write_flutter_package_config_with_sdk_root(
                 )));
             }
             let canonical_package_root =
-                crate::manifest::flutter::flutter_sdk_package_root(sdk_root, &name)?;
+                crate::manifest::flutter::flutter_sdk_package_root(sdk_root, name)?;
             let package_manifest_path = canonical_package_root.join("pubspec.yaml");
             let package_manifest_meta =
                 std::fs::symlink_metadata(&package_manifest_path).map_err(|error| {

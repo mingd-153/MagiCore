@@ -114,10 +114,24 @@ impl PubProtocol {
         }
 
         let mut markers = Vec::new();
-        if !candidate.pubspec.environment.sdk.is_empty() {
-            markers.push(format!("sdk:{}", candidate.pubspec.environment.sdk));
+        let pubspec = candidate.pubspec.as_ref().ok_or_else(|| {
+            MgError::Other(format!(
+                "pub.dev version {name} {version} is missing pubspec metadata"
+            ))
+        })?;
+        if let Some(environment) = &pubspec.environment {
+            if !environment.sdk.is_empty() {
+                markers.push(format!("sdk:{}", environment.sdk));
+            }
         }
-        let deps = parse_pub_dependencies(&candidate.pubspec.dependencies, &mut markers)?;
+        let deps = match &pubspec.dependencies {
+            // Pubspecs without a dependency section have no registry edges.
+            // A null field in pub.dev's JSON representation has the same
+            // meaning as the omitted section; a null whole-pubspec is rejected
+            // above because its graph cannot be proven.
+            None => Vec::new(),
+            Some(dependencies) => parse_pub_dependencies(dependencies, &mut markers)?,
+        };
         Ok(ResolvedEntry {
             name: name.to_string(),
             version: version.to_string(),
@@ -421,19 +435,19 @@ struct PubPackage {
 struct PubVersion {
     version: String,
     #[serde(default)]
-    pubspec: PubSpec,
+    pubspec: Option<PubSpec>,
     #[serde(default)]
     archive_url: String,
     #[serde(default)]
     archive_sha256: Option<String>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Deserialize)]
 struct PubSpec {
     #[serde(default)]
-    environment: PubEnvironment,
+    environment: Option<PubEnvironment>,
     #[serde(default)]
-    dependencies: HashMap<String, serde_json::Value>,
+    dependencies: Option<HashMap<String, serde_json::Value>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -491,6 +505,36 @@ mod tests {
         let parsed = parse_pub_dependencies(&dependencies, &mut markers).unwrap();
         assert_eq!(parsed, vec![("http".to_string(), "^1.0.0".to_string())]);
         assert_eq!(markers, vec!["sdk-owned:flutter_test"]);
+    }
+
+    #[test]
+    fn pub_metadata_handles_null_empty_fields_without_accepting_missing_pubspec() {
+        let package: PubPackage = serde_json::from_value(serde_json::json!({
+            "versions": [{
+                "version": "1.0.0",
+                "pubspec": {"environment": null, "dependencies": null},
+                "archive_url": "https://pub.dev/packages/example/versions/1.0.0.tar.gz"
+            }]
+        }))
+        .expect("nullable empty Pub fields should deserialize");
+
+        let selected = PubProtocol::select_entry("example", &package, &["^1.0.0".into()])
+            .expect("a package with no dependency map should resolve as dependency-free");
+        assert!(selected.deps.is_empty());
+        assert!(selected.extra_markers.is_empty());
+
+        let package_without_pubspec: PubPackage = serde_json::from_value(serde_json::json!({
+            "versions": [{
+                "version": "1.0.0",
+                "pubspec": null,
+                "archive_url": "https://pub.dev/packages/example/versions/1.0.0.tar.gz"
+            }]
+        }))
+        .expect("null candidate metadata should be representable and rejected at selection");
+        let error =
+            PubProtocol::select_entry("example", &package_without_pubspec, &["^1.0.0".into()])
+                .unwrap_err();
+        assert!(error.to_string().contains("pubspec metadata"));
     }
 
     #[test]
