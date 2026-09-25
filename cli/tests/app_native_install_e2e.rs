@@ -175,7 +175,7 @@ fn flutter_sdk_only_manifest_still_resolves_registry_dependencies_natively() {
             "pubspec": {
                 "version": "1.4.0",
                 "environment": { "sdk": ">=3.0.0 <4.0.0" },
-                "dependencies": {}
+                "dependencies": { "test_api": "^0.7.12" }
             },
             "archive_url": archive_url,
             "archive_sha256": digest
@@ -199,7 +199,7 @@ fn flutter_sdk_only_manifest_still_resolves_registry_dependencies_natively() {
             "pubspec": {
                 "version": "1.1.1",
                 "environment": { "sdk": ">=3.0.0 <4.0.0" },
-                "dependencies": {}
+                "dependencies": { "test_api": "<0.7.14" }
             },
             "archive_url": clock_archive_url,
             "archive_sha256": clock_digest
@@ -215,6 +215,53 @@ fn flutter_sdk_only_manifest_still_resolves_registry_dependencies_natively() {
         .mock("GET", "/archives/clock-1.1.1.tar.gz")
         .with_status(200)
         .with_body(clock_archive)
+        .create();
+    let test_api_12_archive = fixture_pub_archive("test_api", "0.7.12");
+    let test_api_13_archive = fixture_pub_archive("test_api", "0.7.13");
+    let test_api_14_archive = fixture_pub_archive("test_api", "0.7.14");
+    let test_api_versions = [
+        ("0.7.12", &test_api_12_archive),
+        ("0.7.13", &test_api_13_archive),
+        ("0.7.14", &test_api_14_archive),
+    ]
+    .into_iter()
+    .map(|(version, archive)| {
+        serde_json::json!({
+            "version": version,
+            "pubspec": {
+                "version": version,
+                "environment": { "sdk": ">=3.0.0 <4.0.0" },
+                "dependencies": {}
+            },
+            "archive_url": format!("{base}/archives/test_api-{version}.tar.gz"),
+            "archive_sha256": sha256_hex(archive)
+        })
+    })
+    .collect::<Vec<_>>();
+    let test_api_package_doc = serde_json::json!({
+        "name": "test_api",
+        "versions": test_api_versions
+    });
+    let _test_api_package_mock = server
+        .mock("GET", "/api/packages/test_api")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(serde_json::to_vec(&test_api_package_doc).unwrap())
+        .create();
+    let _test_api_12_archive_mock = server
+        .mock("GET", "/archives/test_api-0.7.12.tar.gz")
+        .with_status(200)
+        .with_body(test_api_12_archive)
+        .create();
+    let _test_api_13_archive_mock = server
+        .mock("GET", "/archives/test_api-0.7.13.tar.gz")
+        .with_status(200)
+        .with_body(test_api_13_archive)
+        .create();
+    let _test_api_14_archive_mock = server
+        .mock("GET", "/archives/test_api-0.7.14.tar.gz")
+        .with_status(200)
+        .with_body(test_api_14_archive)
         .create();
 
     let project = TempDir::new().unwrap();
@@ -267,7 +314,11 @@ fn flutter_sdk_only_manifest_still_resolves_registry_dependencies_natively() {
 
     let lock = std::fs::read_to_string(project.path().join("mgc.lock")).unwrap();
     assert!(
-        lock.contains("characters") && lock.contains("clock") && lock.contains("sha256-"),
+        lock.contains("characters")
+            && lock.contains("clock")
+            && lock.contains("test_api")
+            && lock.contains("0.7.13")
+            && lock.contains("sha256-"),
         "{lock}"
     );
     let package_graph: serde_json::Value = serde_json::from_slice(
@@ -305,6 +356,14 @@ fn flutter_sdk_only_manifest_still_resolves_registry_dependencies_natively() {
                     && package["dependencies"] == serde_json::json!(["clock"])
             }),
         "Flutter SDK dev-package dependencies must be present in the resolved graph: {package_graph}"
+    );
+    assert!(
+        package_graph["packages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|package| { package["name"] == "test_api" && package["version"] == "0.7.13" }),
+        "runtime/dev roots must share one version satisfying both incoming constraints: {package_graph}"
     );
 }
 

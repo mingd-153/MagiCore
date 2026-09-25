@@ -89,6 +89,71 @@ async fn pub_constraint_selection_caret_any_exact() {
 }
 
 #[tokio::test]
+async fn pub_multi_root_resolution_intersects_transitive_constraints() {
+    let Some(mut server) = mock_server().await else {
+        return;
+    };
+    let base = server.url();
+    let sha = sha256_hex(b"ARCHIVE");
+    let root_a = vec![pub_version(
+        "1.0.0",
+        &format!("{base}/archives/root_a-1.0.0.tar.gz"),
+        &sha,
+        json!({ "shared": "^1.0.0" }),
+    )];
+    let root_b = vec![pub_version(
+        "1.0.0",
+        &format!("{base}/archives/root_b-1.0.0.tar.gz"),
+        &sha,
+        json!({ "shared": "<1.3.0" }),
+    )];
+    let shared = vec!["1.2.0", "1.3.0", "1.4.0"]
+        .into_iter()
+        .map(|version| {
+            pub_version(
+                version,
+                &format!("{base}/archives/shared-{version}.tar.gz"),
+                &sha,
+                json!({}),
+            )
+        })
+        .collect();
+    for (name, versions) in [("root_a", root_a), ("root_b", root_b), ("shared", shared)] {
+        server
+            .mock("GET", format!("/api/packages/{name}").as_str())
+            .with_status(200)
+            .with_body(pub_json(versions))
+            .create_async()
+            .await;
+    }
+
+    let protocol = PubProtocol::new(&base);
+    let graph = protocol
+        .resolve_graph_roots(&[
+            ("root_a".to_string(), "any".to_string()),
+            ("root_b".to_string(), "any".to_string()),
+        ])
+        .await
+        .unwrap();
+    let shared = graph
+        .iter()
+        .find(|entry| entry.name == "shared")
+        .expect("shared transitive package must be in the graph");
+    assert_eq!(
+        shared.version, "1.2.0",
+        "both root constraints are satisfiable by 1.2.0; the resolver must intersect them instead of choosing per-root versions"
+    );
+
+    let error = protocol
+        .resolve_graph_roots(&[("shared".to_string(), "^2.0.0".to_string())])
+        .await
+        .expect_err(
+            "an empty intersection must fail closed instead of selecting an incompatible version",
+        );
+    assert!(matches!(error, mgc_types::MgError::DependencyConflict(_)));
+}
+
+#[tokio::test]
 async fn pub_resolves_dependencies_and_full_path() {
     let Some(mut server) = mock_server().await else {
         return;

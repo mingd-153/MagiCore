@@ -63,11 +63,12 @@ async fn resolve_with_protocol_inner(
     manifest: &Manifest,
     include_dev_dependencies: bool,
 ) -> MgResult<NativeResolution> {
-    // Resolve every direct dep once, collecting the deduped transitive set.
-    // (Resolve mỗi dep trực tiếp một lần, gom tập bắc cầu đã khử trùng.)
-    let mut chosen: HashMap<String, ResolvedEntry> = HashMap::new();
-    let mut entries: Vec<ResolvedEntry> = Vec::new();
-    let mut runtime_reachable = std::collections::HashSet::new();
+    // Resolve all selected roots in one protocol call so ecosystems with a
+    // native multi-root solver can intersect constraints across runtime/dev
+    // roots. The default protocol implementation still fails closed on
+    // inconsistent per-root graphs.
+    // (Gửi mọi root trong một lần để protocol có solver đa-root hợp nhất
+    // constraint runtime/dev; protocol mặc định vẫn fail-closed khi lệch.)
     let mut roots = manifest
         .dependencies
         .iter()
@@ -81,25 +82,37 @@ async fn resolve_with_protocol_inner(
                 .map(|dependency| (dependency, true)),
         );
     }
-    for (dep, is_dev_root) in &roots {
-        let sub = protocol
-            .resolve_graph(dep.name.as_str(), dep.range.as_str())
-            .await?;
-        for entry in sub {
-            if !*is_dev_root {
-                runtime_reachable.insert(entry.name.clone());
-            }
-            if let Some(existing) = chosen.get(&entry.name) {
-                if existing != &entry {
-                    return Err(mgc_types::MgError::DependencyConflict(format!(
-                        "registry resolution for {} is inconsistent across root dependencies ({} vs {}); refusing to write an ambiguous lock graph",
-                        entry.name, existing.version, entry.version
-                    )));
-                }
-            } else {
-                chosen.insert(entry.name.clone(), entry.clone());
-                entries.push(entry);
-            }
+    let root_specs = roots
+        .iter()
+        .map(|(dependency, _)| {
+            (
+                dependency.name.as_str().to_string(),
+                dependency.range.as_str().to_string(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let entries = protocol.resolve_graph_roots(&root_specs).await?;
+    let chosen = entries
+        .iter()
+        .map(|entry| (entry.name.clone(), entry.clone()))
+        .collect::<HashMap<String, ResolvedEntry>>();
+
+    // Classify the resolved closure as dev-only only when no runtime root can
+    // reach it. Shared transitive dependencies are runtime dependencies.
+    // (Chỉ xếp dev-only khi không root runtime nào chạm tới; package dùng
+    // chung giữa runtime/dev được coi là runtime.)
+    let mut runtime_reachable = std::collections::HashSet::new();
+    let mut runtime_queue = manifest
+        .dependencies
+        .iter()
+        .map(|dependency| dependency.name.as_str().to_string())
+        .collect::<std::collections::VecDeque<_>>();
+    while let Some(name) = runtime_queue.pop_front() {
+        if !runtime_reachable.insert(name.clone()) {
+            continue;
+        }
+        if let Some(entry) = chosen.get(&name) {
+            runtime_queue.extend(entry.deps.iter().map(|(dependency, _)| dependency.clone()));
         }
     }
 

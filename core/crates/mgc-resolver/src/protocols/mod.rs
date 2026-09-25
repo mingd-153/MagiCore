@@ -160,6 +160,37 @@ pub trait RegistryProtocol: Send + Sync {
         }
         Ok(entries)
     }
+
+    /// Resolve several project roots as one graph. Protocols with a native
+    /// multi-constraint solver should override this; the default keeps the
+    /// existing fail-closed behavior when independently resolved roots pick
+    /// different versions of one transitive package.
+    /// Resolve nhiều root của project thành một graph. Protocol có solver
+    /// native đa-ràng-buộc nên override; mặc định giữ hành vi fail-closed
+    /// khi các root resolve riêng chọn phiên bản transitive khác nhau.
+    async fn resolve_graph_roots(
+        &self,
+        roots: &[(String, String)],
+    ) -> MgResult<Vec<ResolvedEntry>> {
+        let mut entries = Vec::new();
+        let mut chosen = std::collections::HashMap::<String, ResolvedEntry>::new();
+        for (name, range) in roots {
+            for entry in self.resolve_graph(name, range).await? {
+                if let Some(existing) = chosen.get(&entry.name) {
+                    if existing != &entry {
+                        return Err(MgError::DependencyConflict(format!(
+                            "registry resolution for {} is inconsistent across root dependencies ({} vs {}); refusing to write an ambiguous lock graph",
+                            entry.name, existing.version, entry.version
+                        )));
+                    }
+                } else {
+                    chosen.insert(entry.name.clone(), entry.clone());
+                    entries.push(entry);
+                }
+            }
+        }
+        Ok(entries)
+    }
 }
 
 /// sha256 of bytes as lowercase hex — SỞ HỮU chung cho mọi engine.

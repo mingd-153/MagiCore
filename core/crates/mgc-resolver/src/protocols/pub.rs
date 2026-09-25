@@ -16,10 +16,11 @@ use super::{RegistryProtocol, ResolvedEntry};
 use async_trait::async_trait;
 use mgc_types::{MgError, MgResult, Version};
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 const DEFAULT_API_URL: &str = "https://pub.dev";
+const MAX_PUB_GRAPH_SOLVE_ROUNDS: usize = 128;
 
 /// Native pub.dev engine.
 /// Engine native pub.dev.
@@ -68,6 +69,136 @@ impl PubProtocol {
         Ok(body)
     }
 
+    async fn package_doc(&self, name: &str) -> MgResult<PubPackage> {
+        validate_pub_package_name(name)?;
+        let url = format!("{}/api/packages/{name}", self.api_url);
+        let body = self.get_text(&url).await?;
+        serde_json::from_str(&body)
+            .map_err(|error| MgError::Other(format!("parse pub.dev json failed: {error}")))
+    }
+
+    fn select_entry(
+        name: &str,
+        doc: &PubPackage,
+        constraints: &[String],
+    ) -> MgResult<ResolvedEntry> {
+        let mut best: Option<(Version, &PubVersion)> = None;
+        for candidate in &doc.versions {
+            let Ok(version) = Version::parse(&candidate.version) else {
+                continue;
+            };
+            if !constraints
+                .iter()
+                .all(|constraint| dart_matches(constraint, &version))
+            {
+                continue;
+            }
+            if best
+                .as_ref()
+                .is_none_or(|(selected, _)| version > *selected)
+            {
+                best = Some((version, candidate));
+            }
+        }
+
+        let (version, candidate) = best.ok_or_else(|| {
+            MgError::DependencyConflict(format!(
+                "no pub.dev version of '{name}' satisfies all constraints: {}",
+                constraints.join(" AND ")
+            ))
+        })?;
+        if candidate.archive_url.is_empty() {
+            return Err(MgError::Other(format!(
+                "package {name} {version} has no archive_url"
+            )));
+        }
+
+        let mut markers = Vec::new();
+        if !candidate.pubspec.environment.sdk.is_empty() {
+            markers.push(format!("sdk:{}", candidate.pubspec.environment.sdk));
+        }
+        let deps = parse_pub_dependencies(&candidate.pubspec.dependencies, &mut markers)?;
+        Ok(ResolvedEntry {
+            name: name.to_string(),
+            version: version.to_string(),
+            deps,
+            artifact_url: candidate.archive_url.clone(),
+            sha256: candidate.archive_sha256.clone().unwrap_or_default(),
+            extra_markers: markers,
+        })
+    }
+
+    /// Resolve all project roots together. Each pass derives constraints from
+    /// the previous pass's selected package versions, then selects the highest
+    /// version satisfying every currently known incoming edge. Rebuilding the
+    /// constraint map each pass removes edges from superseded versions. Cycles
+    /// or a graph that does not converge fail closed; this solver does not
+    /// claim PubGrub-style backtracking for cases requiring a lower parent.
+    /// (Resolve chung mọi root. Mỗi lượt gom constraint từ graph đã chọn ở
+    /// lượt trước, chọn bản cao nhất thỏa tất cả cạnh; graph dựng lại để bỏ
+    /// cạnh của version cũ. Chu trình/không hội tụ fail-closed; chưa claim
+    /// backtracking kiểu PubGrub khi cần hạ version package cha.)
+    async fn resolve_joint_roots(
+        &self,
+        roots: &[(String, String)],
+    ) -> MgResult<Vec<ResolvedEntry>> {
+        let mut docs = HashMap::<String, PubPackage>::new();
+        let mut selected = HashMap::<String, ResolvedEntry>::new();
+        let mut seen_states = HashSet::<Vec<(String, String)>>::new();
+
+        for _ in 0..MAX_PUB_GRAPH_SOLVE_ROUNDS {
+            let mut constraints = BTreeMap::<String, BTreeSet<String>>::new();
+            for (name, range) in roots {
+                constraints
+                    .entry(name.clone())
+                    .or_default()
+                    .insert(range.clone());
+            }
+            for entry in selected.values() {
+                for (dependency, range) in &entry.deps {
+                    constraints
+                        .entry(dependency.clone())
+                        .or_default()
+                        .insert(range.clone());
+                }
+            }
+
+            let mut next = HashMap::<String, ResolvedEntry>::new();
+            for (name, ranges) in constraints {
+                if !docs.contains_key(&name) {
+                    docs.insert(name.clone(), self.package_doc(&name).await?);
+                }
+                let constraints = ranges.into_iter().collect::<Vec<_>>();
+                let doc = docs.get(&name).ok_or_else(|| {
+                    MgError::Integrity(format!("missing cached pub.dev metadata for '{name}'"))
+                })?;
+                let entry = Self::select_entry(&name, doc, &constraints)?;
+                next.insert(name, entry);
+            }
+
+            let signature = selection_signature(&next);
+            let previous_signature = selection_signature(&selected);
+            if signature == previous_signature {
+                let ordered = next
+                    .into_iter()
+                    .collect::<BTreeMap<_, _>>()
+                    .into_values()
+                    .collect();
+                return Ok(ordered);
+            }
+            if !seen_states.insert(signature) {
+                return Err(MgError::DependencyConflict(
+                    "pub.dev dependency selection oscillates across graph passes; refusing to emit an unstable lock graph".to_string(),
+                ));
+            }
+            selected = next;
+        }
+
+        Err(MgError::DependencyConflict(format!(
+            "pub.dev dependency graph did not converge within {MAX_PUB_GRAPH_SOLVE_ROUNDS} passes"
+        )))
+    }
+
     /// Materialize a package into the pub cache layout:
     /// `{pub_cache}/hosted/pub.dev/{name}-{version}/`. Usable by
     /// `dart pub get --offline`.
@@ -98,46 +229,15 @@ impl Default for PubProtocol {
 #[async_trait]
 impl RegistryProtocol for PubProtocol {
     async fn resolve(&self, name: &str, range: &str) -> MgResult<ResolvedEntry> {
-        let url = format!("{}/api/packages/{name}", self.api_url);
-        let body = self.get_text(&url).await?;
-        let doc: PubPackage = serde_json::from_str(&body)
-            .map_err(|e| MgError::Other(format!("parse pub.dev json failed: {e}")))?;
+        let doc = self.package_doc(name).await?;
+        Self::select_entry(name, &doc, &[range.to_string()])
+    }
 
-        let mut best: Option<(Version, &PubVersion)> = None;
-        for pv in &doc.versions {
-            let Ok(version) = Version::parse(&pv.version) else {
-                continue;
-            };
-            if !dart_matches(range, &version) {
-                continue;
-            }
-            if best.as_ref().is_none_or(|(v, _)| version > *v) {
-                best = Some((version, pv));
-            }
-        }
-
-        let (version, pv) =
-            best.ok_or_else(|| MgError::Other(format!("no version of {name} matches '{range}'")))?;
-        if pv.archive_url.is_empty() {
-            return Err(MgError::Other(format!(
-                "package {name} {version} has no archive_url"
-            )));
-        }
-
-        let mut markers = Vec::new();
-        if !pv.pubspec.environment.sdk.is_empty() {
-            markers.push(format!("sdk:{}", pv.pubspec.environment.sdk));
-        }
-        let deps = parse_pub_dependencies(&pv.pubspec.dependencies, &mut markers)?;
-
-        Ok(ResolvedEntry {
-            name: name.to_string(),
-            version: version.to_string(),
-            deps,
-            artifact_url: pv.archive_url.clone(),
-            sha256: pv.archive_sha256.clone().unwrap_or_default(),
-            extra_markers: markers,
-        })
+    async fn resolve_graph_roots(
+        &self,
+        roots: &[(String, String)],
+    ) -> MgResult<Vec<ResolvedEntry>> {
+        self.resolve_joint_roots(roots).await
     }
 
     async fn download(&self, entry: &ResolvedEntry) -> MgResult<Vec<u8>> {
@@ -160,12 +260,22 @@ impl RegistryProtocol for PubProtocol {
     }
 }
 
+fn selection_signature(selected: &HashMap<String, ResolvedEntry>) -> Vec<(String, String)> {
+    let mut signature = selected
+        .iter()
+        .map(|(name, entry)| (name.clone(), entry.version.clone()))
+        .collect::<Vec<_>>();
+    signature.sort();
+    signature
+}
+
 fn parse_pub_dependencies(
     dependencies: &HashMap<String, serde_json::Value>,
     markers: &mut Vec<String>,
 ) -> MgResult<Vec<(String, String)>> {
     let mut parsed = Vec::with_capacity(dependencies.len());
     for (name, value) in dependencies {
+        validate_pub_package_name(name)?;
         // SDK-owned packages are part of the selected SDK, not pub.dev.
         if matches!(
             name.as_str(),
@@ -202,6 +312,16 @@ fn parse_pub_dependencies(
     }
     parsed.sort();
     Ok(parsed)
+}
+
+fn validate_pub_package_name(name: &str) -> MgResult<()> {
+    let mut bytes = name.bytes();
+    if !bytes.next().is_some_and(|byte| byte.is_ascii_lowercase())
+        || !bytes.all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+    {
+        return Err(MgError::InvalidPackageName(name.to_string()));
+    }
+    Ok(())
 }
 
 /// Dart constraint matcher: `any`, `^x.y.z`, bare = exact, space-separated
@@ -371,5 +491,13 @@ mod tests {
         let parsed = parse_pub_dependencies(&dependencies, &mut markers).unwrap();
         assert_eq!(parsed, vec![("http".to_string(), "^1.0.0".to_string())]);
         assert_eq!(markers, vec!["sdk-owned:flutter_test"]);
+    }
+
+    #[test]
+    fn pub_package_names_cannot_escape_registry_path_segments() {
+        for name in ["../escape", "@scope/pkg", "UpperCase", "foo/bar"] {
+            assert!(validate_pub_package_name(name).is_err(), "accepted {name}");
+        }
+        assert!(validate_pub_package_name("valid_pkg2").is_ok());
     }
 }
