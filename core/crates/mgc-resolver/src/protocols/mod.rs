@@ -132,7 +132,21 @@ pub trait RegistryProtocol: Send + Sync {
         queue.push_back((name.to_string(), range.to_string()));
 
         while let Some((n, r)) = queue.pop_front() {
-            if chosen.contains_key(&n) {
+            if let Some(chosen_version) = chosen.get(&n) {
+                // A package may be reached through multiple parents with
+                // different constraints. Re-resolve the later constraint
+                // instead of silently reusing the first version: if its
+                // registry-selected result differs, this resolver has no
+                // backtracking/intersection solver and must fail closed.
+                // (Một package có thể có nhiều range từ các parent; không
+                // được âm thầm giữ bản đầu nếu range sau chọn bản khác.)
+                let candidate = self.resolve(&n, &r).await?;
+                if candidate.version != *chosen_version {
+                    return Err(MgError::DependencyConflict(format!(
+                        "incompatible constraints for {n}: selected {chosen_version}, but constraint '{r}' resolves to {} (native resolver does not backtrack yet)",
+                        candidate.version
+                    )));
+                }
                 continue;
             }
             let entry = self.resolve(&n, &r).await?;

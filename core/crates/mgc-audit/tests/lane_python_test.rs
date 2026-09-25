@@ -10,7 +10,10 @@
 //! đồng thời, evidence provenance (binary E2E ở cli/tests/audit_cli_e2e).
 #![allow(clippy::unwrap_used)]
 
-use mgc_audit::scanners::{find_pylock_file, find_requirements_file, parse_pip_audit_json};
+use mgc_audit::scanners::{
+    find_pylock_file, find_requirements_file, parse_pip_audit_json, read_requirements_pins,
+    read_uv_lock_pins,
+};
 
 /// Official pip-audit JSON: top-level ARRAY of dependencies.
 /// JSON chính thức của pip-audit: MẢNG top-level các dependency.
@@ -234,18 +237,109 @@ fn mgc_lock_python_pins_extract_without_spawning() {
         "version = \"3\"\n\n[metadata]\ngenerated_at = \"x\"\ngenerator = \"t\"\nlockfile_hash = \"\"\n\n[[package]]\nname = \"six\"\nversion = \"1.17.0\"\nresolved = \"https://x/six.whl\"\nintegrity = \"sha256-abc\"\necosystem = \"python\"\n",
     )
     .unwrap();
-    let pins = mgc_audit::scanners::python_pins_from_mgc_lock(dir.path());
+    let pins = mgc_audit::scanners::python_pins_from_mgc_lock(dir.path())
+        .unwrap()
+        .unwrap();
     assert_eq!(pins.len(), 1, "one python pin, got {pins:?}");
     assert_eq!(pins[0].name, "six");
     assert_eq!(pins[0].version, "1.17.0");
     // Non-python entries never leak into the python audit.
     std::fs::write(
         dir.path().join("mgc.lock"),
-        "version = \"3\"\n\n[metadata]\ngenerated_at = \"x\"\ngenerator = \"t\"\nlockfile_hash = \"\"\n\n[[package]]\nname = \"left-pad\"\nversion = \"1.3.0\"\nresolved = \"https://x\"\nintegrity = \"sha256-x\"\necosystem = \"npm\"\n",
+        "version = \"3\"\n\n[metadata]\ngenerated_at = \"x\"\ngenerator = \"t\"\nlockfile_hash = \"\"\n\n[[package]]\nname = \"left-pad\"\nversion = \"1.3.0\"\nresolved = \"https://x\"\nintegrity = \"sha256-x\"\necosystem = \"web\"\n",
     )
     .unwrap();
     assert!(
-        mgc_audit::scanners::python_pins_from_mgc_lock(dir.path()).is_empty(),
+        mgc_audit::scanners::python_pins_from_mgc_lock(dir.path())
+            .unwrap()
+            .unwrap()
+            .is_empty(),
         "npm entries must not surface as python pins"
     );
+}
+
+#[test]
+fn uv_lock_pins_are_normalized_and_non_pypi_sources_are_reported() {
+    let raw = r#"version = 1
+revision = 3
+requires-python = ">=3.9"
+resolution-markers = ["sys_platform == 'win32'"]
+
+[[package]]
+name = "zope.interface"
+version = "6.4"
+source = { registry = "https://pypi.org/simple/" }
+
+[[package]]
+name = "internal"
+version = "1.2.3"
+source = { registry = "https://packages.example.test/simple" }
+"#;
+
+    let (pins, skipped) = read_uv_lock_pins(raw).unwrap();
+    assert_eq!(pins.len(), 1);
+    assert_eq!(pins[0].name, "zope-interface");
+    assert_eq!(pins[0].version, "6.4");
+    assert_eq!(pins[0].ecosystem, "PyPI");
+    assert_eq!(
+        skipped.len(),
+        2,
+        "private source and marker coverage are disclosed"
+    );
+}
+
+#[test]
+fn uv_lock_malformed_package_fails_closed() {
+    let raw = "version = 1\n[[package]]\nname = \"missing-version\"\n";
+    assert!(read_uv_lock_pins(raw).is_err());
+    assert!(read_uv_lock_pins("[[package]]\nname = \"x\"\nversion = \"1.0\"\n").is_err());
+}
+
+#[test]
+fn missing_mgc_lock_is_distinct_from_a_valid_empty_graph() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(
+        mgc_audit::scanners::python_pins_from_mgc_lock(dir.path())
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn requirements_reader_keeps_only_exact_pins_and_reports_partial_coverage() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("requirements.txt"),
+        "zope.interface[security]==6.4; python_version >= '3.9'\nrequests>=2.0\n-r nested.txt\n",
+    )
+    .unwrap();
+
+    let (pins, skipped) = read_requirements_pins(dir.path()).unwrap();
+    assert_eq!(pins.len(), 1);
+    assert_eq!(pins[0].name, "zope-interface");
+    assert_eq!(pins[0].version, "6.4");
+    assert_eq!(pins[0].ecosystem, "PyPI");
+    assert!(
+        skipped
+            .iter()
+            .any(|reason| reason.contains("environment marker"))
+    );
+    assert!(skipped.iter().any(|reason| reason.contains("not an exact")));
+    assert!(
+        skipped
+            .iter()
+            .any(|reason| reason.contains("include/option"))
+    );
+    assert!(
+        skipped
+            .iter()
+            .any(|reason| reason.contains("complete resolved dependency graph"))
+    );
+}
+
+#[test]
+fn malformed_mgc_lock_is_not_treated_as_an_empty_python_graph() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("mgc.lock"), "this is not a valid lockfile").unwrap();
+    assert!(mgc_audit::scanners::python_pins_from_mgc_lock(dir.path()).is_err());
 }

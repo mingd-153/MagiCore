@@ -114,7 +114,7 @@ pub async fn audit_java(project_root: &Path) -> MgResult<AuditReport> {
                 scanned: report.packages_audited,
                 skipped: 0,
                 reasons: vec![
-                    "pom.xml covers direct dependencies only — transitive graph (parents/BOMs/profiles) unresolved; use gradle verification-metadata.xml for a resolved-graph audit"
+                    "pom.xml covers direct dependencies only — transitive graph (parents/BOMs/profiles) is not resolved by MagiCore; a complete native audit is unavailable for this project shape"
                         .to_string(),
                 ],
             };
@@ -124,7 +124,7 @@ pub async fn audit_java(project_root: &Path) -> MgResult<AuditReport> {
     let has_gradle = project_root.join("build.gradle").is_file()
         || project_root.join("build.gradle.kts").is_file();
     Ok(AuditReport::unsupported_ecosystem(if has_gradle {
-        "lib/java (gradle project without verification-metadata.xml — run `gradle dependencies --write-verification-metadata sha256` first)"
+        "lib/java (Gradle dependency graph is not natively resolved by MagiCore; audit is unsupported without a MagiCore-owned resolved lock graph)"
     } else {
         "lib/java (no gradle project or pom.xml detected)"
     }))

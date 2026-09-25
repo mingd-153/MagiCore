@@ -50,10 +50,12 @@ pub use v4::{
     claim_matches, claim_specificity, peer_context_digest, select_source,
 };
 pub use verifier::{
-    VerificationStatus, verification_status_message, verify_lockfile, verify_ownership_completeness,
+    VerificationStatus, verification_status_message, verify_lockfile, verify_lockfile_with_trust,
+    verify_ownership_completeness,
 };
 pub use writer::{
-    serialize_lockfile, sign_and_write_lockfile, sign_lockfile_with_default_key, write_lockfile,
+    ensure_lockfile_mutation_allowed, serialize_lockfile, sign_and_write_lockfile,
+    sign_lockfile_with_default_key, write_lockfile,
 };
 
 // Issue #4: Lockfile V2 - Temporary stub, replace with proper v2 implementation
@@ -85,6 +87,13 @@ pub enum LockfileError {
 
     #[error("Signature verification failed: {0}")]
     VerificationFailed(String),
+
+    /// A normal dependency mutation cannot rewrite a signed lock without
+    /// an explicit re-sign transaction. The current v3 sidecar format is a
+    /// two-file protocol, so silently replacing only `mgc.lock` would turn
+    /// a successful install into a tampered lock.
+    #[error("refusing to mutate signed mgc.lock: {0}")]
+    SignedLockMutation(String),
 
     #[error("Lockfile tampered: {0}")]
     TamperedLockfile(String),

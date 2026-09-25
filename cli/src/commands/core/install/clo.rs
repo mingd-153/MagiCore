@@ -6,62 +6,39 @@ use super::super::dev::clo as clo_tools;
 use super::super::shared;
 use mgc_types::Ecosystem;
 
-// DELEGATED: terraform init/get (or the CDK/Pulumi web-engine lane) runs
-// for real — mgc does not own this dependency lifecycle.
-// (DELEGATED: terraform init/get (hoặc lane web-engine CDK/Pulumi) chạy
-// thật — mgc không sở hữu lifecycle dependency này.)
 pub async fn install(
     packages: Vec<String>,
     dry_run: bool,
     compat_runtime: Option<String>,
 ) -> Result<()> {
+    // All cloud dependency lifecycle operations pass the same owner gate;
+    // only CDK/Pulumi with package.json use the embedded MGC JS engine.
     let root = shared::core_project_root("clo")?;
+    let cloud_kind = clo_tools::cloud_type(&root)?;
+    crate::commands::dep_gate::gate_cloud_project(
+        &root,
+        &cloud_kind,
+        crate::commands::dep_gate::DepOp::Install,
+        compat_runtime.as_deref(),
+    )?;
     let adapter = shared::core_adapter(&Ecosystem::Cloud);
     if dry_run {
-        // terraform passthrough — in lệnh init/get KHÔNG chạy (spec §5 criterion)
         if !packages.is_empty() {
             mgc_ui::info(&format!(
-                "[dry-run] ignoring package args {:?} — terraform install = init/get",
+                "[dry-run] would add cloud packages: {:?}",
                 packages
             ));
         }
-        let cloud_kind = clo_tools::cloud_type(&root)?;
-        if cloud_kind != "terraform" {
-            mgc_ui::info(&format!(
-                "[dry-run] would run npm-registry install via mgc-resolver for {cloud_kind}"
-            ));
-            return Ok(());
-        }
-        mgc_ui::info("[dry-run] would run: terraform init");
-        mgc_ui::info("[dry-run] would run: terraform get");
+        mgc_ui::info(&format!(
+            "[dry-run] would run MagiCore-managed dependency install for {cloud_kind}"
+        ));
         return Ok(());
     }
-    // C0 ownership firewall (T0.3): terraform init/get delegates; the
-    // CDK/Pulumi branch rides the native web engine and skips the gate.
-    // (Tường lửa C0: terraform init/get delegate; nhánh CDK/Pulumi đi
-    // engine web native nên không qua gate.)
-    let cloud_kind = clo_tools::cloud_type(&root)?;
-    if cloud_kind == "terraform" {
-        let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
-        crate::commands::dep_gate::gate(
-            &crate::commands::dep_gate::DepContext::new(
-                "clo",
-                Some(crate::commands::dep_gate::eco::TERRAFORM),
-                None,
-                None,
-                crate::commands::dep_gate::DepOp::Install,
-            ),
-            Some("terraform"),
-            &compat,
-            Some(&root.join(".magicore").join("exec.log")),
-        )?;
-    }
-    for pkg in &packages {
-        let spinner = mgc_ui::create_spinner(&format!("  Adding {}...", pkg));
-        let name = mgc_types::PackageName::new(pkg)?;
-        let opts = mgc_types::adapter::AddOptions::default();
-        adapter.add(&root, &name, None, opts).await?;
-        spinner.finish_and_clear();
+    if !packages.is_empty() {
+        shared::add(
+            &*adapter, &root, packages, None, false, false, false, false, false, false, false,
+        )
+        .await?;
     }
     shared::install_with_adapter(
         &*adapter,

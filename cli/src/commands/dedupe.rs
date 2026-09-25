@@ -4,7 +4,6 @@
 use anyhow::{Context, Result, bail};
 use clap::Args;
 use mgc_config::project::ProjectConfig;
-use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
@@ -41,14 +40,18 @@ pub struct DedupeEntry {
 }
 
 /// Merge duplicate lockfile entries into a merged Lockfile (no-op if none).
-fn merged_lockfile(lock: &mgc_lockfile::Lockfile) -> (mgc_lockfile::Lockfile, usize) {
-    let mut seen: HashMap<(String, String), bool> = HashMap::new();
+fn merged_lockfile(lock: &mgc_lockfile::Lockfile) -> Result<(mgc_lockfile::Lockfile, usize)> {
+    // Package name/version alone is not a unified-lock identity: identical
+    // names can belong to different cores, ecosystems, registries, sources,
+    // or carry distinct graph/target metadata. Deduplicate only exact full
+    // serialized records so this GC-oriented command cannot erase ownership.
+    // (Chỉ khử bản ghi đầy đủ giống hệt để không làm mất owner/graph/target.)
+    let mut seen = std::collections::HashSet::new();
     let mut merged = 0usize;
     let mut new_packages = Vec::new();
     for pkg in &lock.packages {
-        let key = (pkg.name.clone(), pkg.version.clone());
-        if let std::collections::hash_map::Entry::Vacant(e) = seen.entry(key) {
-            e.insert(true);
+        let key = toml::to_string(pkg).context("serialize package identity for dedupe")?;
+        if seen.insert(key) {
             new_packages.push(pkg.clone());
         } else {
             merged += 1;
@@ -56,8 +59,12 @@ fn merged_lockfile(lock: &mgc_lockfile::Lockfile) -> (mgc_lockfile::Lockfile, us
     }
     let mut new_lock = lock.clone();
     new_lock.packages = new_packages;
-    (new_lock, merged)
+    Ok((new_lock, merged))
 }
+
+#[cfg(test)]
+#[path = "test/dedupe.rs"]
+mod dedupe_tests;
 
 /// Runtime verification (user decision 2026-08-05): build the project after
 /// merging; rollback the lockfile if the build fails.
@@ -191,7 +198,7 @@ pub async fn run(args: DedupeArgs) -> Result<()> {
     let lock: mgc_lockfile::Lockfile = mgc_lockfile::serialization::from_toml(&lock_content)?;
     let before = lock.packages.len();
 
-    let (new_lock, merged) = merged_lockfile(&lock);
+    let (new_lock, merged) = merged_lockfile(&lock)?;
     let after = new_lock.packages.len();
 
     // Dry-run performs ZERO mutations: no cleanup, no write, no verify
@@ -219,6 +226,7 @@ pub async fn run(args: DedupeArgs) -> Result<()> {
         // failed merge never deletes materialization it might need back.
         // (Commit nguyên tử → verify → mới GC; fail thì rollback nguyên tử.)
         let new_toml = mgc_lockfile::serialization::to_toml(&new_lock)?;
+        mgc_lockfile::ensure_lockfile_mutation_allowed(&mgc_lock)?;
         mgc_lockfile::atomic::atomic_write_locked(
             &guard,
             &mgc_lock,

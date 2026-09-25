@@ -38,18 +38,22 @@ pub async fn resolve_with_protocol(
 ) -> MgResult<NativeResolution> {
     // Resolve every direct dep once, collecting the deduped transitive set.
     // (Resolve mỗi dep trực tiếp một lần, gom tập bắc cầu đã khử trùng.)
-    let mut chosen: HashMap<String, String> = HashMap::new();
+    let mut chosen: HashMap<String, ResolvedEntry> = HashMap::new();
     let mut entries: Vec<ResolvedEntry> = Vec::new();
     for dep in &manifest.dependencies {
-        if chosen.contains_key(dep.name.as_str()) {
-            continue;
-        }
         let sub = protocol
             .resolve_graph(dep.name.as_str(), dep.range.as_str())
             .await?;
         for entry in sub {
-            if !chosen.contains_key(&entry.name) {
-                chosen.insert(entry.name.clone(), entry.version.clone());
+            if let Some(existing) = chosen.get(&entry.name) {
+                if existing != &entry {
+                    return Err(mgc_types::MgError::DependencyConflict(format!(
+                        "registry resolution for {} is inconsistent across root dependencies ({} vs {}); refusing to write an ambiguous lock graph",
+                        entry.name, existing.version, entry.version
+                    )));
+                }
+            } else {
+                chosen.insert(entry.name.clone(), entry.clone());
                 entries.push(entry);
             }
         }
@@ -58,12 +62,10 @@ pub async fn resolve_with_protocol(
     let mut packages = Vec::with_capacity(entries.len());
     let mut lock_packages = Vec::with_capacity(entries.len());
     for entry in &entries {
-        let Ok(name) = PackageName::new(entry.name.clone()) else {
-            continue;
-        };
-        let Ok(version) = Version::parse(&entry.version) else {
-            continue;
-        };
+        let name = PackageName::new(entry.name.clone())
+            .map_err(|_| mgc_types::MgError::InvalidPackageName(entry.name.clone()))?;
+        let version = Version::parse(&entry.version)
+            .map_err(|_| mgc_types::MgError::InvalidVersion(entry.version.clone()))?;
         let direct = manifest
             .dependencies
             .iter()
@@ -72,13 +74,20 @@ pub async fn resolve_with_protocol(
         let deps: Vec<PackageId> = entry
             .deps
             .iter()
-            .filter_map(|(dep_name, _)| {
-                let dep_name = PackageName::new(dep_name.clone()).ok()?;
-                let dep_version = chosen.get(dep_name.as_str())?;
-                let dep_version = Version::parse(dep_version).ok()?;
-                Some(PackageId::new(dep_name, dep_version))
+            .map(|(dep_name, range)| {
+                let package_name = PackageName::new(dep_name.clone())
+                    .map_err(|_| mgc_types::MgError::InvalidPackageName(dep_name.clone()))?;
+                let resolved = chosen.get(package_name.as_str()).ok_or_else(|| {
+                    mgc_types::MgError::DependencyConflict(format!(
+                        "resolved package {}@{} references {} ({range}) which is absent from the resolved graph",
+                        entry.name, entry.version, dep_name
+                    ))
+                })?;
+                let dep_version = Version::parse(&resolved.version)
+                    .map_err(|_| mgc_types::MgError::InvalidVersion(resolved.version.clone()))?;
+                Ok(PackageId::new(package_name, dep_version))
             })
-            .collect();
+            .collect::<mgc_types::MgResult<Vec<_>>>()?;
 
         let integrity = if entry.sha256.is_empty() {
             String::new()
@@ -97,6 +106,7 @@ pub async fn resolve_with_protocol(
         });
 
         lock_packages.push(Package {
+            owner_core: None,
             name: entry.name.clone(),
             version: entry.version.clone(),
             resolved: entry.artifact_url.clone(),

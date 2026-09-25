@@ -14,8 +14,8 @@
 use crate::contract::ScanStep;
 use std::path::Path;
 
-/// Cargo.toml → cargo-audit (rust).
-/// (Cargo.toml → cargo-audit.)
+/// Cargo.toml → MGC's native OSV scanner (rust).
+/// Cargo.toml → scanner OSV native của MGC (Rust).
 pub fn rust_step(project_root: &Path) -> Option<ScanStep<'static>> {
     if !project_root.join("Cargo.toml").is_file() {
         return None;
@@ -23,7 +23,7 @@ pub fn rust_step(project_root: &Path) -> Option<ScanStep<'static>> {
     let root = project_root.to_path_buf();
     Some(ScanStep {
         ecosystem: "rust",
-        scanner: "cargo-audit",
+        scanner: "mgc-rust-osv",
         run: Box::new(move || {
             let root = root.clone();
             Box::pin(async move { crate::scanners::audit_rust(&root).await })
@@ -31,13 +31,13 @@ pub fn rust_step(project_root: &Path) -> Option<ScanStep<'static>> {
     })
 }
 
-/// Any Python dependency manifest → pip-audit (python). Recognized set
+/// Any Python dependency manifest → MGC's native OSV scanner (python). Recognized set
 /// mirrors the scanner's own routing: requirements variants, PEP 751
 /// pylock variants, uv.lock, pyproject.toml. A manifest the scanner
 /// cannot consume (uv.lock without export, pyproject without lockfile)
 /// still yields a step — the SCANNER reports the honest Failed, the
 /// gate never hides a recognized manifest.
-/// Mọi manifest dependency Python → pip-audit. Manifest scanner không
+/// Mọi manifest dependency Python → scanner OSV native của MGC. Manifest scanner không
 /// đọc được vẫn cho step — SCANNER báo Failed trung thực, gate không
 /// giấu manifest đã nhận diện.
 pub fn python_step(project_root: &Path) -> Option<ScanStep<'static>> {
@@ -51,7 +51,7 @@ pub fn python_step(project_root: &Path) -> Option<ScanStep<'static>> {
     let root = project_root.to_path_buf();
     Some(ScanStep {
         ecosystem: "python",
-        scanner: "pip-audit",
+        scanner: "mgc-python-osv",
         run: Box::new(move || {
             let root = root.clone();
             Box::pin(async move { crate::scanners::audit_python(&root).await })
@@ -59,8 +59,8 @@ pub fn python_step(project_root: &Path) -> Option<ScanStep<'static>> {
     })
 }
 
-/// go.mod → govulncheck (go).
-/// (go.mod → govulncheck.)
+/// go.mod → MGC's native OSV scanner (go).
+/// go.mod → scanner OSV native của MGC (Go).
 pub fn go_step(project_root: &Path) -> Option<ScanStep<'static>> {
     if !project_root.join("go.mod").is_file() {
         return None;
@@ -68,7 +68,7 @@ pub fn go_step(project_root: &Path) -> Option<ScanStep<'static>> {
     let root = project_root.to_path_buf();
     Some(ScanStep {
         ecosystem: "go",
-        scanner: "govulncheck",
+        scanner: "mgc-go-osv",
         run: Box::new(move || {
             let root = root.clone();
             Box::pin(async move { crate::scanners::audit_go(&root).await })

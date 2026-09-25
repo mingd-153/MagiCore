@@ -1,9 +1,5 @@
 use anyhow::Result;
-use std::path::{Path, PathBuf};
-
-fn not_available(reason: &str) -> anyhow::Error {
-    crate::error::app_not_available(reason)
-}
+use std::path::Path;
 
 pub fn project_root() -> Result<std::path::PathBuf> {
     let cwd = std::env::current_dir()?;
@@ -49,43 +45,11 @@ pub fn gate_react_native(
     Ok(())
 }
 
-/// Lệnh install theo language — Q18 (allowlist §5.1: flutter/pub/gradle/swift).
+/// Provider-toolchain install command for lanes that still explicitly delegate.
+/// Lệnh cài đặt dành cho lane còn được phép delegate sang toolchain.
 pub struct InstallCommand {
     pub tool: String,
     pub args: Vec<String>,
-}
-
-// DELEGATED: the chosen command runs the native toolchain for real
-// (flutter/gradle/swift) — mgc orchestrates only.
-// (DELEGATED: lệnh được chọn chạy toolchain gốc thật (flutter/gradle/
-// swift) — mgc chỉ điều phối.)
-fn install_command(lang: mgc_app_adapter::AppLanguage) -> InstallCommand {
-    match lang {
-        mgc_app_adapter::AppLanguage::Flutter => InstallCommand {
-            tool: "flutter".to_string(),
-            args: vec!["pub".to_string(), "get".to_string()],
-        },
-        mgc_app_adapter::AppLanguage::Kotlin => InstallCommand {
-            tool: "gradle".to_string(),
-            args: vec!["dependencies".to_string()],
-        },
-        mgc_app_adapter::AppLanguage::Swift => InstallCommand {
-            tool: "swift".to_string(),
-            args: vec!["package".to_string(), "resolve".to_string()],
-        },
-        mgc_app_adapter::AppLanguage::ReactNative => InstallCommand {
-            tool: String::new(),
-            args: vec![],
-        },
-        mgc_app_adapter::AppLanguage::ObjC => InstallCommand {
-            tool: String::new(),
-            args: vec![],
-        },
-        mgc_app_adapter::AppLanguage::Multi => InstallCommand {
-            tool: String::new(),
-            args: vec![],
-        },
-    }
 }
 
 /// Native flutter install: pubspec → pub.dev → mgc.lock, no toolchain.
@@ -100,14 +64,10 @@ pub async fn install_flutter_native(
     if !packages.is_empty() {
         return Err(crate::error::install_app_packages_use_add(&packages));
     }
-    if dry_run {
-        mgc_ui::info(
-            "[dry-run] would run: native flutter install (resolve pub.dev, write mgc.lock)",
-        );
-        return Ok(());
-    }
     let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
-    crate::commands::dep_gate::gate(
+    let adapter =
+        mgc_app_adapter::adapter_for(root).ok_or_else(crate::error::app_project_not_detected)?;
+    crate::commands::dep_gate::gate_native_adapter(
         &crate::commands::dep_gate::DepContext::new(
             "app",
             Some(mgc_app_adapter::AppLanguage::Flutter.ecosystem()),
@@ -115,12 +75,15 @@ pub async fn install_flutter_native(
             None,
             crate::commands::dep_gate::DepOp::Install,
         ),
-        None,
+        &adapter,
         &compat,
-        Some(&root.join(".magicore").join("exec.log")),
     )?;
-    let adapter =
-        mgc_app_adapter::adapter_for(root).ok_or_else(crate::error::app_project_not_detected)?;
+    if dry_run {
+        mgc_ui::info(
+            "[dry-run] native Flutter dependency install is available; no package manager will be spawned",
+        );
+        return Ok(());
+    }
     let adapter: std::sync::Arc<dyn mgc_types::adapter::PackageAdapter> =
         std::sync::Arc::new(adapter);
     crate::commands::core::shared::install_with_adapter(
@@ -194,28 +157,11 @@ pub fn run_tool_with_env(
     Ok(())
 }
 
-/// Lệnh theo language cho verb — None = không có CLI passthrough, sửa manifest tay.
-///
-/// DELEGATED: the passthrough commands run the native toolchains for real
-/// (flutter pub add / gradle / swift package) — mgc orchestrates only.
-/// (DELEGATED: lệnh passthrough chạy toolchain gốc thật (flutter pub add
-/// / gradle / swift package) — mgc chỉ điều phối.)
+/// Dependency verbs never fall back to provider package managers.
+/// Lệnh dependency không bao giờ fallback sang package manager bên ngoài.
 pub fn tool_command(lang: mgc_app_adapter::AppLanguage, verb: &str) -> Option<InstallCommand> {
-    let (tool, base): (&str, &[&str]) = match (lang, verb) {
-        (mgc_app_adapter::AppLanguage::Flutter, "add") => ("flutter", &["pub", "add"]),
-        (mgc_app_adapter::AppLanguage::Flutter, "remove") => ("flutter", &["pub", "remove"]),
-        (mgc_app_adapter::AppLanguage::Flutter, "list") => ("flutter", &["pub", "deps"]),
-        (mgc_app_adapter::AppLanguage::Flutter, "update") => ("flutter", &["pub", "upgrade"]),
-        (mgc_app_adapter::AppLanguage::Kotlin, "list") => ("gradle", &["dependencies"]),
-        (mgc_app_adapter::AppLanguage::Swift, "list") => {
-            ("swift", &["package", "show-dependencies"])
-        }
-        _ => return None,
-    };
-    Some(InstallCommand {
-        tool: tool.to_string(),
-        args: base.iter().map(|s| s.to_string()).collect(),
-    })
+    let _ = (lang, verb);
+    None
 }
 
 pub fn manifest_hint(lang: mgc_app_adapter::AppLanguage, verb: &str) -> anyhow::Error {
@@ -232,7 +178,7 @@ pub fn manifest_hint(lang: mgc_app_adapter::AppLanguage, verb: &str) -> anyhow::
     crate::error::manifest_hint(verb, &format!("{lang:?}"), file)
 }
 
-/// `mgc install` — passthrough tool theo language; `--dry-run` in lệnh không chạy.
+/// `mgc install app` only enters an implemented MagiCore-native lane.
 pub async fn install(
     packages: Vec<String>,
     dry_run: bool,
@@ -242,48 +188,44 @@ pub async fn install(
     let root = project_root()?;
     let lang = language(&root)?;
 
-    if !packages.is_empty() && dry_run {
-        mgc_ui::info("[dry-run] ignoring package args — app deps flow through provider tooling");
+    if matches!(
+        lang,
+        mgc_app_adapter::AppLanguage::Flutter
+            | mgc_app_adapter::AppLanguage::Swift
+            | mgc_app_adapter::AppLanguage::ReactNative
+    ) {
+        return install_app_native(&root, lang, packages, dry_run, compat_runtime, frozen).await;
     }
 
-    if lang == mgc_app_adapter::AppLanguage::Multi {
-        return install_multi(&root, dry_run, compat_runtime).await;
-    }
-    if matches!(lang, mgc_app_adapter::AppLanguage::ObjC) {
-        return install_objc(&root, dry_run, compat_runtime).await;
-    }
-    // Flutter installs natively (pubspec parse → pub.dev resolve → verified
-    // fetch → mgc.lock + pub cache; zero `flutter` spawn). The native
-    // pipeline is the SAME shape as lib (parse/resolve/install/lock).
-    // (Flutter install native qua adapter.)
-    if lang == mgc_app_adapter::AppLanguage::Flutter {
-        return install_flutter_native(&root, packages, dry_run, compat_runtime, frozen).await;
-    }
+    Err(crate::error::native_dependency_engine_unavailable(
+        "app",
+        lang.ecosystem(),
+        "install",
+    ))
+}
 
-    // install_command is PURE (zero spawn) — resolve before the gate so
-    // React Native (empty command) hits the app/rn Unsupported rule (P0#2)
-    // instead of the generic not-available error below.
-    // (install_command thuần túy — resolve trước gate để RN vào rule.)
-    let cmd = install_command(lang);
-    if dry_run {
-        if cmd.tool.is_empty() {
-            return Err(not_available(
-                "has no install flow for this language yet — edit manifest and resolve with the platform tool",
-            ));
-        }
-        mgc_ui::info(&format!(
-            "[dry-run] would run: {} {} (real install runs when the tool is present — drop `--dry-run`)",
-            cmd.tool,
-            cmd.args.join(" ")
+async fn install_app_native(
+    root: &Path,
+    lang: mgc_app_adapter::AppLanguage,
+    packages: Vec<String>,
+    dry_run: bool,
+    compat_runtime: Option<String>,
+    frozen: bool,
+) -> Result<()> {
+    if !packages.is_empty() && lang != mgc_app_adapter::AppLanguage::Flutter {
+        return Err(crate::error::native_dependency_engine_unavailable(
+            "app",
+            lang.ecosystem(),
+            "install package arguments; use the native add operation",
         ));
-        return Ok(());
+    }
+    if lang == mgc_app_adapter::AppLanguage::Flutter {
+        return install_flutter_native(root, packages, dry_run, compat_runtime, frozen).await;
     }
     let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
-    // C0 ownership firewall (T0.3): single control path — provider
-    // toolchain spawn only behind an explicit compat opt-in.
-    // (Tường lửa C0: đường điều khiển duy nhất — chỉ spawn toolchain khi
-    // có compat tường minh.)
-    crate::commands::dep_gate::gate(
+    let adapter =
+        mgc_app_adapter::adapter_for(root).ok_or_else(crate::error::app_project_not_detected)?;
+    crate::commands::dep_gate::gate_native_adapter(
         &crate::commands::dep_gate::DepContext::new(
             "app",
             Some(lang.ecosystem()),
@@ -291,187 +233,27 @@ pub async fn install(
             None,
             crate::commands::dep_gate::DepOp::Install,
         ),
-        if cmd.tool.is_empty() {
-            None
-        } else {
-            Some(cmd.tool.as_str())
-        },
+        &adapter,
         &compat,
-        Some(&root.join(".magicore").join("exec.log")),
     )?;
-    if cmd.tool.is_empty() {
-        return Err(not_available(
-            "has no install flow for this language yet — edit manifest and resolve with the platform tool",
-        ));
-    }
-    mgc_ui::info(&format!("Installing: {} {}", cmd.tool, cmd.args.join(" ")));
-    run_tool(&root, &cmd.tool, &cmd.args)?;
-    Ok(())
-}
-
-/// Multi: install từng platform trong subdir; toolchain thiếu → lỗi rõ
-/// (skip không bao giờ tính là xong).
-async fn install_multi(root: &Path, dry_run: bool, compat_runtime: Option<String>) -> Result<()> {
-    let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
-    let audit_log = root.join(".magicore").join("exec.log");
-    let (android, ios, flutter) = platform_install_commands();
-    let mut platforms: Vec<(&str, PathBuf, InstallCommand)> = vec![
-        ("android", root.join("android"), android),
-        ("ios", root.join("ios"), ios),
-        ("flutter", root.join("flutter"), flutter),
-    ];
-    platforms.push((
-        "react-native",
-        root.join("react-native"),
-        InstallCommand {
-            tool: String::new(),
-            args: vec![],
-        },
-    ));
-    let mut skipped: Vec<String> = Vec::new();
-    for (name, dir, cmd) in platforms {
-        if !dir.exists() {
-            mgc_ui::info(&format!("Platform '{name}' missing directory — skipping"));
-            continue;
-        }
-        // Per-platform ecosystem for the gate: react-native MUST hit the
-        // app/rn Unsupported rule (P0#2) — never a skip-warning.
-        // (Ecosystem từng platform cho gate: RN phải vào rule Unsupported.)
-        let platform_eco: Option<&str> = match name {
-            "android" => Some(crate::commands::dep_gate::eco::KOTLIN),
-            "ios" => Some(crate::commands::dep_gate::eco::SWIFT),
-            "flutter" => Some(crate::commands::dep_gate::eco::FLUTTER),
-            "react-native" => Some(crate::commands::dep_gate::eco::RN),
-            _ => None,
-        };
-        if cmd.tool.is_empty() {
-            // No runner for this platform: still pass the gate so the
-            // Unsupported rule (not a skip-warning) owns the failure.
-            crate::commands::dep_gate::gate(
-                &crate::commands::dep_gate::DepContext::new(
-                    "app",
-                    platform_eco,
-                    None,
-                    None,
-                    crate::commands::dep_gate::DepOp::Install,
-                ),
-                None,
-                &compat,
-                Some(&audit_log),
-            )?;
-            mgc_ui::warning(&format!(
-                "{name} install is blocked in beta until a MagiCore-native runner is available"
-            ));
-            skipped.push(name.to_string());
-            continue;
-        }
-        if dry_run {
-            mgc_ui::info(&format!(
-                "[dry-run] would run in {name}/: {} {}",
-                cmd.tool,
-                cmd.args.join(" ")
-            ));
-            continue;
-        }
-        // Shared PATH/PATHEXT lookup (build::tool_unavailable): exact
-        // name plus .BAT/.CMD/.EXE wrappers, so a `flutter.bat` shim
-        // counts as present on Windows (P0#4 fix).
-        if crate::commands::build::tool_unavailable(&cmd.tool) {
-            mgc_ui::warning(&format!("{} not found — skipping {name} install", cmd.tool));
-            skipped.push(format!("{name} ({} not found)", cmd.tool));
-            continue;
-        }
-        // C0 ownership firewall per platform (T0.3).
-        // (Tường lửa C0 cho từng platform.)
-        crate::commands::dep_gate::gate(
-            &crate::commands::dep_gate::DepContext::new(
-                "app",
-                platform_eco,
-                None,
-                None,
-                crate::commands::dep_gate::DepOp::Install,
-            ),
-            Some(cmd.tool.as_str()),
-            &compat,
-            Some(&audit_log),
-        )?;
-        mgc_ui::info(&format!(
-            "Installing {name}: {} {}",
-            cmd.tool,
-            cmd.args.join(" ")
-        ));
-        run_tool(&dir, &cmd.tool, &cmd.args)?;
-    }
-    if !skipped.is_empty() {
-        return Err(crate::error::app_multi_platforms_skipped(&skipped));
-    }
-    Ok(())
-}
-
-/// Shared app platforms with native allowlisted toolchains only.
-/// Các platform dùng toolchain allowlist; React Native chờ runner native riêng.
-///
-/// DELEGATED: every command here runs the native toolchain for real —
-/// mgc orchestrates only, it does not own these lifecycles.
-/// (DELEGATED: mọi lệnh ở đây chạy toolchain gốc thật — mgc chỉ điều
-/// phối, không sở hữu các lifecycle này.)
-fn platform_install_commands() -> (InstallCommand, InstallCommand, InstallCommand) {
-    (
-        InstallCommand {
-            tool: "gradle".to_string(),
-            args: vec!["dependencies".to_string()],
-        },
-        InstallCommand {
-            tool: "swift".to_string(),
-            args: vec!["package".to_string(), "resolve".to_string()],
-        },
-        InstallCommand {
-            tool: "flutter".to_string(),
-            args: vec!["pub".to_string(), "get".to_string()],
-        },
-    )
-}
-
-/// objC: resolve package dependencies qua xcodebuild (allowlist §3 — xcodebuild P2).
-/// Project/workspace tìm từ thư mục con; không thấy → lỗi rõ.
-async fn install_objc(root: &Path, dry_run: bool, compat_runtime: Option<String>) -> Result<()> {
-    let Some(xcode_project) = find_xcode_project(root) else {
-        return Err(crate::error::xcode_project_missing(root));
-    };
-    let (flag, name) = if xcode_project.ends_with(".xcworkspace") {
-        ("-workspace", xcode_project.as_str())
-    } else {
-        ("-project", xcode_project.as_str())
-    };
-    let args: Vec<String> = vec![
-        "-resolvePackageDependencies".to_string(),
-        flag.to_string(),
-        name.to_string(),
-    ];
     if dry_run {
         mgc_ui::info(&format!(
-            "[dry-run] would run: xcodebuild {} (real install runs when Xcode is present)",
-            args.join(" ")
+            "[dry-run] native app dependency install is available for {}; no package manager will be spawned",
+            lang.as_str()
         ));
         return Ok(());
     }
-    let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
-    // C0 ownership firewall (T0.3): xcodebuild resolves packages — delegated.
-    // (Tường lửa C0: xcodebuild resolve package — delegate.)
-    crate::commands::dep_gate::gate(
-        &crate::commands::dep_gate::DepContext::new(
-            "app",
-            Some(crate::commands::dep_gate::eco::OBJC),
-            None,
-            None,
-            crate::commands::dep_gate::DepOp::Install,
-        ),
-        Some("xcodebuild"),
-        &compat,
-        Some(&root.join(".magicore").join("exec.log")),
-    )?;
-    mgc_ui::info(&format!("Installing objC: xcodebuild {}", args.join(" ")));
-    run_tool(root, "xcodebuild", &args)
+    crate::commands::core::shared::install_with_adapter(
+        &adapter,
+        root,
+        "mgc install app",
+        frozen,
+        mgc_types::adapter::InstallOptions {
+            legacy_flat: false,
+            ..Default::default()
+        },
+    )
+    .await
 }
 
 /// Tìm Xcode project — ưu tiên workspace, fallback project, không đệ quy sâu.

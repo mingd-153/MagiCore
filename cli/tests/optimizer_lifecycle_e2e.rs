@@ -155,6 +155,12 @@ path = "src/main.rs"
     )
     .unwrap();
 
+    std::fs::write(
+        project.join("Cargo.lock"),
+        "version = 4\n\n[[package]]\nname = \"test-optimizer-lib\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+
     std::fs::create_dir(project.join("src")).unwrap();
     std::fs::write(
         project.join("src/main.rs"),

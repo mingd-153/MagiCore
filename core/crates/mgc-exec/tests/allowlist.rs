@@ -8,12 +8,10 @@ use mgc_exec::prelude::*;
 fn allows_known_tools() {
     for tool in [
         "cargo",
-        "pip",
         "python",
         "python3",
         "go",
         "mvn",
-        "composer",
         "node",
         "git",
         "docker",
@@ -26,10 +24,12 @@ fn allows_known_tools() {
 
 #[test]
 fn rejects_forbidden_npm_family() {
-    for tool in ["npm", "npx", "pnpm", "yarn", "bun", "bunx"] {
+    for tool in [
+        "npm", "npx", "pnpm", "yarn", "bun", "deno", "bunx", "composer", "pub",
+    ] {
         let err = check_tool(tool).unwrap_err();
         assert!(
-            err.to_string().contains("permanently forbidden"),
+            err.to_string().contains("is forbidden"),
             "npm-family error must be explicit, got: {err}"
         );
     }
@@ -44,9 +44,38 @@ fn rejects_forbidden_absolute_pm_paths() {
     ] {
         let err = check_tool(tool).unwrap_err();
         assert!(
-            err.to_string().contains("permanently forbidden"),
+            err.to_string().contains("is forbidden"),
             "absolute PM path must be blocked, got: {err}"
         );
+    }
+}
+
+#[test]
+fn package_managers_are_blocked_in_every_execution_scope_even_with_compat() {
+    use mgc_exec::allowlist::{check_tool_with_scope, check_tool_with_scope_compat};
+    use std::path::Path;
+
+    let root = Path::new("/tmp/project");
+    for scope in [
+        ExecutionScope::Install,
+        ExecutionScope::TestRunner,
+        ExecutionScope::BuildRunner,
+        ExecutionScope::DevServer,
+    ] {
+        for tool in ["npm", "pnpm", "yarn", "bun", "deno", "npx", "bunx"] {
+            assert!(
+                check_tool_with_scope(tool, scope, Some(root)).is_err(),
+                "{tool} unexpectedly allowed in {scope:?}"
+            );
+        }
+        for rival in ["bun", "deno", "composer", "pub"] {
+            let err = check_tool_with_scope_compat(rival, scope, Some(root), Some(rival))
+                .expect_err("legacy compat mode must never authorize a rival runtime");
+            assert!(
+                err.to_string().contains("forbidden"),
+                "{rival} must be refused by the executor deny-list in {scope:?}: {err}"
+            );
+        }
     }
 }
 

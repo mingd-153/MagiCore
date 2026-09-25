@@ -1,36 +1,33 @@
 //! PackageAdapter implementation for cloud cores.
-//! Điều phối CDK/Pulumi delegate và Terraform passthrough riêng khỏi detect.
+//! Cloud project detection and lifecycle orchestration.
 //!
 //! Global Gate 1 (2026-09-16): DependencyResolver/ArtifactFetcher/
 //! LockfileProvider are NOT claimed — the registry surface is real only
-//! through the embedded web engine (CDK/Pulumi), so the conditional
-//! delegates stay as overrides while `resolve` remains fail-closed for
-//! Terraform. The terraform write_manifest silent-Ok no-op is now
+//! through the embedded web engine (CDK/Pulumi). Direct adapter mutations
+//! fail closed; CLI mutations still pass through the shared gateway. The
+//! terraform write_manifest silent-Ok no-op is now
 //! fail-closed (hardware precedent). What IS claimed: detection,
 //! scaffold, deploy, lifecycle, install (real in both branches), audit.
 //! Global Gate 1: KHÔNG claim DependencyResolver/ArtifactFetcher/
 //! LockfileProvider — mặt registry chỉ thật qua web engine nhúng
-//! (CDK/Pulumi), delegate điều kiện giữ nguyên làm override còn `resolve`
-//! vẫn fail-closed cho Terraform. No-op Ok âm thầm của write_manifest
+//! (CDK/Pulumi). Mutation trực tiếp fail-closed; CLI mutation qua gateway.
+//! No-op Ok âm thầm của write_manifest
 //! terraform giờ fail-closed (tiền lệ hardware). Claim thật: detect,
 //! scaffold, deploy, lifecycle, install (thật ở cả 2 nhánh), audit.
 
 use crate::cloud_type::{CloudType, detect_type, manifest_is_cloud};
-use crate::tooling::exec_tool;
 use async_trait::async_trait;
 use mgc_types::adapter::{
     AddOptions, AuditReport, InstallOptions, InstallSummary, InstalledPackage, PackageAdapter,
-    UpdatedPackage,
+    PreparedAdd,
 };
 use mgc_types::capabilities::{
     ArtifactFetcher, AuditProvider, Capability, ContentStoreProvider, CoreIdent,
     DependencyResolver, DeployProvider, LifecycleRunner, LockfileProvider, ProjectDetector,
     ScaffoldProvider,
 };
-use mgc_types::{
-    Ecosystem, Manifest, MgResult, PackageId, PackageName, ResolvedGraph, VersionRange,
-};
-use std::path::{Path, PathBuf};
+use mgc_types::{Ecosystem, Manifest, MgResult, PackageName, ResolvedGraph, VersionRange};
+use std::path::Path;
 
 pub struct CloudAdapter {
     cloud_type: CloudType,
@@ -43,15 +40,21 @@ impl CloudAdapter {
     /// - ScaffoldProvider: src/scaffold + `mgc create-clo` — real.
     /// - DeployProvider: src/deploy (cdk deploy / pulumi up /
     ///   terraform apply via mgc-exec, dry-run default) — real.
-    /// - LifecycleRunner: install runs `terraform init`/`terraform get`;
-    ///   CDK/Pulumi ride the web engine — real.
-    /// - ContentStoreProvider: install is REAL in both branches
-    ///   (terraform passthrough or web-engine delegate) — claimed.
+    /// - LifecycleRunner: only the CDK/Pulumi web-backed lane is present.
+    /// - ContentStoreProvider is claimed only when CDK/Pulumi has a Web
+    ///   adapter; Terraform package lifecycle remains unsupported.
     /// - AuditProvider: terraform provider-lock lane + polyglot + web
     ///   delegate — real.
     ///
     /// Bảng capability (Global Gate 1) — ghi chú theo code thật.
     pub const CAPABILITIES: &'static [Capability] = &[
+        Capability::ProjectDetector,
+        Capability::ScaffoldProvider,
+        Capability::DeployProvider,
+        Capability::AuditProvider,
+    ];
+
+    pub const CAPABILITIES_WEB: &'static [Capability] = &[
         Capability::ProjectDetector,
         Capability::ScaffoldProvider,
         Capability::DeployProvider,
@@ -81,13 +84,6 @@ pub fn adapter_for(root: &Path) -> anyhow::Result<Option<CloudAdapter>> {
         None
     };
     Ok(Some(CloudAdapter { cloud_type, web }))
-}
-
-fn no_package_manager(cloud_type: CloudType) -> MgResult<()> {
-    Err(mgc_types::MgError::Other(format!(
-        "{} has no package manager — write resources in HCL directly; use `mgc dev` / `mgc deploy`",
-        cloud_type.as_str()
-    )))
 }
 
 impl CoreIdent for CloudAdapter {
@@ -131,23 +127,31 @@ impl DeployProvider for CloudAdapter {
 }
 
 impl LifecycleRunner for CloudAdapter {
-    /// Evidence: install runs `terraform init` + `terraform get` (below);
-    /// CDK/Pulumi ride the web engine lifecycle.
-    /// Dẫn chứng: install chạy `terraform init` + `terraform get` (bên
-    /// dưới); CDK/Pulumi đi trên lifecycle web engine.
     fn probe_lifecycle_runner(&self) -> MgResult<()> {
-        Ok(())
+        if self.web.is_some() {
+            Ok(())
+        } else {
+            Err(mgc_types::capabilities::unsupported_capability(
+                "cloud",
+                "lifecycle_runner",
+                "Terraform init/get is not a MagiCore-owned lifecycle runner; package lifecycle is unsupported",
+            ))
+        }
     }
 }
 
 #[async_trait]
 impl ContentStoreProvider for CloudAdapter {
-    /// Evidence: install is REAL in both branches — terraform passthrough
-    /// (exec_tool init/get) or the embedded web engine pipeline.
-    /// Dẫn chứng: install THẬT ở cả hai nhánh — passthrough terraform
-    /// (exec_tool init/get) hoặc pipeline web engine nhúng.
     fn probe_content_store(&self) -> MgResult<()> {
-        Ok(())
+        if self.web.is_some() {
+            Ok(())
+        } else {
+            Err(mgc_types::capabilities::unsupported_capability(
+                "cloud",
+                "content_store",
+                "Terraform install delegates to the terraform CLI and is not an MGC content store",
+            ))
+        }
     }
 
     async fn install(
@@ -159,26 +163,11 @@ impl ContentStoreProvider for CloudAdapter {
         if let Some(web) = &self.web {
             return web.install(graph, project_root, opts).await;
         }
-        exec_tool(project_root, "terraform", &["init".to_string()])?;
-        exec_tool(project_root, "terraform", &["get".to_string()])?;
-        // DELEGATED: install is owned by terraform (`init` + `get` ran
-        // for real above and fetched the modules/providers); mgc does
-        // not own this lifecycle. The summary is HONEST — it only
-        // counts the packages a provided graph named (usually empty for
-        // terraform: resolve is fail-closed, there is no registry
-        // graph). Empty graph → empty summary (truthful), never a
-        // fabricated list; cache bytes stay uncounted (Delegated mode).
-        // DELEGATED: install thuộc terraform (`init` + `get` đã chạy thật
-        // bên trên và tải module/provider); mgc KHÔNG sở hữu lifecycle
-        // này. Summary TRUNG THỰC — chỉ đếm package mà graph cung cấp nêu
-        // (thường rỗng với terraform: resolve fail-closed, không có graph
-        // registry). Graph rỗng → summary rỗng (trung thực), không bao
-        // giờ bịa danh sách; byte cache không đếm (chế độ Delegated).
-        Ok(InstallSummary {
-            added: graph.packages.iter().map(|p| p.id.clone()).collect(),
-            cache_mode: mgc_types::adapter::InstallCacheMode::Delegated,
-            ..Default::default()
-        })
+        Err(mgc_types::capabilities::unsupported_capability(
+            "cloud",
+            "install",
+            "Terraform provider initialization is unsupported by MagiCore; no external package manager is invoked by PackageAdapter::install",
+        ))
     }
 }
 
@@ -223,39 +212,6 @@ impl DependencyResolver for CloudAdapter {
                        (`terraform init` runs during install); no registry graph"
                 .to_string(),
         })
-    }
-
-    async fn add(
-        &self,
-        project_root: &Path,
-        name: &PackageName,
-        range: Option<&VersionRange>,
-        opts: AddOptions,
-    ) -> MgResult<PackageId> {
-        if let Some(web) = &self.web {
-            return web.add(project_root, name, range, opts).await;
-        }
-        no_package_manager(self.cloud_type)?;
-        unreachable!()
-    }
-
-    async fn remove(&self, project_root: &Path, name: &PackageName) -> MgResult<()> {
-        if let Some(web) = &self.web {
-            return web.remove(project_root, name).await;
-        }
-        no_package_manager(self.cloud_type)
-    }
-
-    async fn update(
-        &self,
-        project_root: &Path,
-        name: Option<&PackageName>,
-    ) -> MgResult<Vec<UpdatedPackage>> {
-        if let Some(web) = &self.web {
-            return web.update(project_root, name).await;
-        }
-        no_package_manager(self.cloud_type)?;
-        Ok(vec![])
     }
 }
 
@@ -323,7 +279,11 @@ impl AuditProvider for CloudAdapter {
 #[async_trait]
 impl PackageAdapter for CloudAdapter {
     fn capabilities(&self) -> &'static [Capability] {
-        Self::CAPABILITIES
+        if self.web.is_some() {
+            Self::CAPABILITIES_WEB
+        } else {
+            Self::CAPABILITIES
+        }
     }
 
     fn manifest_identity(&self) -> Option<mgc_types::ManifestIdentity> {
@@ -342,6 +302,23 @@ impl PackageAdapter for CloudAdapter {
             format: format.to_string(),
             relpath: relpath.to_string(),
         })
+    }
+
+    async fn prepare_add(
+        &self,
+        project_root: &Path,
+        name: &PackageName,
+        range: Option<&VersionRange>,
+        opts: AddOptions,
+    ) -> MgResult<PreparedAdd> {
+        let Some(web) = &self.web else {
+            return Err(mgc_types::capabilities::unsupported_capability(
+                "cloud",
+                "native prepare-add",
+                "only CDK/Pulumi projects with a JavaScript manifest have an embedded MagiCore package engine",
+            ));
+        };
+        web.prepare_add(project_root, name, range, opts).await
     }
 
     /// P0/F6: forward to the embedded web engine (TS delegate resolves
@@ -379,24 +356,23 @@ impl PackageAdapter for CloudAdapter {
 
     async fn list(&self, project_root: &Path) -> MgResult<Vec<InstalledPackage>> {
         if let Some(web) = &self.web {
-            return web.list(project_root).await;
+            if project_root.join("package.json").is_file() {
+                return web.list(project_root).await;
+            }
+            return Err(mgc_types::MgError::Unsupported {
+                core: "cloud",
+                capability: "list",
+                guidance: "cloud dependency listing currently supports CDK/Pulumi projects with a package.json manifest only".to_string(),
+            });
         }
-        let manifest = self.parse_manifest(project_root).await?;
-        Ok(manifest
-            .all_dependencies()
-            .map(|dep| InstalledPackage {
-                id: PackageId::new(
-                    dep.name.clone(),
-                    dep.range
-                        .satisfying_version()
-                        .unwrap_or_else(|| mgc_types::Version::new(0, 1, 0)),
-                ),
-                path: PathBuf::new(),
-                integrity: None,
-                is_direct: true,
-                is_dev: dep.dev,
-            })
-            .collect())
+        Err(mgc_types::MgError::Unsupported {
+            core: "cloud",
+            capability: "list",
+            guidance: format!(
+                "{} does not expose a dependency manifest that MagiCore can list",
+                self.cloud_type.as_str()
+            ),
+        })
     }
 }
 

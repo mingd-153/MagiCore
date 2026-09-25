@@ -126,6 +126,21 @@ fn adapter_for_returns_some_with_wrangler() {
     assert!(adapter_for(&dir).is_some());
 }
 
+#[tokio::test]
+async fn list_fails_closed_because_pipeline_files_are_not_packages() {
+    let dir = tmp("list-not-packages");
+    std::fs::write(dir.join(".gitlab-ci.yml"), "stages: [test]\n").unwrap();
+    let adapter = adapter_for(&dir).unwrap();
+    let error = adapter.list(&dir).await.unwrap_err();
+    assert!(matches!(
+        error,
+        mgc_types::MgError::Unsupported {
+            capability: "list",
+            ..
+        }
+    ));
+}
+
 #[test]
 fn adapter_for_returns_none_without_markers() {
     let dir = tmp("af-none");

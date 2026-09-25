@@ -29,8 +29,7 @@ async fn install_esp32_rust(project_root: &Path) -> MgResult<Vec<String>> {
     Err(MgError::Unsupported {
         core: "iot",
         capability: "install (esp32-rust)",
-        guidance: "esp32-rust install is not E2E-verified yet; \
-                   run `cargo fetch` manually until toolchain orchestration lands"
+        guidance: "esp32-rust dependency installation is unsupported: MagiCore does not yet own its resolver, lock, fetch, verification, store, and materializer"
             .to_string(),
     })
 }
@@ -46,8 +45,7 @@ async fn install_platformio(project_root: &Path) -> MgResult<Vec<String>> {
     Err(MgError::Unsupported {
         core: "iot",
         capability: "install (platformio)",
-        guidance: "PlatformIO install is not implemented yet; \
-                   run `pio pkg install` manually"
+        guidance: "PlatformIO dependency installation is unsupported: MagiCore does not yet own its resolver, lock, fetch, verification, store, and materializer"
             .to_string(),
     })
 }
@@ -63,8 +61,7 @@ async fn install_zephyr(project_root: &Path) -> MgResult<Vec<String>> {
     Err(MgError::Unsupported {
         core: "iot",
         capability: "install (zephyr)",
-        guidance: "Zephyr install is not implemented yet; \
-                   run `west update` manually"
+        guidance: "Zephyr dependency installation is unsupported: MagiCore does not yet own its resolver, lock, fetch, verification, store, and materializer"
             .to_string(),
     })
 }

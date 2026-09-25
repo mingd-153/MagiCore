@@ -15,7 +15,7 @@ pub fn verify_cargo_lock(project_root: &Path) -> MgResult<()> {
 
     if !lock_path.exists() {
         return Err(MgError::Other(
-            "Cargo.lock not found (run cargo fetch first)".to_string(),
+            "Cargo.lock not found; MagiCore cannot verify this project until its native resolver writes the lockfile".to_string(),
         ));
     }
 

@@ -12,6 +12,7 @@
 
 #![allow(clippy::unwrap_used)]
 
+use async_trait::async_trait;
 use mgc_resolver::protocols::{NpmProtocol, RegistryProtocol, ResolvedEntry};
 
 fn assert_unsupported(err: &mgc_types::MgError, core: &str, capability: &str) {
@@ -89,4 +90,57 @@ fn default_store_ref_matches_blake3_cas_layout() {
     let expected_hex = blake3::hash(bytes).to_hex().to_string();
     let expected = format!("files/blake3/{}/{}", &expected_hex[..2], expected_hex);
     assert_eq!(NpmProtocol.store_ref(bytes), expected);
+}
+
+struct ConflictingGraphProtocol;
+
+#[async_trait]
+impl RegistryProtocol for ConflictingGraphProtocol {
+    async fn resolve(&self, name: &str, range: &str) -> mgc_types::MgResult<ResolvedEntry> {
+        let (version, deps) = match name {
+            "root" => (
+                "1.0.0",
+                vec![
+                    ("left".to_string(), "*".to_string()),
+                    ("right".to_string(), "*".to_string()),
+                ],
+            ),
+            "left" => ("1.0.0", vec![("shared".to_string(), "^1".to_string())]),
+            "right" => ("1.0.0", vec![("shared".to_string(), "^2".to_string())]),
+            "shared" if range == "^1" => ("1.5.0", vec![]),
+            "shared" if range == "^2" => ("2.1.0", vec![]),
+            "shared" => ("2.1.0", vec![]),
+            _ => {
+                return Err(mgc_types::MgError::Other(format!(
+                    "unexpected package {name}"
+                )));
+            }
+        };
+        Ok(ResolvedEntry {
+            name: name.to_string(),
+            version: version.to_string(),
+            deps,
+            artifact_url: format!("https://registry.invalid/{name}/{version}"),
+            sha256: "00".repeat(32),
+            extra_markers: vec![],
+        })
+    }
+
+    async fn download(&self, _entry: &ResolvedEntry) -> mgc_types::MgResult<Vec<u8>> {
+        Ok(vec![])
+    }
+}
+
+#[tokio::test]
+async fn graph_resolution_rejects_conflicting_transitive_ranges() {
+    let error = ConflictingGraphProtocol
+        .resolve_graph("root", "*")
+        .await
+        .unwrap_err();
+    assert!(matches!(error, mgc_types::MgError::DependencyConflict(_)));
+    assert!(
+        error
+            .to_string()
+            .contains("incompatible constraints for shared")
+    );
 }

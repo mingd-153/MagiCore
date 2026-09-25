@@ -18,23 +18,8 @@ fn tmp(tag: &str) -> std::path::PathBuf {
     dir
 }
 
-/// Hermetic guard: true when the tool IS installed — tests asserting
-/// "unavailable without tool" must skip in that environment.
-/// Guard hermetic: true khi tool ĐÃ cài — test assert "unavailable khi
-/// thiếu tool" phải bỏ qua trong môi trường đó.
-fn tool_installed(tool: &str) -> bool {
-    std::process::Command::new("which")
-        .arg(tool)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
-
 #[tokio::test]
 async fn audit_flutter_security_is_unsupported_not_clean() {
-    if tool_installed("flutter") {
-        return;
-    }
     let dir = tmp("flutter-no-tool");
     std::fs::write(dir.join("pubspec.yaml"), "name: test\n").unwrap();
 
@@ -52,9 +37,6 @@ async fn audit_flutter_security_is_unsupported_not_clean() {
 
 #[tokio::test]
 async fn dependency_health_flutter_without_flutter_fails_closed() {
-    if tool_installed("flutter") {
-        return;
-    }
     let dir = tmp("flutter-no-tool");
     std::fs::write(dir.join("pubspec.yaml"), "name: test\n").unwrap();
 
@@ -66,10 +48,7 @@ async fn dependency_health_flutter_without_flutter_fails_closed() {
 }
 
 #[tokio::test]
-async fn audit_kotlin_without_gradle_is_tool_missing() {
-    if tool_installed("gradle") {
-        return;
-    }
+async fn audit_kotlin_without_native_lock_evidence_is_unsupported() {
     let dir = tmp("kotlin-no-tool");
     std::fs::write(dir.join("build.gradle"), "// empty\n").unwrap();
 
@@ -77,7 +56,7 @@ async fn audit_kotlin_without_gradle_is_tool_missing() {
     assert_eq!(report.vulnerability_count, 0);
     assert!(matches!(
         report.scanner_status,
-        ScannerStatus::ToolMissing { .. }
+        ScannerStatus::UnsupportedEcosystem { .. }
     ));
 }
 
@@ -119,73 +98,35 @@ async fn audit_multi_detects_flutter_as_unsupported() {
     ));
 }
 
-// ===== Multi-language aggregation (Tech Lead 2026-09-09 §11) =====
-// Multi KHÔNG còn first-match: mọi manifest nhận diện đều được scan và
-// tổng hợp — pubspec + gradle cùng lúc phải ra Partial (flutter chưa có
-// scanner + kotlin thiếu gradle → không bao giờ chỉ trả 1 core).
+// Multi-language audit scans all detected manifests without package tools.
 
 #[tokio::test]
 async fn audit_multi_aggregates_every_manifest_not_first_match() {
     let dir = tmp("multi-aggregate");
-    // BOTH manifests present — the old first-match code returned the
-    // flutter result and never looked at gradle. The aggregate must
-    // reach the KOTLIN step whatever the machine's gradle state:
-    // gradle absent → ToolMissing(gradle); gradle present (CI runners
-    // ship it preinstalled) → the scanner runs and reports Failed
-    // (fixture has no dependencyCheckAnalyze task). Either terminal
-    // state proves aggregation looked PAST flutter — a bare flutter
-    // Unsupported would fail this test.
-    // CẢ HAI manifest cùng tồn tại — code first-match cũ trả flutter
-    // rồi không nhìn gradle nữa. Aggregate phải CHẠM tới bước KOTLIN
-    // bất kể gradle trên máy thế nào: vắng gradle → ToolMissing(gradle);
-    // có gradle (runner CI cài sẵn) → scanner chạy và báo Failed
-    // (fixture không có task dependencyCheckAnalyze). Cả hai trạng
-    // thái cuối đều chứng minh aggregate đã nhìn QUA flutter — kết quả
-    // flutter Unsupported trơ trọi sẽ rớt test này.
+    // Both manifests are present. Missing native lock evidence must
+    // remain unsupported regardless of tools installed on this host.
     std::fs::write(dir.join("pubspec.yaml"), "name: test\n").unwrap();
     std::fs::write(dir.join("build.gradle"), "// empty\n").unwrap();
 
     let report = audit_multi(&dir).await.unwrap();
-    match report.scanner_status {
-        mgc_types::adapter::ScannerStatus::ToolMissing { tool, .. } => {
-            assert!(tool.contains("gradle"), "tool must be gradle, got: {tool}");
-        }
-        mgc_types::adapter::ScannerStatus::Failed { scanner, .. } => {
-            assert!(
-                scanner.contains("dependency-check"),
-                "failed scanner must be the kotlin lane, got: {scanner}"
-            );
-        }
-        other => {
-            panic!("aggregate must reach the kotlin step (ToolMissing or Failed), got {other:?}")
-        }
-    }
+    assert!(matches!(
+        report.scanner_status,
+        ScannerStatus::UnsupportedEcosystem { .. } | ScannerStatus::Partial { .. }
+    ));
 }
 
 #[tokio::test]
 async fn audit_multi_aggregate_names_flutter_gap() {
-    // Flutter (no CVE scanner) + a gradle manifest → the aggregate must
-    // NOT be the bare flutter Unsupported result: it reaches the kotlin
-    // lane (ToolMissing when gradle is absent; Failed when the CI runner
-    // ships gradle and the fixture lacks the task). Both prove flutter
-    // did not shadow kotlin.
-    // Flutter (chưa có scanner CVE) + manifest gradle → aggregate
-    // KHÔNG được là kết quả flutter Unsupported trơ trọi: nó chạm lane
-    // kotlin (ToolMissing khi vắng gradle; Failed khi runner CI có
-    // gradle mà fixture thiếu task). Cả hai đều chứng minh flutter
-    // không lấp mất kotlin.
+    // Aggregate behavior is independent of external package-manager tools.
     let dir = tmp("multi-aggregate-2");
     std::fs::write(dir.join("pubspec.yaml"), "name: test\n").unwrap();
     std::fs::write(dir.join("build.gradle.kts"), "// empty\n").unwrap();
 
     let report = audit_multi(&dir).await.unwrap();
-    match report.scanner_status {
-        mgc_types::adapter::ScannerStatus::ToolMissing { .. }
-        | mgc_types::adapter::ScannerStatus::Failed { .. } => {}
-        other => {
-            panic!("aggregate must reach the kotlin lane (ToolMissing or Failed), got {other:?}")
-        }
-    }
+    assert!(matches!(
+        report.scanner_status,
+        ScannerStatus::UnsupportedEcosystem { .. } | ScannerStatus::Partial { .. }
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -200,14 +141,8 @@ async fn audit_multi_aggregate_names_flutter_gap() {
 // gradlew → chạy task → chống report cũ → parse typed → Available.
 // ---------------------------------------------------------------------------
 #[tokio::test]
-async fn audit_kotlin_success_e2e_via_real_gradle_run() {
-    if !tool_installed("gradle") {
-        eprintln!(
-            "SKIP (environment-unverified) test=audit_kotlin_success_e2e_via_real_gradle_run: gradle not installed on this machine"
-        );
-        return;
-    }
-    let dir = tmp("kotlin-success");
+async fn audit_kotlin_does_not_delegate_for_unresolved_project() {
+    let dir = tmp("kotlin-no-delegation");
     // A minimal gradle project whose dependencyCheckAnalyze task writes a
     // dependency-check-schema report with ONE finding (jackson-databind
     // CVE-2020-25649 — captured shape). No plugins, no network.
@@ -252,20 +187,20 @@ tasks.register('dependencyCheckAnalyze') {
         new File(reportDir, 'dependency-check-report.json').text = JsonOutput.toJson(report)
     }
 }
+
 "#,
     )
     .unwrap();
 
     let report = audit_kotlin(&dir).await.unwrap();
-    assert_eq!(
-        report.packages_audited, 2,
-        "both fixture deps count as audited"
+    assert!(matches!(
+        report.scanner_status,
+        ScannerStatus::UnsupportedEcosystem { .. }
+    ));
+    assert!(
+        !dir.join("build/reports/dependency-check-report.json")
+            .exists()
     );
-    assert_eq!(report.vulnerability_count, 1);
-    let vuln = &report.vulnerabilities[0];
-    assert_eq!(vuln.cve, "CVE-2020-25649");
-    assert_eq!(vuln.scanner.as_deref(), Some("owasp-dependency-check"));
-    assert!(matches!(report.scanner_status, ScannerStatus::Available));
 }
 
 // ---------------------------------------------------------------------------

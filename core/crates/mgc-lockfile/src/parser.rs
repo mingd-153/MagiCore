@@ -87,6 +87,18 @@ pub fn load_and_verify_lockfile(
     // Parse public key
     let public_key = Ed25519PublicKey::from_base64(&signer.public_key)?;
 
+    // Bind both human-readable key IDs to the actual public key. The lock
+    // and sidecar are attacker-controlled inputs, so trusting either claimed
+    // ID without recomputing the fingerprint would permit key-ID spoofing.
+    // (Khóa ID trong cả hai file phải khớp fingerprint thật của public key.)
+    let public_key_hash = Blake3Hasher::hash_bytes(&public_key.0);
+    let actual_key_id = hex::encode(&public_key_hash.0[..8]);
+    if signer.key_id != actual_key_id || sig_file.key_id != actual_key_id {
+        return Err(LockfileError::VerificationFailed(
+            "signer key ID does not match the public-key fingerprint".to_string(),
+        ));
+    }
+
     // Parse signature (strip "ed25519-" prefix if present)
     let sig_base64 = sig_file
         .signature

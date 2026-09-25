@@ -17,10 +17,31 @@ pub enum VerificationStatus {
     Tampered(String),
     /// Signature is invalid — Chữ ký không hợp lệ
     InvalidSignature(String),
+    /// Signature is valid, but its signer is not in the project's trust roots.
+    /// Chữ ký hợp lệ nhưng signer không nằm trong trust roots của project.
+    UntrustedKey(String),
 }
 
 /// Verify lockfile integrity and signature — Verify tính toàn vẹn và chữ ký lockfile
 pub fn verify_lockfile(lockfile_path: &Path) -> LockfileResult<VerificationStatus> {
+    verify_lockfile_inner(lockfile_path, None)
+}
+
+/// Verify a v3 lock and require its signer fingerprint to appear in the
+/// caller-supplied project trust roots. Cryptographic validity alone is not
+/// proof that the project trusts the signer.
+/// (Ngoài xác minh mật mã, yêu cầu signer phải có trong trust roots.)
+pub fn verify_lockfile_with_trust(
+    lockfile_path: &Path,
+    trust_keys: &[String],
+) -> LockfileResult<VerificationStatus> {
+    verify_lockfile_inner(lockfile_path, Some(trust_keys))
+}
+
+fn verify_lockfile_inner(
+    lockfile_path: &Path,
+    trust_keys: Option<&[String]>,
+) -> LockfileResult<VerificationStatus> {
     let sig_path = lockfile_path.with_extension("lock.sig");
 
     // Check if signature file exists
@@ -30,7 +51,19 @@ pub fn verify_lockfile(lockfile_path: &Path) -> LockfileResult<VerificationStatu
 
     // Try to load and verify
     match crate::parser::load_and_verify_lockfile(lockfile_path, &sig_path) {
-        Ok(_) => Ok(VerificationStatus::Valid),
+        Ok(lockfile) => {
+            let signer_id = lockfile
+                .metadata
+                .signer
+                .as_ref()
+                .map(|signer| signer.key_id.as_str())
+                .unwrap_or_default();
+            if trust_keys.is_some_and(|keys| !keys.iter().any(|key| key == signer_id)) {
+                Ok(VerificationStatus::UntrustedKey(signer_id.to_string()))
+            } else {
+                Ok(VerificationStatus::Valid)
+            }
+        }
         Err(LockfileError::TamperedLockfile(msg)) => Ok(VerificationStatus::Tampered(msg)),
         Err(LockfileError::VerificationFailed(msg)) => {
             Ok(VerificationStatus::InvalidSignature(msg))
@@ -91,5 +124,8 @@ pub fn verification_status_message(status: &VerificationStatus) -> String {
         }
         VerificationStatus::Tampered(msg) => format!("✗ Lockfile tampered: {}", msg),
         VerificationStatus::InvalidSignature(msg) => format!("✗ Invalid signature: {}", msg),
+        VerificationStatus::UntrustedKey(key_id) => {
+            format!("WARN: Lockfile signer is not trusted: {key_id}")
+        }
     }
 }

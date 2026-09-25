@@ -146,9 +146,14 @@ fn flutter_dev_command(platform: &TargetPlatform, dry_run: bool) -> InstallComma
             InstallCommand {
                 tool: "flutter".to_string(),
                 args: if device_arg == "auto" {
-                    vec!["run".to_string()]
+                    vec!["run".to_string(), "--no-pub".to_string()]
                 } else {
-                    vec!["run".to_string(), "-d".to_string(), device_arg]
+                    vec![
+                        "run".to_string(),
+                        "-d".to_string(),
+                        device_arg,
+                        "--no-pub".to_string(),
+                    ]
                 },
             }
         }
@@ -158,7 +163,12 @@ fn flutter_dev_command(platform: &TargetPlatform, dry_run: bool) -> InstallComma
             }
             InstallCommand {
                 tool: "flutter".to_string(),
-                args: vec!["run".to_string(), "-d".to_string(), "android".to_string()],
+                args: vec![
+                    "run".to_string(),
+                    "-d".to_string(),
+                    "android".to_string(),
+                    "--no-pub".to_string(),
+                ],
             }
         }
     }
@@ -174,7 +184,7 @@ fn kotlin_dev_command(root: &Path) -> InstallCommand {
     let gradle_bin = if has_gradlew { "./gradlew" } else { "gradle" };
     InstallCommand {
         tool: gradle_bin.to_string(),
-        args: vec!["installDebug".to_string()],
+        args: vec!["installDebug".to_string(), "--offline".to_string()],
     }
 }
 
@@ -293,7 +303,16 @@ async fn dev_ios(
         return Ok(());
     }
     mgc_ui::info("App dev (Swift): swift run");
-    crate::commands::core::install::app::run_tool_with_env(root, "swift", &["run".to_string()], env)
+    crate::commands::core::install::app::run_tool_with_env(
+        root,
+        "swift",
+        &[
+            "run".to_string(),
+            "--skip-update".to_string(),
+            "--disable-automatic-resolution".to_string(),
+        ],
+        env,
+    )
 }
 
 // ─── Main entry point ─────────────────────────────────────────────────────────

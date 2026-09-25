@@ -331,8 +331,7 @@ pub enum ModelCmd {
         /// Model name (matches manifest: org/model/file or repo:tag)
         name: String,
     },
-    /// Quantize GGUF (A4: python passthrough `python -m llama_cpp.quantize` —
-    /// no static link to llama-cpp-2; fail-closed if llama_cpp is not installed)
+    /// Quantize GGUF (native quantizer not yet implemented).
     Quantize {
         /// Path to the source model file (GGUF/ggml)
         path: String,
@@ -387,67 +386,12 @@ pub async fn run(args: ModelArgs) -> Result<()> {
     }
 }
 
-/// GGUF quantize qua python passthrough (A4, sys-mgc/05 §4)
-///
-/// DELEGATED: quantization runs inside the external `llama_cpp` python
-/// package (not an MGC-native engine) until the native model runtime
-/// lands — model-lifecycle-via-tool, never claimed as native.
-/// DELEGATED: quantize chạy trong package python ngoài `llama_cpp`
-/// (không phải engine native của MGC) cho tới khi runtime model native
-/// xong — lifecycle model qua tool, không bao giờ tính là native.
-fn quantize(path: &str, target: &str, output: Option<&str>) -> Result<()> {
-    if target != "q4_k_m" && target != "q8_0" {
-        return Err(crate::error::unsupported_quantize_target(target));
-    }
-    if !std::path::Path::new(path).exists() {
-        return Err(crate::error::file_not_found(std::path::Path::new(path)));
-    }
-    let out = match output {
-        Some(o) => o.to_string(),
-        None => format!("{path}.{target}.gguf"),
-    };
-    // WARNING: TĨNH cho đường dẫn được chỉ định — KHÔNG dùng đường dẫn từ prompt
-    // Routed through mgc_exec (allowlist + audit + timeout) like every
-    // other toolchain spawn — raw Command bypasses the gate.
-    // (Chạy qua mgc_exec như mọi toolchain spawn khác.)
-    let probe_opts = mgc_exec::prelude::ExecOptions {
-        cwd: std::env::current_dir().ok(),
-        ..Default::default()
-    };
-    let python_ok = mgc_exec::prelude::run(
-        "python3",
-        &[
-            "-c".to_string(),
-            "import llama_cpp; print('ok')".to_string(),
-        ],
-        &probe_opts,
+/// Fail closed until MagiCore ships its own GGUF quantization engine.
+/// Fail-closed cho tới khi MagiCore có engine lượng tử hóa GGUF riêng.
+fn quantize(_path: &str, _target: &str, _output: Option<&str>) -> Result<()> {
+    anyhow::bail!(
+        "native GGUF quantization is not implemented; MagiCore will not invoke Python or an external quantizer"
     )
-    .map(|r| r.exit_code == 0)
-    .unwrap_or(false);
-    if !python_ok {
-        return Err(crate::error::llama_cpp_missing());
-    }
-    let run_opts = mgc_exec::prelude::ExecOptions {
-        cwd: std::env::current_dir().ok(),
-        ..Default::default()
-    };
-    let report = mgc_exec::prelude::run(
-        "python3",
-        &[
-            "-m".to_string(),
-            "llama_cpp.quantize".to_string(),
-            path.to_string(),
-            out.clone(),
-            target.to_string(),
-        ],
-        &run_opts,
-    )?;
-    if report.exit_code != 0 {
-        return Err(crate::error::llama_quantize_failed(Some(report.exit_code)));
-    }
-    println!("quantized: {} ({target})", out);
-    println!("push to registry: mgc model push {out} --repo ai/<name> (compressed variant)");
-    Ok(())
 }
 
 fn client(registry: &str, token: Option<String>) -> Result<OciClient> {

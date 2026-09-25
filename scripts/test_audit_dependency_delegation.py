@@ -36,7 +36,7 @@ def scan_snippet(rel_path, snippet):
 
 
 class NewToolDetection(unittest.TestCase):
-    """python3 / pip-audit / cargo-audit / govulncheck spawns are found."""
+    """New package-manager and scanner spawns remain visible to the gate."""
 
     def test_python3_quantize_spawn_is_violation_without_marker(self):
         findings = scan_snippet(
@@ -95,9 +95,86 @@ class NewToolDetection(unittest.TestCase):
             "govulncheck spawn must be measured",
         )
 
+    def test_composer_and_pub_package_manager_spawns_are_found(self):
+        findings = scan_snippet(
+            "adapters/lib/src/install/mod.rs",
+            'pub async fn run_install() -> Result<()> {\n'
+            '    mgc_exec::run::run("composer", &["install".to_string()], &opts)?;\n'
+            '    mgc_exec::run::run("pub", &["add".to_string()], &opts)?;\n'
+            '    Ok(())\n'
+            '}\n',
+        )
+        self.assertEqual({finding["tool"] for finding in findings}, {"composer", "pub"})
+        self.assertTrue(all(finding["status"] == "violation" for finding in findings))
+
+    def test_git_fetch_spawn_is_dependency_delegation(self):
+        findings = scan_snippet(
+            "core/crates/mgc-resolver/src/protocols/swift.rs",
+            'async fn resolve_git() -> Result<()> {\n'
+            '    let report = mgc_exec::run::run("git", &args, &opts)?;\n'
+            '    Ok(())\n'
+            '}\n',
+        )
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["tool"], "git")
+        self.assertEqual(findings[0]["status"], "violation")
+
+    def test_dynamic_native_install_wrapper_is_forbidden(self):
+        findings = scan_snippet(
+            "cli/src/commands/core/web.rs",
+            'fn install_member(root: &Path) -> Result<()> {\n'
+            '    run_native_install(root, program, &args)\n'
+            '}\n',
+        )
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["tool"], "run_native_install")
+        self.assertEqual(findings[0]["op_class"], "install")
+        self.assertEqual(findings[0]["status"], "violation")
+
+    def test_install_named_file_does_not_reclassify_dev_runtime_helper(self):
+        findings = scan_snippet(
+            "cli/src/commands/core/install/app.rs",
+            'fn dev_command() {\n'
+            '    let command = InstallCommand { tool: "flutter".to_string() };\n'
+            '}\n',
+        )
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["op_class"], "dev")
+        self.assertEqual(findings[0]["status"], "allowed")
+
+
+class ScanBoundaryCoverage(unittest.TestCase):
+    """Every dependency lane and claimed core-owned tool flow is scanned."""
+
+    def test_list_and_model_command_trees_are_in_dependency_scan_roots(self):
+        self.assertIn("cli/src/commands/core/list", gate.SCAN_ROOTS)
+        self.assertIn("cli/src/commands/model", gate.SCAN_ROOTS)
+
+    def test_project_kind_check_is_not_a_spawn(self):
+        findings = scan_snippet(
+            "cli/src/commands/core/install/clo.rs",
+            'fn install() -> Result<()> {\n'
+            '    let cloud_kind = "terraform";\n'
+            '    if cloud_kind == "terraform" { return Err(err()); }\n'
+            '    Ok(())\n'
+            '}\n',
+        )
+        self.assertEqual(findings, [])
+
+    def test_deployment_tool_is_not_dependency_delegation(self):
+        findings = scan_snippet(
+            "adapters/cloud/src/deploy/mod.rs",
+            'pub async fn deploy() {\n'
+            '    mgc_run("terraform", &["apply"], &opts);\n'
+            '}\n',
+        )
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["op_class"], "deploy")
+        self.assertEqual(findings[0]["status"], "allowed")
+
 
 class MarkerDeclaration(unittest.TestCase):
-    """A DELEGATED: marker flips violation to delegated-documented."""
+    """A DELEGATED marker documents debt but never waives the strict gate."""
 
     def test_marker_in_doc_block_declares_delegation(self):
         findings = scan_snippet(
@@ -112,7 +189,12 @@ class MarkerDeclaration(unittest.TestCase):
             '}\n',
         )
         self.assertEqual(len(findings), 1)
-        self.assertEqual(findings[0]["status"], "delegated-documented")
+        self.assertEqual(
+            findings[0]["status"],
+            "violation",
+            "documenting a dependency-manager spawn must not make it pass",
+        )
+        self.assertTrue(findings[0]["declared_delegation"])
 
 
 class MessageMacroExclusion(unittest.TestCase):
@@ -210,11 +292,15 @@ class ConstArrayExclusion(unittest.TestCase):
 
 
 class RepoLedgerContract(unittest.TestCase):
-    """The committed tree keeps the gate green (measure + declare)."""
+    """The checked-in product tree has no external dependency-manager spawn."""
 
-    def test_repo_ledger_has_zero_violations(self):
+    def test_repo_ledger_blocks_known_delegations(self):
         code = gate.main()
-        self.assertEqual(code, 0, "gate must exit 0 on the working tree")
+        self.assertEqual(
+            code,
+            0,
+            "dependency-manager spawns must be removed or fail-closed",
+        )
 
 
 class LaneGateCoverage(unittest.TestCase):

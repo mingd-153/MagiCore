@@ -1,19 +1,13 @@
 //! PackageAdapter implementation for game cores.
-//! Điều phối Bevy/Godot/Unity/Unreal riêng khỏi detect và helper tooling.
+//! Detects Bevy/Godot/Unity/Unreal without claiming an unimplemented
+//! MagiCore-owned dependency engine.
 //!
-//! Global Gate 1 (2026-09-16): `resolve`/`fetch` overrides are GONE — the
-//! fail-closed `MgError::Unsupported` defaults answer now (game engines
-//! own their dependency graphs). The Bevy toolchain-delegating
-//! add/remove/update stay real (the CLI per-core lane calls `adapter.add`)
-//! while the capability is NOT claimed because `resolve` is fail-closed.
-//! Global Gate 1: override resolve/fetch đã BỊ XÓA — default
-//! `MgError::Unsupported` fail-closed trả lời (engine game tự sở hữu
-//! dependency graph). add/remove/update ủy quyền toolchain Bevy giữ
-//! nguyên (lane CLI per-core gọi `adapter.add`) nhưng capability KHÔNG
-//! được claim vì `resolve` fail-closed.
+//! Dependency operations fail closed until a MagiCore-owned resolver,
+//! lock, fetcher, store, and materializer exist for the selected engine.
+//! No compatibility package-manager execution is provided by this adapter.
+//! Adapter này không cung cấp đường chạy package manager tương thích.
 
 use crate::engine::{GameEngine, detect_engine, manifest_is_game};
-use crate::tooling::{bevy_dep_version, exec_tool, placeholder_id};
 use async_trait::async_trait;
 use mgc_types::adapter::{
     AddOptions, AuditReport, InstallOptions, InstallSummary, InstalledPackage, PackageAdapter,
@@ -26,7 +20,7 @@ use mgc_types::capabilities::{
 use mgc_types::{
     Ecosystem, Manifest, MgResult, PackageId, PackageName, ResolvedGraph, VersionRange,
 };
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 pub struct GameAdapter {
     engine: GameEngine,
@@ -36,9 +30,8 @@ impl GameAdapter {
     /// Capability manifest (Global Gate 1) — code-reality notes:
     /// - ProjectDetector: `detect_engine`/`manifest_is_game` — real.
     /// - ScaffoldProvider: `mgc create-game <engine>` + src/scaffold — real.
-    /// - ContentStoreProvider: install is REAL per engine (Bevy →
-    ///   `cargo fetch` via exec_tool; Godot/Unreal/Unity fail closed
-    ///   inside install) — claimed.
+    /// - ContentStoreProvider is not claimed: the CLI Bevy lane uses the
+    ///   native Lib/Rust engine; this adapter's legacy helper delegates.
     /// - AuditProvider: shared-engine polyglot dispatch — real.
     ///
     /// DependencyResolver is NOT claimed (resolve is fail-closed — the
@@ -49,7 +42,6 @@ impl GameAdapter {
     pub const CAPABILITIES: &'static [Capability] = &[
         Capability::ProjectDetector,
         Capability::ScaffoldProvider,
-        Capability::ContentStoreProvider,
         Capability::AuditProvider,
     ];
 }
@@ -86,63 +78,25 @@ impl ScaffoldProvider for GameAdapter {
 
 #[async_trait]
 impl ContentStoreProvider for GameAdapter {
-    /// Evidence: install is real per engine — Bevy runs `cargo fetch`
-    /// (exec_tool); other engines fail closed inside install.
-    /// Dẫn chứng: install thật theo engine — Bevy chạy `cargo fetch`
-    /// (exec_tool); engine khác fail-closed bên trong install.
     fn probe_content_store(&self) -> MgResult<()> {
-        Ok(())
+        Err(mgc_types::capabilities::unsupported_capability(
+            "game",
+            "content_store",
+            "Bevy uses the shared native Lib/Rust engine; the GameAdapter does not own a store",
+        ))
     }
 
     async fn install(
         &self,
-        graph: &ResolvedGraph,
-        project_root: &Path,
+        _graph: &ResolvedGraph,
+        _project_root: &Path,
         _opts: InstallOptions,
     ) -> MgResult<InstallSummary> {
-        match self.engine {
-            GameEngine::Bevy => exec_tool(project_root, "cargo", &["fetch".to_string()])?,
-            GameEngine::Godot | GameEngine::Unreal => {
-                // Fail closed: no real dependency fetch exists for these
-                // engines yet — a silent no-op would fake capability.
-                // Fail-closed: engine này chưa có fetch thật — no-op im
-                // lặng đồng nghĩa giả capability.
-                return Err(mgc_types::MgError::Unsupported {
-                    core: "game",
-                    capability: "install",
-                    guidance: match self.engine {
-                        GameEngine::Godot => "Godot projects have no dependency install step; \
-                                             open the project in the Godot editor"
-                            .to_string(),
-                        _ => "Unreal dependency install requires the Epic Launcher \
-                              (not automated); open the project in Unreal Editor"
-                            .to_string(),
-                    },
-                });
-            }
-            GameEngine::Unity => {
-                return Err(mgc_types::MgError::Other(
-                    "unity install via UPM CLI (Read-and-Verify) is P2 — awaiting spike (03 §7 Q1)"
-                        .to_string(),
-                ));
-            }
-        }
-        // DELEGATED: install is owned by the toolchain (Bevy → `cargo
-        // fetch` ran for real above); mgc does not own this lifecycle.
-        // The summary is HONEST — it only counts the packages the
-        // manifest graph named. An empty graph yields an empty summary
-        // (truthful), never a fabricated package list; cache bytes stay
-        // uncounted (cargo owns its cache — Delegated mode).
-        // DELEGATED: install thuộc toolchain (Bevy → `cargo fetch` đã chạy
-        // thật bên trên); mgc KHÔNG sở hữu lifecycle này. Summary TRUNG
-        // THỰC — chỉ đếm package mà graph manifest nêu. Graph rỗng →
-        // summary rỗng (trung thực), không bao giờ bịa danh sách package;
-        // byte cache không đếm (cargo giữ cache của nó — chế độ Delegated).
-        Ok(InstallSummary {
-            added: graph.packages.iter().map(|p| p.id.clone()).collect(),
-            cache_mode: mgc_types::adapter::InstallCacheMode::Delegated,
-            ..Default::default()
-        })
+        Err(mgc_types::capabilities::unsupported_capability(
+            "game",
+            "install",
+            "the GameAdapter has no MagiCore-owned installer for this ecosystem; dependency installation is unsupported",
+        ))
     }
 }
 
@@ -162,8 +116,7 @@ impl LockfileProvider for GameAdapter {
                     core: "game",
                     capability: "write_manifest",
                     guidance: format!(
-                        "{} projects do not use mgc-written manifests; regenerate via \
-                         `mgc create-game` or edit the project file directly",
+                        "{} projects do not have a MagiCore-owned dependency manifest; dependency mutation is unsupported",
                         self.engine.as_str()
                     ),
                 })
@@ -176,94 +129,36 @@ impl LockfileProvider for GameAdapter {
 impl DependencyResolver for GameAdapter {
     async fn add(
         &self,
-        project_root: &Path,
-        name: &PackageName,
-        range: Option<&VersionRange>,
-        opts: AddOptions,
+        _project_root: &Path,
+        _name: &PackageName,
+        _range: Option<&VersionRange>,
+        _opts: AddOptions,
     ) -> MgResult<PackageId> {
-        // DELEGATED: the bevy lane runs `cargo add` + `cargo fetch` for
-        // real — mgc orchestrates only; other engines fail closed below.
-        // (DELEGATED: lane bevy chạy `cargo add` + `cargo fetch` thật —
-        // mgc chỉ điều phối; engine khác fail-closed bên dưới.)
-        if opts.no_save {
-            return Ok(placeholder_id(name, range));
-        }
-        match self.engine {
-            GameEngine::Bevy => {
-                let mut args = vec!["add".to_string()];
-                if let Some(r) = range.filter(|r| !r.is_star()) {
-                    args.push(format!("{}@{}", name.as_str(), r.as_str()));
-                } else {
-                    args.push(name.as_str().to_string());
-                }
-                exec_tool(project_root, "cargo", &args)?;
-                exec_tool(project_root, "cargo", &["fetch".to_string()])?;
-                Ok(bevy_dep_version(project_root, name)
-                    .map(|v| PackageId::new(name.clone(), v))
-                    .unwrap_or_else(|| placeholder_id(name, range)))
-            }
-            GameEngine::Godot | GameEngine::Unreal => Err(mgc_types::MgError::Other(format!(
-                "'{}' has no package manager — game assets are managed outside the dependency graph (03 §4)",
-                self.engine.as_str()
-            ))),
-            GameEngine::Unity => Err(mgc_types::MgError::Other(
-                "unity add via UPM CLI (Read-and-Verify) is P2 — awaiting spike (03 §7 Q1)"
-                    .to_string(),
-            )),
-        }
+        Err(mgc_types::capabilities::unsupported_capability(
+            "game",
+            "add",
+            "the GameAdapter has no MagiCore-owned resolver/writer for this ecosystem; dependency addition is unsupported",
+        ))
     }
 
-    async fn remove(&self, project_root: &Path, name: &PackageName) -> MgResult<()> {
-        // DELEGATED: the bevy lane runs `cargo remove` for real — mgc
-        // orchestrates only; other engines fail closed below.
-        // (DELEGATED: lane bevy chạy `cargo remove` thật — mgc chỉ điều
-        // phối; engine khác fail-closed bên dưới.)
-        match self.engine {
-            GameEngine::Bevy => exec_tool(
-                project_root,
-                "cargo",
-                &["remove".to_string(), name.as_str().to_string()],
-            ),
-            GameEngine::Godot | GameEngine::Unreal => Err(mgc_types::MgError::Other(format!(
-                "'{}' has no package manager",
-                self.engine.as_str()
-            ))),
-            GameEngine::Unity => Err(mgc_types::MgError::Other(
-                "unity UPM remove is P2".to_string(),
-            )),
-        }
+    async fn remove(&self, _project_root: &Path, _name: &PackageName) -> MgResult<()> {
+        Err(mgc_types::capabilities::unsupported_capability(
+            "game",
+            "remove",
+            "the GameAdapter has no MagiCore-owned dependency remover for this ecosystem; dependency removal is unsupported",
+        ))
     }
 
     async fn update(
         &self,
-        project_root: &Path,
-        name: Option<&PackageName>,
+        _project_root: &Path,
+        _name: Option<&PackageName>,
     ) -> MgResult<Vec<UpdatedPackage>> {
-        // DELEGATED: the bevy lane runs `cargo update` for real — mgc
-        // orchestrates only; other engines fail closed below.
-        // (DELEGATED: lane bevy chạy `cargo update` thật — mgc chỉ điều
-        // phối; engine khác fail-closed bên dưới.)
-        match self.engine {
-            GameEngine::Bevy => {
-                let mut args = vec!["update".to_string()];
-                if let Some(n) = name {
-                    args.push(n.as_str().to_string());
-                }
-                exec_tool(project_root, "cargo", &args)?;
-            }
-            GameEngine::Godot | GameEngine::Unreal => {
-                return Err(mgc_types::MgError::Other(format!(
-                    "'{}' has no package manager",
-                    self.engine.as_str()
-                )));
-            }
-            GameEngine::Unity => {
-                return Err(mgc_types::MgError::Other(
-                    "unity UPM update is P2".to_string(),
-                ));
-            }
-        }
-        Ok(vec![])
+        Err(mgc_types::capabilities::unsupported_capability(
+            "game",
+            "update",
+            "the GameAdapter has no MagiCore-owned dependency updater for this ecosystem; dependency updates are unsupported",
+        ))
     }
 }
 
@@ -337,17 +232,15 @@ impl PackageAdapter for GameAdapter {
     }
 
     async fn list(&self, project_root: &Path) -> MgResult<Vec<InstalledPackage>> {
-        let manifest = self.parse_manifest(project_root).await?;
-        Ok(manifest
-            .all_dependencies()
-            .map(|dep| InstalledPackage {
-                id: placeholder_id(&dep.name, Some(&dep.range)),
-                path: PathBuf::new(),
-                integrity: None,
-                is_direct: true,
-                is_dev: dep.dev,
-            })
-            .collect())
+        let _ = project_root;
+        Err(mgc_types::MgError::Unsupported {
+            core: "game",
+            capability: "list",
+            guidance: format!(
+                "{} dependency declarations are not verified installed-state; the game adapter has no installed package inventory",
+                self.engine.as_str()
+            ),
+        })
     }
 }
 

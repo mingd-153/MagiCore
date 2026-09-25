@@ -137,10 +137,9 @@ async fn pub_resolves_dependencies_and_full_path() {
 }
 
 #[tokio::test]
-async fn pub_unresolvable_deps_record_markers_not_silence() {
-    // V1.2 (D0): SDK-owned, path/git/hosted-object, and empty-constraint
-    // deps are recorded as markers — the old silent `continue` hid graph
-    // holes.
+async fn pub_sdk_owned_dependencies_are_recorded_not_silenced() {
+    // SDK-owned dependencies are recorded explicitly; they are never
+    // mistaken for resolved registry packages.
     let Some(mut server) = mock_server().await else {
         return;
     };
@@ -152,8 +151,6 @@ async fn pub_unresolvable_deps_record_markers_not_silence() {
         &sha,
         json!({
             "flutter": "sdk",
-            "gitdep": {"git": "https://example.invalid/repo.git"},
-            "emptydep": "",
             "realdep": "^1.0.0",
         }),
     )];
@@ -170,15 +167,67 @@ async fn pub_unresolvable_deps_record_markers_not_silence() {
         entry.deps,
         vec![("realdep".to_string(), "^1.0.0".to_string())]
     );
-    for marker in [
-        "sdk-owned:flutter",
-        "non-registry-dep:gitdep",
-        "empty-constraint:emptydep",
-    ] {
-        assert!(
-            entry.extra_markers.iter().any(|m| m == marker),
-            "missing marker {marker}: {:?}",
-            entry.extra_markers
-        );
-    }
+    assert!(
+        entry
+            .extra_markers
+            .iter()
+            .any(|marker| marker == "sdk-owned:flutter"),
+        "missing SDK marker: {:?}",
+        entry.extra_markers
+    );
+}
+
+#[tokio::test]
+async fn pub_empty_dependency_constraint_fails_closed() {
+    let Some(mut server) = mock_server().await else {
+        return;
+    };
+    let base = server.url();
+    let versions = vec![pub_version(
+        "3.0.0",
+        &format!("{base}/archives/mix-3.0.0.tar.gz"),
+        &sha256_hex(b"ARCHIVE2"),
+        json!({"emptydep": ""}),
+    )];
+    server
+        .mock("GET", "/api/packages/mix")
+        .with_status(200)
+        .with_body(pub_json(versions))
+        .create_async()
+        .await;
+
+    let error = PubProtocol::new(&base)
+        .resolve("mix", "any")
+        .await
+        .unwrap_err();
+    assert!(matches!(error, mgc_types::MgError::Unsupported { .. }));
+}
+
+#[tokio::test]
+async fn pub_git_dependency_fails_closed_instead_of_omitting_graph_edge() {
+    let Some(mut server) = mock_server().await else {
+        return;
+    };
+    let base = server.url();
+    let versions = vec![pub_version(
+        "3.0.0",
+        &format!("{base}/archives/mix-3.0.0.tar.gz"),
+        &sha256_hex(b"ARCHIVE2"),
+        json!({
+            "gitdep": {"git": "https://example.invalid/repo.git"},
+            "realdep": "^1.0.0",
+        }),
+    )];
+    server
+        .mock("GET", "/api/packages/mix")
+        .with_status(200)
+        .with_body(pub_json(versions))
+        .create_async()
+        .await;
+
+    let error = PubProtocol::new(&base)
+        .resolve("mix", "any")
+        .await
+        .unwrap_err();
+    assert!(matches!(error, mgc_types::MgError::Unsupported { .. }));
 }

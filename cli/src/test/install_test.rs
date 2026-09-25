@@ -242,14 +242,14 @@ mode = "single"
 #[cfg(feature = "clo")]
 #[test]
 fn clo_adapter_path_terraform_gates_without_compat() {
-    // T0.3-clo-gap: terraform on the adapter path gates as delegated —
-    // native mode fails closed naming --compat-runtime (no spawn here,
-    // the gate decision is the whole assertion).
+    // Terraform is unsupported until MGC owns its dependency lifecycle;
+    // an absent compatibility runner must not be presented as opt-in support.
     let dir = tempdir().unwrap();
     std::fs::write(dir.path().join("main.tf"), "terraform {}\n").unwrap();
     let err = clo_adapter_path_gate(dir.path()).unwrap_err();
     assert!(
-        err.to_string().contains("--compat-runtime"),
+        err.to_string()
+            .contains("unsupported for dependency lifecycle"),
         "unexpected error: {err}"
     );
 }
@@ -295,7 +295,7 @@ fn toolchain_owned_packages_rejected_before_adapter_calls() {
     );
     let err = reject_toolchain_owned_packages(&adapter, &["some-pkg".to_string()]).unwrap_err();
     assert!(
-        format!("{err:#}").contains("toolchain-owned"),
+        format!("{err:#}").contains("does not own its native dependency lifecycle"),
         "must name the ownership reason: {err:#}"
     );
     assert_eq!(

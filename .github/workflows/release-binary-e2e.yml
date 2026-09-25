@@ -59,16 +59,17 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  # Required environment: provisioned tools must all be present; any
-  # missing-tool skip in this lane is a FAILURE, never a skip.
-  # Môi trường bắt buộc: tool được provision phải đầy đủ; thiếu tool
-  # trong lane này là FAIL, không bao giờ là skip.
-  MGC_E2E_AUDIT_TOOLS: required
+  # The native MGC audit lanes require a reachable OSV API; they do not
+  # depend on cargo-audit or pip-audit executables.
+  # Lane audit native của MGC cần OSV API; không phụ thuộc binary
+  # cargo-audit hay pip-audit.
+  MGC_E2E_AUDIT_NETWORK: required
 
 jobs:
   release-archive-lifecycle:
     name: release archive lifecycle (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
@@ -87,7 +88,7 @@ jobs:
         with:
           node-version: "24"
 
-      - name: Setup Python (ai/py lane + pip-audit)
+      - name: Setup Python (AI lane runtime)
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
@@ -102,18 +103,6 @@ jobs:
           go-version: "1.27.1"
           cache: false
 
-      - name: Setup uv (ai lane locking)
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1 (latest, node24)
-        with:
-          version: "0.12.10"
-
-      - name: Install cargo-audit (pinned)
-        run: cargo install cargo-audit --version 0.22.2 --locked
-
-      - name: Install pip-audit (pinned)
-        shell: bash
-        run: python3 -m pip install --user 'pip-audit==2.9.0'
-
       # AI lane test/build tooling: `mgc test` (ai) runs pytest;
       # `mgc build` (ai) runs python -m build — provision BOTH so no
       # lane step can hide behind a missing tool.
@@ -122,7 +111,7 @@ jobs:
       # sau lý do thiếu tool.
       - name: Provision python test/build tools (ai lane)
         shell: bash
-        run: python3 -m pip install --user 'build==1.3.0' 'pytest==8.4.2'
+        run: python -m pip install --user 'build==1.3.0' 'pytest==8.4.2'
 
       # --- Build the release binary + pack the EXACT release layout ---
       - name: Build release binary
@@ -233,17 +222,14 @@ jobs:
           "$MGCBIN" create-web react test-web
           cd test-web
           "$MGCBIN" install
-          # test: the scaffold carries a real test runner — a missing
-          # "test" script is a FAIL, not a skip (embedded react ships
-          # vitest via create flags; if the scaffold has no test script
-          # the lane degrades honestly to mgc run + build assertions).
-          # test: template mang test runner thật — thiếu script "test"
-          # là FAIL, không phải skip.
-          if grep -q '"test"' package.json; then
-            "$MGCBIN" test
-          else
-            echo "NOTE: scaffold has no test script — recording honest absence (not a skip)" >&2
+          # A missing test command must fail this release gate; recording
+          # absence and continuing would be a false-green.
+          # Thiếu test command phải chặn gate phát hành, không được ghi chú rồi đi tiếp.
+          if ! grep -q '"test"[[:space:]]*:' package.json; then
+            echo "release E2E scaffold has no test script" >&2
+            exit 1
           fi
+          "$MGCBIN" test
           "$MGCBIN" build
           test -d dist || test -d build
           # STRICT audit: exit 0 (clean) or 1 (findings) are audit
@@ -270,9 +256,15 @@ jobs:
           # dev probe: khởi động mgc dev trên port hoán vị 4315, chờ
           # HTTP roundtrip THẬT, rồi tắt sạch — --help không chứng minh
           # được gì.
+          port_responds() {
+            curl --connect-timeout 1 --max-time 2 -sS -o /dev/null "http://127.0.0.1:4315/" 2>/dev/null \
+              || curl --connect-timeout 1 --max-time 2 -sS -o /dev/null "http://localhost:4315/" 2>/dev/null
+          }
+          if port_responds; then
+            echo "port 4315 was already serving before mgc dev; refusing contaminated lifecycle probe" >&2
+            exit 1
+          fi
           if [[ "$RUNNER_OS" == "Windows" ]]; then
-            # Windows: spawn detached, probe, then kill by image.
-            # Windows: spawn tách biệt, probe, rồi kill theo image.
             "$MGCBIN" dev --port 4315 > dev.log 2>&1 &
             DEV_PID=$!
           else
@@ -292,7 +284,12 @@ jobs:
           if [[ "$probe_ok" != true ]]; then
             echo "dev server did not answer HTTP on port 4315 within 120s" >&2
             cat dev.log >&2 || true
-            kill $DEV_PID 2>/dev/null || true
+            if [[ "$RUNNER_OS" == "Windows" ]]; then
+              taskkill //F //T //PID $DEV_PID > /dev/null 2>&1 || true
+            else
+              kill $DEV_PID 2>/dev/null || true
+              pkill -f "vite.*4315" 2>/dev/null || true
+            fi
             exit 1
           fi
           # Clean shutdown: the dev tree (mgc → node → vite) must die
@@ -315,12 +312,27 @@ jobs:
             # Quét dọn con vite/node sót lại của sandbox project này.
             pkill -f "vite.*4315" 2>/dev/null || true
             sleep 1
-            if curl -sf -o /dev/null "http://localhost:4315/" 2>/dev/null; then
-              echo "port 4315 still serving after shutdown — leak" >&2
-              exit 1
-            fi
           fi
 
+          # Verify shutdown on every OS before allowing `mgc run` to use
+          # the same port. Otherwise a leaked dev server can make the run
+          # probe pass without the run process ever serving a request.
+          # `mgc run` не должен пройти за счёт dev-сервера, оставшегося
+          # после предыдущего шага: проверяем освобождение порта на всех ОС.
+          dev_port_closed=false
+          for i in $(seq 1 15); do
+            if ! port_responds; then
+              dev_port_closed=true
+              break
+            fi
+            sleep 1
+          done
+          if [[ "$dev_port_closed" != true ]]; then
+            echo "port 4315 still serving after dev shutdown — run probe would be a false positive" >&2
+            cat dev.log >&2 || true
+            if [[ "$RUNNER_OS" == "Windows" ]]; then taskkill //F //T //PID $DEV_PID > /dev/null 2>&1 || true; fi
+            exit 1
+          fi
           # run: the scaffold's own start/preview script through the
           # native task runner (P0 finding #6 — run was never executed).
           # The server is long-lived: spawn it in the background, probe
@@ -332,9 +344,16 @@ jobs:
           # spawn nền, chờ HTTP roundtrip THẬT, rồi giết cây — chạy
           # foreground sẽ dính timeout 300s của exec và chết 143 (bug
           # bắt được ở lần E2E đầu tiên).
-          if grep -q '"start"' package.json; then
-            echo "MARKER run probe start"
-            "$MGCBIN" run start > run.log 2>&1 &
+          if grep -q '"start"[[:space:]]*:' package.json; then
+            RUN_SCRIPT=start
+          elif grep -q '"preview"[[:space:]]*:' package.json; then
+            RUN_SCRIPT=preview
+          else
+            echo "release E2E scaffold has neither start nor preview run script" >&2
+            exit 1
+          fi
+          echo "MARKER run probe start script=$RUN_SCRIPT"
+          "$MGCBIN" run "$RUN_SCRIPT" > run.log 2>&1 &
             RUN_PID=$!
             run_ok=false
             for i in $(seq 1 60); do
@@ -346,23 +365,33 @@ jobs:
             if [[ "$run_ok" != true ]]; then
               echo "run start did not answer HTTP on port 4315" >&2
               cat run.log >&2 || true
+              if [[ "$RUNNER_OS" == "Windows" ]]; then
+                taskkill //F //T //PID $RUN_PID > /dev/null 2>&1 || true
+              else
+                kill $RUN_PID 2>/dev/null || true
+                pkill -f "vite.*4315" 2>/dev/null || true
+              fi
+              exit 1
+            fi
+            if [[ "$RUNNER_OS" == "Windows" ]]; then
+              taskkill //F //T //PID $RUN_PID > /dev/null 2>&1 || true
+            else
               kill $RUN_PID 2>/dev/null || true
               pkill -f "vite.*4315" 2>/dev/null || true
-              exit 1
             fi
-            kill $RUN_PID 2>/dev/null || true
-            pkill -f "vite.*4315" 2>/dev/null || true
-            if [[ "$RUNNER_OS" == "Windows" ]]; then
-              taskkill //F //IM node.exe //T > /dev/null 2>&1 || true
-            fi
-            sleep 1
-            if curl -sf -o /dev/null "http://localhost:4315/" 2>/dev/null; then
+            run_port_closed=false
+            for i in $(seq 1 15); do
+              if ! port_responds; then
+                run_port_closed=true
+                break
+              fi
+              sleep 1
+            done
+            if [[ "$run_port_closed" != true ]]; then
               echo "port 4315 still serving after run shutdown — leak" >&2
+              cat run.log >&2 || true
               exit 1
             fi
-          elif grep -q '"preview"' package.json; then
-            echo "NOTE: no start script — preview is the closest run analog (honest)" >&2
-          fi
 
           # Warm reinstall with cache-hit proof: the second install must
           # report bytes served from cache (MgCStore). Empty cache
@@ -441,13 +470,11 @@ jobs:
           fi
           unset MGC_AUDIT_STRICT
 
-      # P0 finding #7: AI/Python lane with the INSTALLED binary —
-      # lock with uv (fail-closed install needs uv.lock), install,
-      # test with the template's own tests, build, strict audit.
-      # P0 finding #7: lane AI/Python bằng binary đã cài — lock bằng
-      # uv (install fail-closed cần uv.lock), install, test bằng test
-      # của template, build, audit strict.
-      - name: Lifecycle ai python (create → lock → install → test → build → strict audit)
+      # AI/Python release lane uses the MGC-owned PyPI graph and mgc.lock.
+      # Python/pytest/build are execution tools only; uv/pip do not resolve
+      # or install project dependencies in this lane.
+      # Lane AI/Python dùng graph PyPI và mgc.lock do MGC sở hữu.
+      - name: Lifecycle ai python (native add → install → test → build → strict audit)
         shell: bash
         run: |
           set -euo pipefail
@@ -456,14 +483,17 @@ jobs:
           cd "$WORK"
           "$MGCBIN" create-ai python-agent test-ai
           cd test-ai
-          uv lock
-          # ai install is toolchain-delegated (uv owns it) — the explicit
-          # opt-in flag is REQUIRED (C0 P0#3); bare install fails closed.
-          # (install ai ủy thác uv — thiếu flag là fail đúng thiết kế.)
-          "$MGCBIN" install --compat-runtime uv
-          if [[ -f pyproject.toml ]] && grep -q "pytest\|unittest" pyproject.toml; then
-            "$MGCBIN" test
-          fi
+          "$MGCBIN" add-ai markerlib
+          "$MGCBIN" install
+          test -f mgc.lock
+          test ! -f uv.lock
+          mkdir -p tests
+          cat > tests/test_mgc_release_e2e.py <<'PYTEST'
+          def test_generated_python_runtime_is_usable():
+              import sys
+              assert sys.version_info >= (3, 12)
+          PYTEST
+          "$MGCBIN" test
           "$MGCBIN" build
           export MGC_AUDIT_STRICT=1
           set +e
@@ -508,11 +538,13 @@ jobs:
           cd "$WORK"
           "$MGCBIN" create-app flutter test-flut
           cd test-flut
-          # flutter install is toolchain-delegated — explicit opt-in
-          # REQUIRED (C0 P0#3); bare install fails closed by design.
-          # (install flutter ủy thác — thiếu flag là fail đúng thiết kế.)
-          "$MGCBIN" install --compat-runtime flutter
-          test -f pubspec.lock
+          # Flutter is only the compiler/test runtime here. MGC owns
+          # dependency resolution, materialization, and mgc.lock.
+          # Flutter chỉ là runtime compile/test; dependency do MGC quản lý.
+          "$MGCBIN" add-app http
+          "$MGCBIN" install
+          test -f mgc.lock
+          test ! -f pubspec.lock
           "$MGCBIN" test
           # `web` is the universal CI target (no Android SDK / Xcode).
           # `web` là target CI phổ quát (không cần Android SDK / Xcode).

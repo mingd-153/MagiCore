@@ -66,6 +66,7 @@ toml_edit = { version = "0.22", features = ["serde"] }
 
 # Base64 for digest strings (workspace-pinned)
 base64 = { workspace = true }
+hex = { workspace = true }
 
 # OS file locking for the project writer lock (V1.2 lock v4)
 fs2 = { workspace = true }

@@ -357,7 +357,6 @@ fn capability_map_matches_audited_contract() {
                 Capability::ScaffoldProvider,
                 Capability::DependencyResolver,
                 Capability::LockfileProvider,
-                Capability::ArtifactFetcher,
                 Capability::ContentStoreProvider,
                 Capability::AuditProvider,
             ],
@@ -377,7 +376,6 @@ fn capability_map_matches_audited_contract() {
             &[
                 Capability::ProjectDetector,
                 Capability::ScaffoldProvider,
-                Capability::LifecycleRunner,
                 Capability::ContentStoreProvider,
                 Capability::LockfileProvider,
                 Capability::AuditProvider,
@@ -395,7 +393,6 @@ fn capability_map_matches_audited_contract() {
             &[
                 Capability::ProjectDetector,
                 Capability::ScaffoldProvider,
-                Capability::ContentStoreProvider,
                 Capability::AuditProvider,
             ],
         ),
@@ -404,7 +401,6 @@ fn capability_map_matches_audited_contract() {
             &[
                 Capability::ProjectDetector,
                 Capability::ScaffoldProvider,
-                Capability::ContentStoreProvider,
                 Capability::AuditProvider,
             ],
         ),
@@ -414,8 +410,6 @@ fn capability_map_matches_audited_contract() {
                 Capability::ProjectDetector,
                 Capability::ScaffoldProvider,
                 Capability::DeployProvider,
-                Capability::LifecycleRunner,
-                Capability::ContentStoreProvider,
                 Capability::AuditProvider,
             ],
         ),

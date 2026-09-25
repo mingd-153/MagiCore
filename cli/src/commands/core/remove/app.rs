@@ -12,18 +12,11 @@ pub async fn remove(packages: Vec<String>, compat_runtime: Option<String>) -> Re
     if packages.is_empty() {
         return Err(crate::error::remove_app_usage());
     }
-    // Native remove lanes (zero toolchain spawn):
-    // - flutter: pubspec rebuild from manifest via shared::remove;
-    // - swift: Package.swift text removal verified by re-scan;
-    // - kotlin: catalog entry removal verified by re-parse.
-    // Other languages keep the legacy delegated path below.
-    // (Remove native cho flutter/swift/kotlin.)
-    if matches!(
-        lang,
-        mgc_app_adapter::AppLanguage::Flutter
-            | mgc_app_adapter::AppLanguage::Swift
-            | mgc_app_adapter::AppLanguage::Kotlin
-    ) {
+    // Flutter remove uses the shared journaled manifest writer. Swift and
+    // Kotlin mutations stay blocked in the ownership gate until their
+    // source/catalog edits use the same crash-recovery transaction.
+    // (Flutter qua journal chung; Swift/Kotlin mutation đang fail-closed.)
+    if lang == mgc_app_adapter::AppLanguage::Flutter {
         let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
         crate::commands::dep_gate::gate(
             &crate::commands::dep_gate::DepContext::new(
@@ -39,26 +32,7 @@ pub async fn remove(packages: Vec<String>, compat_runtime: Option<String>) -> Re
         )?;
         let adapter = mgc_app_adapter::adapter_for(&root)
             .ok_or_else(crate::error::app_project_not_detected)?;
-        match lang {
-            mgc_app_adapter::AppLanguage::Flutter => {
-                return crate::commands::core::shared::remove(&adapter, &root, packages, true)
-                    .await;
-            }
-            mgc_app_adapter::AppLanguage::Swift => {
-                let removed = adapter.remove_swift_native(&root, &packages)?;
-                for name in &removed {
-                    mgc_ui::success(&format!("Removed {name}"));
-                }
-                return Ok(());
-            }
-            _ => {
-                let removed = adapter.remove_kotlin_native(&root, &packages)?;
-                for name in &removed {
-                    mgc_ui::success(&format!("Removed {name}"));
-                }
-                return Ok(());
-            }
-        }
+        return crate::commands::core::shared::remove(&adapter, &root, packages, true).await;
     }
     // tool_command is PURE (zero spawn). Order: React Native gates first
     // (P0#2), then gate with the resolved tool (None when the verb has no

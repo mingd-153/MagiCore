@@ -13,17 +13,13 @@ use mgc_types::Ecosystem;
 
 pub async fn list(compat_runtime: Option<String>) -> Result<()> {
     let root = super::super::shared::core_project_root("game")?;
-    // C0 gate (P0#3): adapter manifest read — spawn-free, so native; the
-    // explicit flag is accepted for CLI uniformity (gate logs the ignore
-    // notice when passed).
-    // (Gate C0: đọc manifest qua adapter — native; chấp nhận cờ để đồng
-    // nhất CLI.)
+    let engine = mgc_game_adapter::adapter_for(&root).map(|adapter| adapter.engine());
     let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
     crate::commands::dep_gate::gate(
         &crate::commands::dep_gate::DepContext::new(
             "game",
-            Some(crate::commands::dep_gate::eco::BEVY),
-            Some(crate::commands::dep_gate::eco::BEVY),
+            engine,
+            engine,
             None,
             crate::commands::dep_gate::DepOp::List,
         ),

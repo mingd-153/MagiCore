@@ -18,6 +18,7 @@ mgc-sbom = { workspace = true }
 mgc-cache = { workspace = true }
 mgc-config = { workspace = true }
 mgc-adapter-base = { workspace = true }
+mgc-lib-adapter = { path = "../lib" }
 
 # Async
 async-trait.workspace = true

@@ -269,7 +269,18 @@ fn audit_fix_default_names_the_core() {
             false
         }
     }
-    impl DependencyResolver for NoFixAdapter {}
+    #[async_trait]
+    impl DependencyResolver for NoFixAdapter {
+        async fn add(
+            &self,
+            _project_root: &Path,
+            _name: &mgc_types::PackageName,
+            _range: Option<&mgc_types::VersionRange>,
+            _opts: mgc_types::adapter::AddOptions,
+        ) -> mgc_types::MgResult<mgc_types::PackageId> {
+            panic!("default prepare_add must not call provider add")
+        }
+    }
     impl ArtifactFetcher for NoFixAdapter {}
     impl ContentStoreProvider for NoFixAdapter {}
     impl LockfileProvider for NoFixAdapter {}
@@ -306,4 +317,16 @@ fn audit_fix_default_names_the_core() {
         err.to_string().contains("test-nofix"),
         "default refusal must name the core, got: {err}"
     );
+
+    let name = mgc_types::PackageName::new("example").unwrap();
+    let prepare = NoFixAdapter.prepare_add(
+        Path::new("/tmp"),
+        &name,
+        None,
+        mgc_types::adapter::AddOptions::default(),
+    );
+    let prepare_err = futures_util::future::FutureExt::now_or_never(Box::pin(prepare))
+        .expect("default prepare_add resolves immediately")
+        .expect_err("default prepare_add must fail closed");
+    assert!(prepare_err.to_string().contains("native prepare-add"));
 }

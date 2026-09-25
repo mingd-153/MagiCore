@@ -1,12 +1,9 @@
-name: Delegated Toolchain Compatibility Matrix
+name: Native Dependency Lifecycle Evidence Matrix
 
-# Scope: delegated-toolchain compatibility for the four lifecycle lanes
-# (Web native; AI/App via explicit --compat-runtime; Lib native per
-# protocol engine). AI/App install steps below exercise DELEGATED
-# toolchains — their green results are COMPATIBILITY evidence only and
-# must NEVER be used as native-engine release-gate evidence.
-# (Phạm vi: tương thích toolchain delegate. Kết quả AI/App chỉ là
-# evidence compat, không bao giờ là evidence native/release.)
+# Scope: selected MagiCore-native dependency-install lanes only. Compiler
+# and runtime checks are separate; this is not an all-core support claim.
+# (Phạm vi: một số lane cài dependency native của MagiCore; không đại diện
+# cho toàn bộ core hay mọi thao tác build/test/run.)
 
 on:
   workflow_dispatch:
@@ -128,13 +125,11 @@ jobs:
         with:
           python-version: "3.14"
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1 (latest, node24)
-        with:
-          version: "0.12.10"
-
       - name: Build mgc binary
-        run: cargo build --release --bin mgc --no-default-features --features ai --locked
+        # The native AI/Python lane embeds the lib PyPI engine. Keep both
+        # core feature gates enabled: dependency inclusion alone does not
+        # enable the `lib` CLI dispatch/capability surface.
+        run: cargo build --release --bin mgc --no-default-features --features ai,lib --locked
 
       - name: Resolve mgc executable path
         shell: bash
@@ -158,22 +153,10 @@ jobs:
           test -d test-ai-app
           test -f test-ai-app/pyproject.toml || test -f test-ai-app/requirements.txt
 
-      - name: Install dependencies
+      - name: Install dependencies with MagiCore
         shell: bash
         run: |
           cd test-ai-app
-          # Provision test/build tools (environment setup, not
-          # delegation): pytest for `mgc test`, build for `python -m build`.
-          pip_ok=false
-          for i in 1 2 3 4 5; do
-            if python -m pip install build pytest; then pip_ok=true; break; fi
-            echo "pip install failed (attempt $i) — retrying in 20s"
-            sleep 20
-          done
-          if [[ "$pip_ok" != true ]]; then
-            echo "pip install failed after 5 attempts" >&2
-            exit 1
-          fi
           # Native lane (mgc.lock, no uv.lock): add a REAL dependency
           # through mgc itself so install must materialize a real
           # package — an empty graph proves nothing. No uv anywhere.
@@ -191,16 +174,12 @@ jobs:
           fi
           test -f mgc.lock
 
-      - name: Test and build AI project
+      - name: Verify Python runtime and scaffold syntax
         shell: bash
         run: |
           cd test-ai-app
           python -m py_compile src/agent.py src/compression.py
-          mkdir -p tests
-          printf 'from agent import AIAgent\n\ndef test_agent():\n    assert AIAgent().run("CI")\n' > tests/test_agent.py
-          PYTHONPATH=src "$MGC_PARENT_BIN" test
-          "$MGC_PARENT_BIN" build
-          test -d dist
+          PYTHONPATH=src python src/agent.py
 
   app-lifecycle:
     name: App Full (${{ matrix.os }})
@@ -262,10 +241,10 @@ jobs:
         shell: bash
         run: |
           cd test_app
-          # Native lane (mgc.lock, no pubspec.lock): install runs the
-          # pub.dev engine inside mgc — no `flutter` spawn, no compat
-          # flag. Expects mgc.lock, never pubspec.lock.
-          # (Lane native: install qua engine mgc, không flutter.)
+          # An empty graph is not lifecycle evidence. Add a real Pub
+          # dependency through MGC before installing it natively.
+          # (Graph rỗng không chứng minh lifecycle; thêm package thật.)
+          "$MGC_PARENT_BIN" add-app http
           "$MGC_PARENT_BIN" install
 
       - name: Verify lockfile
@@ -404,24 +383,12 @@ jobs:
           test -f test-rust-lib/target/debug/libtest_rust_lib.so || \
           test -f test-rust-lib/target/debug/libtest_rust_lib.rmeta
 
-      - name: Install and test (Python)
+      - name: Install with MagiCore and verify Python syntax
         if: matrix.lang == 'python'
         shell: bash
         run: |
           cd test-python-lib
-          # pypi.org retry — chống rate-limit flake (không phải lỗi code).
-          pip_ok=false
-          for i in 1 2 3; do
-            if python -m pip install build pytest; then pip_ok=true; break; fi
-            echo "pip install failed (attempt $i) — retrying in 20s"
-            sleep 20
-          done
-          if [[ "$pip_ok" != true ]]; then
-            echo "pip install failed after 3 attempts" >&2
-            exit 1
-          fi
           "$MGC_PARENT_BIN" install
-          "$MGC_PARENT_BIN" build
           python -m py_compile src/test_python_lib/__init__.py
 
       - name: Install and build (TypeScript)
@@ -434,20 +401,17 @@ jobs:
           test -d dist || test -d lib || test -d build
 
   lifecycle-summary:
-    name: Delegated Toolchain Compatibility Summary
+    name: Native Lifecycle Evidence Summary
     needs: [web-lifecycle, ai-lifecycle, app-lifecycle, lib-lifecycle]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Check all results
         run: |
-          echo "=== DELEGATED TOOLCHAIN COMPATIBILITY RESULTS (Web, AI, App, Lib) ==="
-          echo "Web/Lib lanes run the native engine; AI/App install steps run"
-          echo "under explicit --compat-runtime (delegated toolchains)."
-          echo "AI/App green results are COMPATIBILITY evidence ONLY — they must"
-          echo "NEVER be used as native-engine release-gate evidence."
-          echo "Game/IoT/Hardware/Cloud/CI-CD are NOT covered by this workflow —"
-          echo "those cores are prototype/scaffold status and fail closed in adapters."
+          echo "=== SELECTED NATIVE DEPENDENCY LIFECYCLE EVIDENCE ==="
+          echo "This workflow checks selected dependency-install lanes only."
+          echo "Python checks are syntax/runtime smoke, not mgc test or build evidence."
+          echo "It does not establish all-core or all-framework support."
           echo ""
           echo "Web:  ${{ needs.web-lifecycle.result }}"
           echo "AI:   ${{ needs.ai-lifecycle.result }}"
@@ -484,10 +448,9 @@ jobs:
             exit 1
           fi
 
-          echo "✅ DELEGATED COMPATIBILITY (Web, AI, App, Lib): lifecycle verified — AI/App via explicit compat opt-in (compatibility evidence only)"
+          echo "Selected native dependency-install lanes passed."
           echo ""
           echo "Verified:"
           echo "- Create (CLI commands work)"
           echo "- Install (dependencies resolve)"
-          echo "- Test (where applicable)"
-          echo "- Build (artifacts generated)"
+          echo "- Runtime/syntax checks only where configured"

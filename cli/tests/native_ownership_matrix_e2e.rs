@@ -307,6 +307,21 @@ fn matrix_lib_python_add_install_list_frozen() {
 }
 
 #[test]
+fn matrix_ai_python_native_list_remove_use_verified_adapter_without_tools() {
+    let project = TempDir::new().unwrap();
+    ai_project(project.path());
+    let sandbox = MatrixSandbox::new();
+
+    let (code, out) = sandbox.run(&["list-ai"], project.path());
+    assert_eq!(code, Some(0), "native list-ai must proceed:\n{out}");
+    sandbox.assert_no_spawn("list-ai (native ai/python)");
+
+    let (code, out) = sandbox.run(&["remove-ai", "not-present"], project.path());
+    assert_eq!(code, Some(0), "native remove-ai no-op must proceed:\n{out}");
+    sandbox.assert_no_spawn("remove-ai (native ai/python)");
+}
+
+#[test]
 fn matrix_lib_rust_add_install() {
     let setup = |d: &std::path::Path| {
         let (f, b) = rust_manifest();
@@ -534,6 +549,130 @@ fn matrix_default_blocked_cells_refuse_silently_spawn_free() {
         write(d, "pyproject.toml", &b);
     };
     blocked_cell(ai, &["update-ai", "six"]);
+}
+
+#[test]
+fn matrix_cloud_dependency_commands_fail_closed_without_native_manifest() {
+    for (framework, commands) in [
+        (
+            "cdk",
+            vec![
+                vec!["install-clo"],
+                vec!["add-clo", "constructs"],
+                vec!["remove-clo", "constructs"],
+                vec!["update-clo", "constructs"],
+            ],
+        ),
+        (
+            "terraform",
+            vec![
+                vec!["install-clo"],
+                vec!["add-clo", "random"],
+                vec!["remove-clo", "random"],
+                vec!["update-clo", "random"],
+            ],
+        ),
+    ] {
+        for command in commands {
+            let project = TempDir::new().unwrap();
+            write(
+                project.path(),
+                "mgc.toml",
+                &format!("name = \"m\"\necosystem = \"cloud\"\n[cloud]\ntype = \"{framework}\"\n"),
+            );
+            if framework == "terraform" {
+                write(project.path(), "main.tf", "terraform {}\n");
+            }
+            // A CDK/Pulumi project without package.json is not an admitted
+            // native JS lane; Terraform is never a package dependency lane.
+            let sandbox = MatrixSandbox::new();
+            let (code, out) = sandbox.run(&command, project.path());
+            assert_ne!(
+                code,
+                Some(0),
+                "clo/{framework} {} without package.json must refuse:\n{out}",
+                command.join(" ")
+            );
+            assert!(
+                out.contains("unsupported")
+                    || out.contains("not supported")
+                    || out.contains("native"),
+                "refusal should explain missing native ownership:\n{out}"
+            );
+            sandbox.assert_no_spawn(&command.join(" "));
+        }
+    }
+}
+
+#[test]
+fn matrix_capabilities_binary_emits_closed_owner_for_every_framework_operation() {
+    let cwd = TempDir::new().unwrap();
+    let sandbox = MatrixSandbox::new();
+    let (code, output) = sandbox.run(&["capabilities"], cwd.path());
+    assert_eq!(code, Some(0), "mgc capabilities must succeed:\n{output}");
+    sandbox.assert_no_spawn("mgc capabilities");
+
+    let document: serde_json::Value = serde_json::from_str(&output)
+        .unwrap_or_else(|error| panic!("capabilities must emit valid JSON: {error}\n{output}"));
+    let cores = document["cores"]
+        .as_array()
+        .expect("all-core capabilities must be an array");
+    let required_cores = [
+        "ai", "app", "cicd", "clo", "game", "hardware", "iot", "lib", "web",
+    ];
+    for core in required_cores {
+        let row = cores
+            .iter()
+            .find(|row| row["core"] == core)
+            .unwrap_or_else(|| panic!("mgc capabilities omitted core {core}"));
+        let frameworks = row["framework_qualification"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{core} framework qualification must be an array"));
+        for framework in frameworks {
+            let framework_name = framework["framework"].as_str().unwrap_or("<missing>");
+            let ownership = framework["dependency_ownership"]
+                .as_object()
+                .unwrap_or_else(|| panic!("{core}/{framework_name} has no operation ownership"));
+            for operation in [
+                "install",
+                "add",
+                "remove",
+                "update",
+                "list",
+                "resolve",
+                "lock",
+                "fetch",
+                "verify",
+                "store",
+                "materialize",
+                "frozen-install",
+                "offline-reinstall",
+                "gc",
+            ] {
+                let cell = ownership.get(operation).unwrap_or_else(|| {
+                    panic!("{core}/{framework_name} missing ownership cell {operation}")
+                });
+                assert!(
+                    matches!(
+                        cell["owner"].as_str(),
+                        Some("mgc-native" | "scaffold-only" | "unsupported")
+                    ),
+                    "{core}/{framework_name}/{operation} has invalid owner: {cell}"
+                );
+            }
+        }
+    }
+    let cloud = cores.iter().find(|row| row["core"] == "clo").unwrap();
+    let cdk = cloud["framework_qualification"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["framework"] == "cdk")
+        .unwrap();
+    assert_eq!(
+        cdk["dependency_ownership"]["install"]["requires"],
+        "package.json; embedded MGC JavaScript engine"
+    );
 }
 
 #[test]

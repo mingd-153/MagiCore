@@ -92,6 +92,61 @@ fn forbidden_tool_rejected_before_spawn() {
 }
 
 #[test]
+fn legacy_compat_option_never_authorizes_package_manager_or_rival_runtime() {
+    let opts = ExecOptions {
+        execution_scope: Some(ExecutionScope::DevServer),
+        compat_runtime: Some("bun".to_string()),
+        log_path: None,
+        ..Default::default()
+    };
+    for tool in ["bun", "deno", "composer", "pub"] {
+        let err = run(tool, &["--version".to_string()], &opts)
+            .expect_err("legacy compat option must not authorize an external process");
+        assert!(
+            err.to_string().contains("forbidden"),
+            "{tool} must be rejected by executor policy before spawn: {err}"
+        );
+    }
+}
+
+#[test]
+fn package_resolution_subcommands_are_rejected_before_spawn() {
+    let opts = ExecOptions::default();
+    for (tool, args) in [
+        ("cargo", vec!["fetch".to_string()]),
+        ("cargo", vec!["+stable".to_string(), "fetch".to_string()]),
+        ("cargo", vec!["build".to_string()]),
+        (
+            "cargo",
+            vec![
+                "test".to_string(),
+                "--".to_string(),
+                "--offline".to_string(),
+            ],
+        ),
+        (
+            "python3",
+            vec!["-m".to_string(), "pip".to_string(), "install".to_string()],
+        ),
+        (
+            "go",
+            vec!["get".to_string(), "example.test/pkg".to_string()],
+        ),
+        ("flutter", vec!["pub".to_string(), "get".to_string()]),
+        ("dotnet", vec!["restore".to_string()]),
+        ("swift", vec!["package".to_string(), "resolve".to_string()]),
+    ] {
+        let error = run_inherited(tool, &args, &opts).unwrap_err();
+        assert!(
+            error.to_string().contains("blocked")
+                || error.to_string().contains("forbidden")
+                || error.to_string().contains("not on the allowlist"),
+            "{tool} {args:?} was not rejected clearly: {error}"
+        );
+    }
+}
+
+#[test]
 fn unknown_tool_rejected() {
     let opts = ExecOptions::default();
     assert!(run("definitely-not-a-real-tool-xyz", &[], &opts).is_err());
@@ -412,7 +467,7 @@ fn npm_is_blocked_even_inside_react_native_subdir() {
     };
     let err = run_inherited("npm", &["install".to_string()], &opts).unwrap_err();
     assert!(
-        err.to_string().contains("permanently forbidden"),
+        err.to_string().contains("is forbidden"),
         "npm inside react-native subdir must stay blocked, got: {err}"
     );
 
@@ -422,7 +477,7 @@ fn npm_is_blocked_even_inside_react_native_subdir() {
     };
     let err = run_inherited("npm", &["install".to_string()], &outside).unwrap_err();
     assert!(
-        err.to_string().contains("permanently forbidden"),
+        err.to_string().contains("is forbidden"),
         "npm outside react-native subdir must be rejected, got: {err}"
     );
 

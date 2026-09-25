@@ -56,6 +56,19 @@ pub struct RNResolution {
 /// Resolve all three tiers.
 /// Resolve cả ba tier.
 pub async fn resolve_rn_layers(manifest: &Manifest, project_root: &Path) -> MgResult<RNResolution> {
+    // Validate all mandatory tier inputs before the first network request.
+    // Otherwise a missing iOS lock can be masked by a JS registry outage
+    // after npm metadata was already fetched.
+    // (Kiểm tra đầu vào mọi tier trước network để thiếu lock iOS không bị
+    // lỗi registry JS che khuất.)
+    if project_root.join("Podfile").is_file() && !project_root.join("Podfile.lock").is_file() {
+        return Err(MgError::Unsupported {
+            core: "app",
+            capability: "react_native_ios_resolution",
+            guidance: "Podfile.lock is required to resolve the iOS tier reproducibly; run CocoaPods explicitly to create it, then retry MagiCore resolution".to_string(),
+        });
+    }
+
     let mut graph = ResolvedGraph::empty();
     let mut lock_packages = Vec::new();
 
@@ -154,6 +167,7 @@ pub async fn resolve_rn_layers(manifest: &Manifest, project_root: &Path) -> MgRe
             ];
             markers.push(format!("checked-deps:{}", dep_names.len()));
             lock_packages.push(mgc_lockfile::Package {
+                owner_core: Some("app".to_string()),
                 name: pod.name.clone(),
                 version: pod.version.clone(),
                 resolved: spec_url.clone(),
@@ -190,7 +204,7 @@ pub async fn resolve_rn_layers(manifest: &Manifest, project_root: &Path) -> MgRe
         return Err(unsupported_capability(
             "app",
             "resolve",
-            "React Native iOS tier has a Podfile but no Podfile.lock — run `pod install` to produce the lock, then re-run resolve",
+            "React Native iOS dependency resolution is unsupported: MagiCore requires a native CocoaPods resolver and lock writer before this tier can be resolved",
         ));
     }
 
@@ -361,6 +375,7 @@ fn subset(graph: &ResolvedGraph, keep: impl Fn(&str) -> bool) -> ResolvedGraph {
 /// Attach the tier marker to a native lock entry.
 /// Gắn marker tier vào một entry lock native.
 fn tag_tier(mut pkg: mgc_lockfile::Package, tier: &str) -> mgc_lockfile::Package {
+    pkg.owner_core = Some("app".to_string());
     let mut markers = pkg.markers.take().unwrap_or_default();
     if !markers
         .iter()

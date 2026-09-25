@@ -113,6 +113,13 @@ pub fn verify_v4_math(lock: &LockfileV4) -> LockfileResult<V4VerifyReport> {
     }
     let public_key =
         mgc_crypto::ed25519_signer::Ed25519PublicKey::from_base64(&signature.public_key)?;
+    let public_key_hash = mgc_crypto::blake3_signer::Blake3Hasher::hash_bytes(&public_key.0);
+    let actual_key_id = hex::encode(&public_key_hash.0[..8]);
+    if signature.key_id != actual_key_id {
+        return Err(LockfileError::VerificationFailed(
+            "signature key ID does not match the public-key fingerprint".to_string(),
+        ));
+    }
     let raw = signature
         .signature
         .strip_prefix("ed25519-")

@@ -59,16 +59,10 @@ pub async fn add(
 ) -> Result<()> {
     let root = project_root()?;
     let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
-    // C0 ownership firewall (T0.3): TypeScript rides the native web engine;
-    // rust/python/go Add run natively (resolve-first + mgc-side manifest
-    // edit, zero spawn); Remove/Update still delegate per dep_gate table.
-    // (Tường lửa C0: Add native cho rust/python/go.)
+    // The ownership gate permits only a completed native dependency lane.
+    // Tường lửa chỉ cho phép lane dependency native đã hoàn chỉnh.
     let detected = mgc_lib_adapter::detect_language(&root);
     let language = detected.map(|lang| lang.ecosystem());
-    // Actual tool the adapter WILL spawn (never None on a spawning
-    // lane): the gate must see `pip` for python — a `--compat-runtime
-    // uv` opt-in must NOT open a pip spawn (flag==process contract).
-    let tool = detected.and_then(shared::lib_edit_tool);
     crate::commands::dep_gate::gate(
         &crate::commands::dep_gate::DepContext::new(
             "lib",
@@ -77,7 +71,7 @@ pub async fn add(
             None,
             crate::commands::dep_gate::DepOp::Add,
         ),
-        tool,
+        None,
         &compat,
         Some(&root.join(".magicore").join("exec.log")),
     )?;

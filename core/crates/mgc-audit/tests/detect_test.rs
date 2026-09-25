@@ -31,7 +31,7 @@ fn rust_step_fires_on_cargo_toml() {
     std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
     let step = rust_step(&dir).expect("Cargo.toml must yield a rust step");
     assert_eq!(step.ecosystem, "rust");
-    assert_eq!(step.scanner, "cargo-audit");
+    assert_eq!(step.scanner, "mgc-rust-osv");
 }
 
 #[test]
@@ -48,7 +48,7 @@ fn python_step_fires_on_every_recognized_manifest() {
         std::fs::write(dir.join(file), "").unwrap();
         let step = python_step(&dir).unwrap_or_else(|| panic!("{file} must yield a python step"));
         assert_eq!(step.ecosystem, "python");
-        assert_eq!(step.scanner, "pip-audit");
+        assert_eq!(step.scanner, "mgc-python-osv");
     }
 }
 
@@ -58,7 +58,7 @@ fn go_step_fires_on_go_mod() {
     std::fs::write(dir.join("go.mod"), "module example.com/x\n").unwrap();
     let step = go_step(&dir).expect("go.mod must yield a go step");
     assert_eq!(step.ecosystem, "go");
-    assert_eq!(step.scanner, "govulncheck");
+    assert_eq!(step.scanner, "mgc-go-osv");
 }
 
 #[test]

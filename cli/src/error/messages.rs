@@ -125,7 +125,9 @@ pub fn no_deploy_targets() -> Error {
 
 /// python -m build failed
 pub fn python_build_failed(e: &dyn std::fmt::Display) -> Error {
-    anyhow!("python -m build failed: {e} — install `pip install build` in this project first")
+    anyhow!(
+        "Python build backend failed: {e} — MagiCore does not install Python build tools; provide a supported build backend before retrying"
+    )
 }
 
 /// go build ./... failed
@@ -563,7 +565,7 @@ pub fn unsupported_quantize_target(target: &str) -> Error {
 
 pub fn llama_cpp_missing() -> Error {
     anyhow!(
-        "llama_cpp is not installed — try: `uv pip install llama-cpp-python` and rerun (A4: passthrough, does not bundle llama-cpp-2)"
+        "llama_cpp is unavailable in the MagiCore-managed environment; this model operation is unsupported until MagiCore can resolve and install the required native artifact"
     )
 }
 
@@ -1099,7 +1101,7 @@ pub fn runtime_dangerous_permission_rejected(runtime: &str, permission: &str) ->
 
 // ===== dependency ownership gate (C0 firewall, T0.3) =====
 
-/// Native mode hit a delegated dependency operation without compat opt-in.
+/// Legacy delegated operation is blocked because dependency compatibility is disabled.
 pub fn dep_gate_requires_compat(
     core: &str,
     op: &str,
@@ -1111,7 +1113,7 @@ pub fn dep_gate_requires_compat(
         None => format!("`{core}` {op}"),
     };
     anyhow!(
-        "{lane} is toolchain-delegated (owner toolchain: {}) — MagiCore has no native engine for it yet. Re-run with an explicit compatibility opt-in (`--compat-runtime <tool>` or `MGC_COMPAT_RUNTIME=<tool>`); compat runs are excluded from native-support claims",
+        "{lane} is unsupported by MagiCore's native dependency engine (known external tools: {}) — external package-manager execution is disabled for dependency operations",
         tools.join(", ")
     )
 }
@@ -1130,13 +1132,23 @@ pub fn dep_gate_unsupported(core: &str, op: &str, ecosystem: Option<&str>) -> Er
         )
     } else {
         anyhow!(
-            "{lane} has no dependency lifecycle (unsupported) — no native engine and no toolchain lane to delegate to"
+            "{lane} is unsupported for dependency lifecycle — the manifest is toolchain-owned, but no approved compatibility runner is configured for this operation"
         )
     }
 }
 
-/// Compat named a tool that does not own this (core, ecosystem, op) cell
-/// (adapter-routed lane: the exact tool is unknown, only the owner set).
+/// Refuse dependency operations until MagiCore owns their complete native
+/// lifecycle; this deliberately offers no toolchain/compatibility escape.
+/// Từ chối lifecycle dependency khi MagiCore chưa sở hữu engine native;
+/// không mở đường vòng qua package manager ngoài.
+pub fn native_dependency_engine_unavailable(core: &str, ecosystem: &str, op: &str) -> Error {
+    anyhow!(
+        "`{core}` {op} for `{ecosystem}` is unavailable: MagiCore does not yet own the complete native dependency lifecycle for this lane. No external package manager was invoked; use a supported native lane or wait for native resolver, lock, fetch, verify, store, and materializer support."
+    )
+}
+
+/// Legacy compat flag named a tool for a lane without native ownership.
+/// Compatibility execution is disabled; tool identity does not grant an exception.
 pub fn dep_gate_wrong_tool(
     core: &str,
     op: &str,
@@ -1149,7 +1161,7 @@ pub fn dep_gate_wrong_tool(
         None => format!("`{core}` {op}"),
     };
     anyhow!(
-        "`--compat-runtime '{got}'` does not own {lane} (owner toolchain: {}) — pass the owning toolchain or run without compat to see the native-engine error",
+        "`--compat-runtime '{got}'` cannot authorize {lane} (known external tools: {}) — external package-manager execution is disabled for dependency operations",
         tools.join(", ")
     )
 }
@@ -1254,8 +1266,16 @@ pub fn migrate_unsupported_version(version: u8) -> Error {
 /// --compat-runtime value outside the known tool universe for dependency ops.
 pub fn dep_gate_invalid_tool(tool: &str, valid: &[&str]) -> Error {
     anyhow!(
-        "invalid --compat-runtime '{tool}' for dependency operations — supported: {} (rival JS runtimes stay on the dev/test/run/build lanes)",
+        "invalid --compat-runtime '{tool}' for dependency operations — accepted tool names: {}; compatibility execution is disabled for dependency operations",
         valid.join(", ")
+    )
+}
+
+/// Dependency commands do not permit compatibility package-manager execution.
+/// Dependency-op không cho phép chạy package manager qua compatibility.
+pub fn dep_gate_compat_disabled(value: &str) -> Error {
+    anyhow!(
+        "--compat-runtime '{value}' is disabled for dependency operations: MagiCore will not invoke an external package manager; use a fully supported native lane"
     )
 }
 
@@ -1277,23 +1297,28 @@ pub fn add_version_conflict(package: &str, pinned: &str) -> Error {
     )
 }
 
-/// A web-pipeline-only flag was passed for a non-JS backend lane (the
-/// lib machinery it delegates to has no such concept) — failed loudly
+/// A web-pipeline-only flag was passed for a non-JS backend lane — failed loudly
 /// instead of silently dropping the flag.
 /// (Flag chỉ-dành-web pipeline dùng cho backend non-JS — fail rõ.)
 pub fn web_backend_flag_unsupported(flag: &str, language: &str) -> Error {
     anyhow!(
-        "`{flag}` applies to the JavaScript pipeline only and is not supported for the {language} backend lane (managed by the lib toolchain machinery) — omit the flag"
+        "`{flag}` applies to the JavaScript pipeline only and is not supported for the {language} backend lane — omit the flag"
     )
 }
 
-/// Generic install with package arguments on a toolchain-owned manifest:
-/// mgc cannot journal what it does not own — run the provider toolchain
-/// (or the dedicated add lane) explicitly instead.
-/// (Install generic + packages trên manifest của tool — lỗi trước side effect.)
+/// Generic install with package arguments on a manifest MagiCore cannot mutate.
+/// Install tổng quát không được sửa manifest mà MagiCore chưa sở hữu.
 pub fn install_packages_toolchain_owned(adapter_name: &str) -> Error {
     anyhow!(
-        "generic install cannot add packages to the '{adapter_name}' toolchain-owned manifest (mgc does not own that file and cannot roll it back) — add dependencies with the provider toolchain or the dedicated add lane first, then run a package-less install"
+        "generic install cannot add packages to the '{adapter_name}' manifest because MagiCore does not own its native dependency lifecycle; no external package manager was invoked"
+    )
+}
+
+/// A rival JS runtime cannot be used as a hidden or explicit MGC engine.
+/// Runtime JS đối thủ không được dùng làm engine ẩn hay opt-in của MGC.
+pub fn rival_runtime_not_native(runtime: &str) -> Error {
+    anyhow!(
+        "'{runtime}' cannot run through MagiCore: the native MagiCore runtime for this project is not implemented; no external runtime was invoked"
     )
 }
 /// Monorepo member has no package.json and its toolchain was NOT opted
@@ -1321,13 +1346,11 @@ pub fn monorepo_compat_tool_denied(
     }
 }
 
-/// The provider toolchain reported success but the re-read manifest does
-/// not reflect it (added dep absent / removed dep still present) — a
-/// phantom mutation is never reported.
-/// (Tool báo xong nhưng đọc lại file không khớp — không báo giả.)
+/// A mutation adapter returned success but rereading the manifest shows no change.
+/// Adapter báo thành công nhưng đọc lại manifest không thấy thay đổi.
 pub fn tool_manifest_mismatch(package: &str, adapter: &str, detail: &str) -> Error {
     anyhow!(
-        "'{package}' was not {detail} by {adapter} after a successful toolchain run — the manifest was re-read; retry or manage it with the toolchain directly"
+        "'{package}' was not {detail} by {adapter}; MagiCore re-read the manifest and found no requested change"
     )
 }
 

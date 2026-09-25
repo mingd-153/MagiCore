@@ -48,14 +48,10 @@ use crate::commands::core::shared;
 pub async fn remove(packages: Vec<String>, compat_runtime: Option<String>) -> Result<()> {
     let root = project_root()?;
     let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
-    // C0 ownership firewall (T0.3): TypeScript rides the native web engine;
-    // every other lib language delegates to its toolchain (compat only).
-    // (Tường lửa C0: TypeScript đi engine web native; ngôn ngữ lib khác
-    // delegate toolchain.)
+    // The ownership gate permits only a completed native dependency lane.
+    // Tường lửa chỉ cho phép lane dependency native đã hoàn chỉnh.
     let detected = mgc_lib_adapter::detect_language(&root);
     let language = detected.map(|lang| lang.ecosystem());
-    // Actual tool the adapter WILL spawn (never None on a spawning lane).
-    let tool = detected.and_then(shared::lib_edit_tool);
     crate::commands::dep_gate::gate(
         &crate::commands::dep_gate::DepContext::new(
             "lib",
@@ -64,7 +60,7 @@ pub async fn remove(packages: Vec<String>, compat_runtime: Option<String>) -> Re
             None,
             crate::commands::dep_gate::DepOp::Remove,
         ),
-        tool,
+        None,
         &compat,
         Some(&root.join(".magicore").join("exec.log")),
     )?;

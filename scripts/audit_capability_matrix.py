@@ -33,20 +33,23 @@ import sys
 # Nguồn evidence: chạy suite E2E binary rồi phân loại theo test —
 # mỗi test ánh xạ sang (core, ngôn ngữ, scanner, loại evidence).
 E2E_TESTS = {
-    "audit_lib_rust_via_cli_reports_real_rustsec_finding_exit_1": ("lib", "rust", "cargo-audit", "vulnerable_fixture"),
-    "audit_lib_rust_via_cli_clean_fixture_exit_0": ("lib", "rust", "cargo-audit", "clean_fixture"),
-    "audit_lib_python_via_cli_runs_real_pip_audit": ("lib", "python", "pip-audit", "clean_fixture"),
-    "audit_lib_python_via_cli_reports_real_vulnerability_exit_1": ("lib", "python", "pip-audit", "vulnerable_fixture"),
-    "audit_lib_python_unresolved_pyproject_fails_closed_not_environment": ("lib", "python", "pip-audit", "tool_failure"),
-    "audit_app_kotlin_without_gradle_reports_tool_missing_with_remediation": ("app", "kotlin", "owasp-dependency-check", "tool_failure"),
+    "audit_lib_rust_via_cli_reports_real_rustsec_finding_exit_1": ("lib", "rust", "mgc-rust-osv", "vulnerable_fixture"),
+    "audit_lib_rust_via_cli_clean_fixture_exit_0": ("lib", "rust", "mgc-rust-osv", "clean_fixture"),
+    "audit_osv_unreachable_lib_rust_strict_exit_2": ("lib", "rust", "mgc-rust-osv", "tool_failure"),
+    "audit_lib_python_via_cli_audits_native_uv_lock_without_python_tools": ("lib", "python", "mgc-python-osv", "clean_fixture"),
+    "audit_lib_python_via_cli_reports_real_vulnerability_exit_1": ("lib", "python", "mgc-python-osv", "vulnerable_fixture"),
+    "audit_osv_unreachable_lib_python_strict_exit_2": ("lib", "python", "mgc-python-osv", "tool_failure"),
+    "audit_lib_python_unresolved_pyproject_fails_closed_not_environment": ("lib", "python", "mgc-python-osv", "unsupported_manifest"),
+    "audit_app_kotlin_without_native_lock_reports_unsupported_not_tool_missing": ("app", "kotlin", "mgc-audit-unsupported", "unsupported_manifest"),
     "audit_unavailable_strict_fails_with_environment_exit_2": ("app", "flutter", "none", "tool_failure"),
     "audit_unavailable_non_strict_exits_0_with_warning": ("app", "flutter", "none", "tool_failure"),
-    # Go lane (P1 2026-09-09): govulncheck via the shared engine.
-    "audit_lib_go_via_cli_reports_real_osv_finding_exit_1": ("lib", "go", "govulncheck", "vulnerable_fixture"),
-    "audit_lib_go_via_cli_clean_fixture_exit_0": ("lib", "go", "govulncheck", "clean_fixture"),
-    "audit_lib_go_without_govulncheck_reports_tool_missing": ("lib", "go", "govulncheck", "tool_failure"),
-    # Rust tool-missing lane (P1): completes the three-evidence set.
-    "audit_lib_rust_without_cargo_audit_reports_tool_missing": ("lib", "rust", "cargo-audit", "tool_failure"),
+    # Go's active scanner is MGC OSV, but only direct go.mod pins are
+    # covered today; retain partial evidence and do not require it as a
+    # release-supported full-graph lane.
+    # Scanner Go hiện tại là OSV của MGC, nhưng mới phủ pin trực tiếp;
+    # giữ evidence partial, không bắt buộc như lane phủ graph đầy đủ.
+    "audit_lib_go_via_cli_reports_real_osv_finding_exit_1": ("lib", "go", "mgc-go-osv", "vulnerable_fixture"),
+    "audit_lib_go_without_dependency_pins_is_partial_not_clean": ("lib", "go", "mgc-go-osv", "partial_coverage"),
     # P2 2026-09-10 — OSV-backed lanes (network advisories, no toolchain):
     # Java (Maven ecosystem), .NET (NuGet), Swift (SwiftURL — with the
     # naming fix), Dart/Pub (flutter).
@@ -113,9 +116,8 @@ REQUIRED_KINDS = {"clean_fixture", "vulnerable_fixture", "tool_failure"}
 # gate mới được qua. Kết quả test chỉ quyết định lane xanh — không bao
 # giờ quyết định scope phải test.
 EXPECTED_LANES = [
-    ("lib", "rust", "cargo-audit"),
-    ("lib", "python", "pip-audit"),
-    ("lib", "go", "govulncheck"),
+    ("lib", "rust", "mgc-rust-osv"),
+    ("lib", "python", "mgc-python-osv"),
     ("lib", "java", "osv-maven"),
     ("lib", "dotnet", "osv-nuget"),
     ("app", "swift", "osv-swifturl"),
@@ -308,9 +310,9 @@ def main() -> int:
             # Các core này CHẠY (engine polyglot quét manifest kề) nhưng
             # lane ecosystem ĐÍCH còn thiếu — liệt kê đích danh.
             {"core": "game", "language": "unity/unreal", "status": "unsupported",
-             "reason": "no Unity/Unreal advisory scanner exists (UPM/native plugin audit unsolved upstream) — Bevy (Cargo.toml) rides the polyglot cargo-audit lane"},
+             "reason": "no Unity/Unreal advisory scanner exists (UPM/native plugin audit unsolved upstream) — Bevy (Cargo.toml) rides the polyglot MGC Rust OSV lane"},
             {"core": "iot", "language": "c/c++/micropython", "status": "unsupported",
-             "reason": "no C/C++ manifest SBOM standard adopted (conan/vcpkg not wired) — Rust IoT projects ride the polyglot cargo-audit lane"},
+             "reason": "no C/C++ manifest SBOM standard adopted (conan/vcpkg not wired) — Rust IoT projects ride the polyglot MGC Rust OSV lane"},
             {"core": "hardware", "language": "fpga/hdl", "status": "unsupported",
              "reason": "toolchain checksum + HDL/IP provenance lane not implemented"},
             {"core": "cloud", "language": "kubernetes/docker", "status": "unsupported",

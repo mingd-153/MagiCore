@@ -10,6 +10,17 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  coverage-manifest-contract:
+    name: Coverage Manifest Contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Validate Phase 0 coverage schema, fixture, and anti-laundering rules
+        run: |
+          python3 -m json.tool ci/evidence/coverage-manifest.schema.json >/dev/null
+          python3 scripts/test_coverage_manifest.py
+          python3 scripts/validate_coverage_manifest.py
+
   check:
     name: Check
     runs-on: ubuntu-latest
@@ -35,21 +46,15 @@ jobs:
         timeout-minutes: 2
 
   dependency-ownership-audit:
-    # P0-A (2026-09-16): MUST-PASS ownership gate — every PM-tool spawn in
-    # the dependency lifecycle must be either a whitelisted non-dependency
-    # op (build/test/run/dev/flash/doctor, tests, benches) or carry a
-    # `DELEGATED:` declaration; an undocumented spawn fails CI. Fast: pure
-    # static scan, no build.
-    # (P0-A (2026-09-16): cổng sở hữu BẮT BUỘC PASS — mọi spawn tool PM
-    # trong lifecycle dependency phải là op whitelist phi-dependency
-    # (build/test/run/dev/flash/doctor, tests, benches) hoặc mang khai báo
-    # `DELEGATED:`; spawn chưa khai làm CI fail. Nhanh: quét tĩnh thuần,
-    # không build.)
+    # Native ownership gate: any external dependency-lifecycle tool spawn
+    # blocks CI, even when marked DELEGATED.
+    # Cổng native ownership: mọi tool ngoài trong dependency lifecycle chặn
+    # CI, kể cả khi có nhãn DELEGATED.
     name: Dependency Ownership Audit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Audit dependency delegation (fail on undocumented violation)
+      - name: Audit dependency ownership (fail on any delegation)
         run: python3 scripts/audit_dependency_delegation.py
       - name: Audit mutation-writer call manifest (fail on gateway bypass)
         run: python3 scripts/audit_mutation_calls.py

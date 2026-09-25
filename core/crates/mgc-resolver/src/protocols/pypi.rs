@@ -76,16 +76,65 @@ impl PypiProtocol {
         bytes: &[u8],
         wheels_dir: &Path,
     ) -> MgResult<PathBuf> {
+        let filename = Self::artifact_filename(&entry.artifact_url)?;
         std::fs::create_dir_all(wheels_dir)?;
-        let filename = entry
-            .artifact_url
-            .rsplit('/')
-            .next()
-            .filter(|s| !s.is_empty())
-            .unwrap_or("artifact");
         let dest = wheels_dir.join(filename);
         std::fs::write(&dest, bytes)?;
         Ok(dest)
+    }
+
+    /// Validate registry-controlled Python identity fields before deriving
+    /// a cache path. Package names are one segment; versions and filenames
+    /// accept only characters valid in wheel/sdist basenames.
+    /// (Kiểm tra trường identity từ registry trước khi tạo cache path.)
+    pub fn importable_site_dirname(name: &str, version: &str) -> MgResult<String> {
+        mgc_types::PackageName::new(name)?;
+        if name.contains('/') || name.contains('\\') || name == "." || name == ".." {
+            return Err(MgError::Other(
+                "invalid Python package name for materialization".to_string(),
+            ));
+        }
+        mgc_types::Version::parse(version)?;
+        if version.is_empty()
+            || !version
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b".-_+".contains(&byte))
+        {
+            return Err(MgError::Other(
+                "invalid Python package version for materialization".to_string(),
+            ));
+        }
+        Ok(format!("{name}-{version}"))
+    }
+
+    fn artifact_filename(artifact_url: &str) -> MgResult<String> {
+        let url = url::Url::parse(artifact_url)
+            .map_err(|e| MgError::Other(format!("invalid Python artifact URL: {e}")))?;
+        let filename = url
+            .path_segments()
+            .and_then(|mut segments| segments.next_back())
+            .filter(|segment| !segment.is_empty())
+            .ok_or_else(|| MgError::Other("Python artifact URL has no filename".to_string()))?;
+        if filename == "."
+            || filename == ".."
+            || !filename
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"._+-".contains(&byte))
+        {
+            return Err(MgError::Other(
+                "unsafe Python artifact filename".to_string(),
+            ));
+        }
+        Ok(filename.to_string())
+    }
+
+    /// Whether an artifact can be materialized by the current native
+    /// Python runtime (pure-Python wheel only; no build backend or ABI
+    /// loader is implemented yet).
+    /// (Artifact có thể materialize bởi runtime Python native hiện tại.)
+    pub fn is_importable_pure_wheel(artifact_url: &str) -> MgResult<bool> {
+        let filename = Self::artifact_filename(artifact_url)?;
+        Ok(Self::is_pure_wheel_filename(&filename))
     }
 
     /// Unpack a PURE-PYTHON wheel into `{wheels_dir}/site/<name>-<version>/`
@@ -99,18 +148,13 @@ impl PypiProtocol {
         bytes: &[u8],
         wheels_dir: &Path,
     ) -> MgResult<Option<PathBuf>> {
-        let filename = entry
-            .artifact_url
-            .rsplit('/')
-            .next()
-            .filter(|s| !s.is_empty())
-            .unwrap_or("artifact");
-        if !Self::is_pure_wheel_filename(filename) {
+        let filename = Self::artifact_filename(&entry.artifact_url)?;
+        if !Self::is_pure_wheel_filename(&filename) {
             return Ok(None);
         }
         let site = wheels_dir
             .join("site")
-            .join(format!("{}-{}", entry.name, entry.version));
+            .join(Self::importable_site_dirname(&entry.name, &entry.version)?);
         super::zip_reader::extract_zip(bytes, &site)?;
         // RECORD verification (PEP 376): every extracted file must match
         // its recorded sha256 + size. Whole-file sha256 (checked at
@@ -998,6 +1042,73 @@ mod importable_tests {
         }
     }
 
+    #[test]
+    fn registry_identity_and_artifact_name_cannot_escape_cache_paths() {
+        assert_eq!(
+            PypiProtocol::importable_site_dirname("six", "1.17.0").unwrap(),
+            "six-1.17.0"
+        );
+        for (name, version) in [
+            ("../../outside", "1.0.0"),
+            ("six", "1.0.0-../../outside"),
+            ("six", r"1.0.0-..\outside"),
+        ] {
+            assert!(
+                PypiProtocol::importable_site_dirname(name, version).is_err(),
+                "must reject {name}@{version}"
+            );
+        }
+        assert!(
+            PypiProtocol::artifact_filename("https://files.pythonhosted.org/%2e%2e%2foutside.whl")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn native_runtime_accepts_only_pure_python_wheels() {
+        assert!(
+            PypiProtocol::is_importable_pure_wheel(
+                "https://files.pythonhosted.org/six-1.17.0-py3-none-any.whl"
+            )
+            .unwrap()
+        );
+        assert!(
+            !PypiProtocol::is_importable_pure_wheel(
+                "https://files.pythonhosted.org/numpy-2.0.0-cp312-cp312-macosx_14_0_arm64.whl"
+            )
+            .unwrap()
+        );
+        assert!(
+            !PypiProtocol::is_importable_pure_wheel(
+                "https://files.pythonhosted.org/example-1.0.0.tar.gz"
+            )
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn materializers_reject_unsafe_registry_paths_before_writing() {
+        let dir = tempfile::tempdir().unwrap();
+        let protocol = PypiProtocol::new("https://pypi.org");
+        assert!(
+            protocol
+                .materialize(
+                    &entry_for("https://files.pythonhosted.org/%2e%2e%2foutside.whl"),
+                    b"payload",
+                    dir.path(),
+                )
+                .is_err()
+        );
+        let mut entry = entry_for("https://files.pythonhosted.org/x/six-1.17.0-py3-none-any.whl");
+        entry.version = "1.0.0-../../outside".to_string();
+        assert!(
+            protocol
+                .materialize_importable(&entry, b"not a zip", dir.path())
+                .is_err()
+        );
+        assert!(std::fs::read_dir(dir.path()).unwrap().next().is_none());
+    }
+
     /// Pure-python wheels unpack into an importable site dir (RECORD
     /// verified — a tampered member fails the unpack, not the import).
     #[test]
@@ -1139,14 +1250,17 @@ fn split_top_level<'a>(expr: &'a str, keyword: &str) -> Vec<&'a str> {
             i += 1;
             continue;
         }
-        if (c.is_whitespace() || i == 0)
-            && expr[i..].starts_with(keyword)
-            && expr[i + keyword.len()..]
-                .chars()
-                .next()
-                .is_none_or(|n| n.is_whitespace() || n == '\'' || n == '"')
-            && (i == 0 || expr[..i].chars().last().is_none_or(|p| p.is_whitespace()))
-        {
+        // Scan bytes for this ASCII keyword, then slice only at its start
+        // and end (both guaranteed UTF-8 boundaries). Testing every byte
+        // with `expr[i..]` can panic when a quoted marker contains Unicode.
+        // (Tìm keyword ASCII theo byte nhưng chỉ cắt ở biên UTF-8.)
+        let keyword_bytes = keyword.as_bytes();
+        let at_token_start = i == 0 || bytes[i - 1].is_ascii_whitespace();
+        let at_token_end = i + keyword_bytes.len() == bytes.len()
+            || bytes
+                .get(i + keyword_bytes.len())
+                .is_some_and(u8::is_ascii_whitespace);
+        if at_token_start && bytes[i..].starts_with(keyword_bytes) && at_token_end {
             parts.push(expr[current_start..i].trim());
             i += keyword.len();
             current_start = i;
@@ -1335,6 +1449,29 @@ mod marker_tests {
 
     #[test]
     fn compound_markers_compose() {
+        assert_eq!(
+            marker_applies("extra == 'docs' and python_version < '3.10'", Some((3, 9))),
+            None,
+            "unknown AND true remains unknown"
+        );
+        assert_eq!(
+            marker_applies("extra == 'docs' and python_version > '3.99'", Some((3, 9))),
+            Some(false),
+            "false AND unknown is determinately false"
+        );
+        assert_eq!(
+            marker_applies("extra == 'docs' or python_version > '3.99'", Some((3, 9))),
+            None,
+            "unknown OR false remains unknown"
+        );
+        assert_eq!(
+            marker_applies(
+                "platform_release == '版本' and python_version < '3.10'",
+                Some((3, 9))
+            ),
+            None,
+            "Unicode literals must not panic and unknown AND true remains unknown"
+        );
         #[cfg(target_os = "linux")]
         {
             assert_eq!(
@@ -1349,7 +1486,7 @@ mod marker_tests {
                     "sys_platform == 'linux' and python_version > '3.99'",
                     Some((3, 9))
                 ),
-                None
+                Some(false)
             );
             assert_eq!(
                 marker_applies("sys_platform == 'darwin' or sys_platform == 'linux'", None),

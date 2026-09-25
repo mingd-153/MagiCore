@@ -5,7 +5,6 @@
 mod adapter;
 mod framework;
 mod sbom;
-mod tooling;
 
 pub mod flash;
 pub mod install;

@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "manifest_kind": "coverage-skeleton",
+  "lanes": [
+    {
+      "core": "web",
+      "language": "javascript",
+      "framework": "vite",
+      "operation": "install",
+      "target": "linux-x86_64-gnu",
+      "dependency_owner": "unverified",
+      "status": "unverified",
+      "evidence": []
+    }
+  ]
+}

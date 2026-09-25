@@ -3,7 +3,7 @@
 # Tests the migration contract only:
 #   1. optimizer env generation for a Bun project is COMPAT-GATED
 #   2. `mgc dev` with a bun script is REFUSED on the native lane
-#      (`--compat-runtime bun` is the only explicit gate)
+#      `--compat-runtime bun` must NOT delegate to Bun
 #   3. bun.lock migrates to mgc.lock via `mgc import`
 # Bun binary is a migration/fixture tool — NEVER the default engine.
 
@@ -74,12 +74,12 @@ if [ "$DEV_EXIT" -eq 0 ]; then
 fi
 echo "✓ PASS: native 'mgc dev' refuses bun script (gate_runtime_spawn)"
 
-# --- 3. Explicit compat lane opens ONLY bun (loud warning) ---
+# --- 3. Historical compat flag is refused without invoking Bun ---
 COMPAT_OUT=$("$MGC_BIN" dev --compat-runtime bun 2>&1 || true)
-if echo "$COMPAT_OUT" | grep -q "COMPATIBILITY MODE"; then
-    echo "✓ PASS: --compat-runtime bun prints the loud warning"
+if echo "$COMPAT_OUT" | grep -q "native MagiCore runtime"; then
+    echo "✓ PASS: --compat-runtime bun is refused by the native-only policy"
 else
-    echo "✗ FAIL: compat lane must warn loudly, got: $COMPAT_OUT"
+    echo "✗ FAIL: compat flag must be refused clearly, got: $COMPAT_OUT"
     exit 1
 fi
 
@@ -87,5 +87,5 @@ echo ""
 echo "Bun compatibility + migration E2E complete:"
 echo "  ✓ bun.lock imports to mgc.lock"
 echo "  ✓ native dev refuses rival runtime"
-echo "  ✓ explicit compat gate warns"
+echo "  ✓ explicit compat flag cannot delegate"
 exit 0

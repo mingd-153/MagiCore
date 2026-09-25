@@ -91,6 +91,18 @@ fn signed_lock_verifies_and_trust_roots_gate_require() {
 }
 
 #[test]
+fn v4_signature_cannot_claim_another_keys_trusted_id() {
+    let key_pair = mgc_crypto::keyring::KeyPair::generate().unwrap();
+    let mut lock = unsigned_doc();
+    let digest = lock.metadata.lockfile_hash.clone();
+    let mut block = sign_payload_digest(&digest, &key_pair).unwrap();
+    block.key_id = "deadbeefdeadbeef".to_string();
+    lock.metadata.signature = Some(block);
+
+    assert!(verify_v4_math(&lock).is_err());
+}
+
+#[test]
 fn signature_over_wrong_digest_fails() {
     let key_pair = mgc_crypto::keyring::KeyPair::generate().unwrap();
     let mut lock = unsigned_doc();

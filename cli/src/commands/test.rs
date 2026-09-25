@@ -1,16 +1,12 @@
 //! `test.rs` — MagiCore Test Command (native orchestration).
 //! `test.rs` — Lệnh Test của MagiCore (điều phối native).
 //!
-//! Architecture ruling 2026-09-10: mgc test runs on the NATIVE engine —
-//! toolchain binaries only (cargo/go/pytest/flutter, allowlisted in
-//! mgc-exec). Bun/Deno never spawn silently; the legacy auto-detect
-//! forwarding to them (and to npm/pnpm/yarn) is REMOVED. An explicit
-//! --compat-runtime bun/deno opts into the temporary compatibility
-//! lane with a loud warning.
+//! `mgc test` delegates execution to an explicitly selected compiler or
+//! test runner after dependency installation; package managers are blocked
+//! by mgc-exec in every scope. Ecosystems without a native install contract
+//! must not be reported as native lifecycle support.
 //! mgc test chạy trên engine NATIVE — chỉ binary toolchain. Bun/Deno
-//! không bao giờ spawn âm thầm; auto-detect cũ chuyển tiếp sang chúng
-//! (và npm/pnpm/yarn) đã BỎ. Cờ --compat-runtime chọn lane compat
-//! tạm thời kèm cảnh báo lớn.
+//! sau khi dependency được cài; mgc-exec chặn package manager ở mọi scope.
 
 use anyhow::Result;
 use mgc_ui::info;
@@ -67,13 +63,8 @@ pub async fn test(
         let mut full_args = runner_args;
         full_args.extend(args);
 
-        // NATIVE-ENGINE GATE (2026-09-10): the runner itself must pass
-        // the compat gate — bun/deno only under an explicit
-        // --compat-runtime, external PMs never. This kills the silent
-        // auto-detect forwarding.
-        // CỔNG ENGINE NATIVE: runner phải qua cổng compat — bun/deno chỉ
-        // khi có --compat-runtime tường minh, PM ngoài không bao giờ.
-        // Đường auto-detect chuyển tiếp âm thầm đã chết ở đây.
+        // Package managers are rejected by the execution boundary for every
+        // scope. Runtime compatibility does not grant package-manager use.
         gate_runtime_spawn(&compat, &runner)?;
 
         // Project-defined test SCRIPT (package.json "test") routes
@@ -102,19 +93,26 @@ pub async fn test(
                 .unwrap_or_default();
         let env: Vec<(String, String)> = optimizer_envs.into_iter().collect();
         let mut env = env;
+        if runner == "go" {
+            env.push(("GOPROXY".to_string(), "off".to_string()));
+            env.push(("GOSUMDB".to_string(), "off".to_string()));
+            env.push(("GOTOOLCHAIN".to_string(), "local".to_string()));
+        }
 
         // Native python packages (mgc-owned wheels unpacked at install)
         // must be importable under pytest/python — prepend their site
-        // dirs to PYTHONPATH. Absent lock/store yields nothing (never an
-        // error, never a silent venv). This is the run side of native
-        // python: `mgc test` sees what `mgc install-lib` fetched.
+        // dirs to PYTHONPATH. An absent lock yields no MGC Python entries;
+        // a malformed lock or a locked package without a verified importable
+        // site directory fails closed instead of hiding an incomplete install.
+        // This is the run side of native Python: `mgc test` sees what
+        // `mgc install-lib` fetched and materialized.
         // (PYTHONPATH cho package python do mgc cài.)
         // lib-gated: single-core builds (e.g. web-only) have no
         // mgc-lib-adapter dependency — the block vanishes there.
         #[cfg(feature = "lib")]
         {
             if runner == "pytest" || runner == "python" || runner == "python3" {
-                let mut paths = mgc_lib_adapter::install::native_python_path_entries(project_root);
+                let mut paths = mgc_lib_adapter::install::native_python_path_entries(project_root)?;
                 if !paths.is_empty() {
                     if let Some(cur) = std::env::var_os("PYTHONPATH") {
                         paths.extend(std::env::split_paths(&cur));
@@ -138,7 +136,7 @@ pub async fn test(
         let opts = mgc_exec::prelude::ExecOptions {
             cwd: Some(project_root.to_path_buf()),
             timeout: Some(std::time::Duration::from_secs(600)), // 10min test timeout
-            execution_scope: Some(mgc_exec::allowlist::ExecutionScope::TestRunner), // TestRunner scope allows PM tools
+            execution_scope: Some(mgc_exec::allowlist::ExecutionScope::TestRunner),
             env,
             clean_env: false, // Preserve existing env
             log_path: Some(project_root.join(".magicore").join("exec.log")), // P0.7 FIX: Enable audit logging
@@ -175,14 +173,25 @@ fn test_runner_policy(runner: &str) -> Option<crate::commands::launcher_policy::
 fn detect_test_runner(project_root: &Path) -> Result<Option<(String, Vec<String>)>> {
     // Check Cargo.toml (Rust) — kiểm tra Cargo.toml
     if project_root.join("Cargo.toml").exists() {
-        return Ok(Some(("cargo".to_string(), vec!["test".to_string()])));
+        return Ok(Some((
+            "cargo".to_string(),
+            vec![
+                "test".to_string(),
+                "--locked".to_string(),
+                "--offline".to_string(),
+            ],
+        )));
     }
 
     // Check go.mod (Go) — kiểm tra go.mod
     if project_root.join("go.mod").exists() {
         return Ok(Some((
             "go".to_string(),
-            vec!["test".to_string(), "./...".to_string()],
+            vec![
+                "test".to_string(),
+                "-mod=readonly".to_string(),
+                "./...".to_string(),
+            ],
         )));
     }
 
@@ -199,7 +208,10 @@ fn detect_test_runner(project_root: &Path) -> Result<Option<(String, Vec<String>
 
     // Check pubspec.yaml (Flutter/Dart) — kiểm tra pubspec.yaml
     if project_root.join("pubspec.yaml").exists() {
-        return Ok(Some(("flutter".to_string(), vec!["test".to_string()])));
+        return Ok(Some((
+            "flutter".to_string(),
+            vec!["test".to_string(), "--no-pub".to_string()],
+        )));
     }
 
     // Deno REMOVED from auto-detect (native-engine ruling 2026-09-10):
@@ -298,3 +310,7 @@ fn resolve_package_json_script(path: &Path, script: &str) -> Result<Option<Strin
         .and_then(|v| v.as_str())
         .map(|s| s.to_string()))
 }
+
+#[cfg(test)]
+#[path = "test/test_runner.rs"]
+mod tests;

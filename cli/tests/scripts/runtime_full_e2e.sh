@@ -1,24 +1,13 @@
 #!/usr/bin/env bash
-# COMPAT-RUNTIME E2E (P0-1 rewrite 2026-09-10)
-# Tests the EXPLICIT compatibility lane only:
+# NATIVE-RUNTIME BOUNDARY E2E
+# Tests that compatibility flags do not create a delegated runtime lane:
 #   - `mgc dev` native REFUSES a bun/deno script
-#   - `mgc dev --compat-runtime bun|deno` opens the gate with the loud
-#     warning, spawns the rival runtime, audit logs it
-# Bun/Deno here are COMPAT targets — never the default engine lane.
+#   - `mgc dev --compat-runtime bun|deno` also refuses without spawning
+# Bun/Deno are fixture names only — neither is an MGC execution engine.
 
 set -euo pipefail
 
 echo "=== Compat-Runtime E2E (bun + deno) ==="
-
-# Check dependencies
-MISSING_DEPS=()
-command -v bun &>/dev/null || MISSING_DEPS+=("bun")
-command -v deno &>/dev/null || MISSING_DEPS+=("deno")
-
-if [ ${#MISSING_DEPS[@]} -gt 0 ]; then
-    echo "⚠️  SKIP: Missing dependencies: ${MISSING_DEPS[*]}"
-    exit 77
-fi
 
 # Find mgc binary
 PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
@@ -57,14 +46,6 @@ run_compat_dev_lane() {
 }
 EOF
 
-    cat > server.ts <<'EOF'
-// Print env proof then exit (compat canary)
-const fs = require("fs");
-fs.writeFileSync(".env_proof.txt", `COMPAT_RAN=1\n`);
-console.log("compat server stopping");
-process.exit(0);
-EOF
-
     cat > mgc.toml <<EOF
 name = "compat-$RUNTIME"
 version = "1.0.0"
@@ -81,23 +62,22 @@ EOF
     fi
     echo "✓ native 'mgc dev' refuses the $RUNTIME script"
 
-    # 2. COMPAT lane: gate opens with the loud warning.
+    # 2. Historical compat lane: must fail before spawning the runtime.
     local COMPAT_LOG="compat-dev.log"
     MGC_COMPAT_RUNTIME= "$MGC_BIN" dev --compat-runtime "$RUNTIME" >"$COMPAT_LOG" 2>&1 || true
-    if grep -q "COMPATIBILITY MODE" "$COMPAT_LOG"; then
-        echo "✓ --compat-runtime $RUNTIME warns loudly"
+    if grep -q "native MagiCore runtime" "$COMPAT_LOG"; then
+        echo "✓ --compat-runtime $RUNTIME refused by native-only policy"
     else
-        echo "✗ FAIL: compat lane must print COMPATIBILITY MODE, got:"
+        echo "✗ FAIL: compatibility flag must be refused clearly, got:"
         cat "$COMPAT_LOG"
         cd ..
         return 1
     fi
 
-    # 3. Audit log records the compat spawn.
     if [ -f ".mgc/exec.log" ] && grep -q "$RUNTIME" .mgc/exec.log 2>/dev/null; then
-        echo "✓ audit log contains the $RUNTIME compat execution"
-    else
-        echo "⚠ WARN: audit log missing $RUNTIME entry (compat dev may have failed)"
+        echo "✗ FAIL: rejected runtime was recorded as executed"
+        cd ..
+        return 1
     fi
 
     cd ..
@@ -112,7 +92,7 @@ run_compat_dev_lane "deno" "deno run server.ts" || exit 1
 
 echo
 echo "Compat-runtime E2E complete:"
-echo "  ✓ native dev refuses bun + deno scripts"
+echo "  ✓ native and historical compat flags refuse bun + deno scripts"
 echo "  ✓ explicit compat gate warns loudly"
 echo "  ✓ compat spawns are audit-logged"
 echo "NOTE: this is COMPATIBILITY evidence — NOT native-engine evidence."

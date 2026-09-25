@@ -1,9 +1,6 @@
-//! `scanners/mod.rs` — shared scanners across adapters: cargo-audit
-//! (Rust), pip-audit (Python), govulncheck (Go), Bun/Deno lockfile
-//! readers (JS runtime parity).
-//! Scanner dùng chung giữa các adapter: cargo-audit cho Rust, pip-audit
-//! cho Python, govulncheck cho Go, bộ đọc lockfile Bun/Deno (parity
-//! runtime JS).
+//! `scanners/mod.rs` — MGC-owned OSV scanners plus Bun/Deno lockfile
+//! readers, policy scanners, and legacy report parsers.
+//! Scanner OSV do MGC sở hữu, bộ đọc lock Bun/Deno và scanner policy.
 
 pub mod bun_deno;
 pub mod dart;
@@ -12,6 +9,7 @@ pub mod gh_actions;
 pub mod govulncheck;
 pub mod maven;
 pub mod osv;
+pub mod rust;
 pub mod terraform;
 
 pub use bun_deno::{BunDenoRead, NpmPin, read_bun_lock, read_deno_lock, read_js_lockfiles};
@@ -24,18 +22,13 @@ pub use osv::{
     OsvPin, audit_cocoapods_osv, audit_osv_pins, audit_swift_spam, read_podfile_lock,
     read_swift_resolved, swift_resolved_path,
 };
+pub use rust::{audit_rust, read_cargo_lock_pins};
 pub use terraform::{audit_terraform_lock, parse_terraform_lock};
 
 use mgc_types::adapter::{AuditReport, FindingClass, Vulnerability, VulnerabilitySeverity};
 use mgc_types::{MgError, MgResult};
 use serde::Deserialize;
 use std::path::Path;
-
-/// Exit codes that mean "audit ran fine" for each scanner tool.
-/// Finding-vs-error exit contract lives in ONE place per tool (RULE §12).
-/// Exit code nghĩa là "tool chạy xong" — contract từng tool gom một chỗ.
-const CARGO_AUDIT_OK_EXIT_CODES: [i32; 2] = [0, 1];
-const PIP_AUDIT_OK_EXIT_CODES: [i32; 2] = [0, 1];
 
 // ---------------------------------------------------------------------------
 // Typed serde schemas — mirror the REAL tool output, verified against
@@ -463,94 +456,8 @@ pub fn truncate_utf8(text: &str, max_chars: usize) -> String {
     text.chars().take(max_chars).collect()
 }
 
-/// Audit Rust dependencies using cargo-audit.
-/// Audit dependencies Rust dùng cargo-audit.
-///
-/// DELEGATED: advisory evaluation runs inside the external `cargo-audit`
-/// binary (not the MGC advisory engine) until the native OSV-based
-/// evaluation lands — audit-via-tool, never claimed as native.
-/// DELEGATED: đánh giá advisory chạy trong binary ngoài `cargo-audit`
-/// (không phải engine advisory của MGC) cho tới khi cơ chế đánh giá native
-/// qua OSV xong — audit qua tool, không bao giờ tính là native.
-///
-/// Requires cargo-audit to be installed: `cargo install cargo-audit`
-pub async fn audit_rust(project_root: &Path) -> MgResult<AuditReport> {
-    // Check if cargo-audit is available
-    // Kiểm tra cargo-audit có sẵn không
-    if which::which("cargo-audit").is_err() {
-        return Ok(AuditReport::tool_missing(
-            "cargo-audit",
-            "cargo install cargo-audit --locked",
-        ));
-    }
-
-    let args = vec!["audit".to_string(), "--json".to_string()];
-
-    let exec_opts = mgc_exec::run::ExecOptions {
-        cwd: Some(project_root.to_path_buf()),
-        // cargo-audit exits 1 when findings exist — that is success.
-        // cargo-audit thoát 1 khi có finding — đó là thành công.
-        allowed_exit_codes: CARGO_AUDIT_OK_EXIT_CODES.to_vec(),
-        // Full capture: `--json` is one payload — findings must survive.
-        // Capture đầy đủ: `--json` là một payload — finding phải sống sót.
-        capture_full_stdout: true,
-        ..Default::default()
-    };
-
-    let result = match mgc_exec::run::run("cargo", &args, &exec_opts) {
-        Ok(result) => result,
-        Err(err) => {
-            let message = err.to_string();
-            if cargo_audit_environment_unavailable(&message) {
-                return Ok(AuditReport::scanner_failed(
-                    "cargo-audit",
-                    format!("environment unavailable: {message}"),
-                ));
-            }
-            return Err(MgError::Other(format!("cargo audit failed: {message}")));
-        }
-    };
-
-    // Unexpected exit codes still mean failure even with the escape hatch.
-    // Exit code ngoài tập cho phép vẫn là thất bại dù có escape hatch.
-    if !CARGO_AUDIT_OK_EXIT_CODES.contains(&result.exit_code) {
-        if cargo_audit_environment_unavailable(&result.stderr_tail) {
-            return Ok(AuditReport::scanner_failed(
-                "cargo-audit",
-                format!("environment unavailable: {}", result.stderr_tail),
-            ));
-        }
-        return Err(MgError::Other(format!(
-            "cargo audit exited with code {}",
-            result.exit_code
-        )));
-    }
-
-    // Parse the real scanner output from the FULL capture (fail closed on
-    // parse errors: never a fake clean). The compact `--json` payload is
-    // byte-bounded, not line-bounded, so findings anywhere in it survive.
-    // Parse output thật từ capture ĐẦY ĐỦ (lỗi parse thì fail-closed —
-    // không bao giờ trả sạch giả). Payload `--json` compact giới hạn
-    // byte chứ không giới hạn dòng nên finding ở đâu cũng sống sót.
-    let parsed = parse_cargo_audit_json(&result.stdout_full)?;
-    Ok(AuditReport {
-        packages_audited: parsed.packages_audited,
-        vulnerability_count: parsed.vulnerabilities.len(),
-        vulnerabilities: parsed.vulnerabilities,
-        scanner_status: mgc_types::adapter::ScannerStatus::Available,
-    })
-}
-
-fn cargo_audit_environment_unavailable(stderr: &str) -> bool {
-    stderr.contains("failed to obtain lock file")
-        || stderr.contains("couldn't fetch advisory database")
-        || stderr.contains("Permission denied")
-}
-
-/// First pinned dependency file pip-audit can consume: `requirements.txt`
-/// then `requirements*.txt` variants (dev/constraints etc.).
-/// File dependency đã ghim đầu tiên mà pip-audit đọc được: `requirements.txt`
-/// rồi tới các biến thể `requirements*.txt` (dev/constraints...).
+/// Find the canonical requirements file first, then sorted variants.
+/// Tìm requirements chuẩn trước, sau đó đến các biến thể theo thứ tự ổn định.
 pub fn find_requirements_file(project_root: &Path) -> Option<String> {
     let canonical = project_root.join("requirements.txt");
     if canonical.is_file() {
@@ -567,11 +474,8 @@ pub fn find_requirements_file(project_root: &Path) -> Option<String> {
     variants.into_iter().next()
 }
 
-/// First PEP 751 lockfile: `pylock.toml` canonical, then `pylock.*.toml`
-/// variants (pylock.dev.toml, pylock.production.toml, ...) — pip-audit's
-/// `--locked` discovers them from the project dir (Tech Lead P0-2).
-/// Lockfile PEP 751 đầu tiên: `pylock.toml` chuẩn, rồi các biến thể
-/// `pylock.*.toml` — pip-audit --locked tự khám phá từ thư mục project.
+/// Find the canonical PEP 751 lockfile first, then sorted named variants.
+/// Tìm lockfile PEP 751 chuẩn trước, rồi đến biến thể có tên theo thứ tự.
 pub fn find_pylock_file(project_root: &Path) -> Option<String> {
     let canonical = project_root.join("pylock.toml");
     if canonical.is_file() {
@@ -588,145 +492,245 @@ pub fn find_pylock_file(project_root: &Path) -> Option<String> {
     variants.into_iter().next()
 }
 
-/// Audit Python dependencies using pip-audit — the PROJECT's dependency
-/// set, never the ambient Python environment (Tech Lead P0-3 2026-09-09).
-/// Audit dependencies Python bằng pip-audit — tập dependency của PROJECT,
-/// không bao giờ audit environment Python ngoài.
-///
-/// Resolution routing (fail-closed when nothing is auditable):
-/// - `requirements*.txt`  → `pip-audit -r <file>` (pinned dep set)
-/// - `pylock.toml` or any PEP 751 `pylock.*.toml` (pylock.dev.toml,
-///   pylock.production.toml, ...) → `pip-audit --locked <project_root>`
-///   (the official CLI contract for lockfile audits)
-/// - `uv.lock` → Failed with guidance (pip-audit cannot read uv
-///   lockfiles) until a uv-aware scanner lands
-/// - `pyproject.toml` WITHOUT a lockfile → Failed: dependencies are not
-///   resolved — auditing the ambient environment would prove nothing
-///   about this project.
-/// - none of the above → Failed with real guidance.
-///
-/// Định tuyến resolve (fail-closed khi không có gì audit được):
-/// - requirements*.txt → pip-audit -r <file> (tập dep đã ghim)
-/// - pylock.toml hoặc bất kỳ pylock.*.toml chuẩn PEP 751 (pylock.dev.toml,
-///   pylock.production.toml...) → pip-audit --locked <project_root>
-///   (CLI chính thức để audit lockfile)
-/// - uv.lock → Failed kèm hướng dẫn (pip-audit không đọc uv) tới khi có
-///   scanner hiểu uv
-/// - pyproject.toml KHÔNG lockfile → Failed: dependency chưa resolve —
-///   audit environment ngoài không chứng minh gì cho project này.
-/// - không có gì → Failed kèm hướng dẫn thật.
-///
-/// Python pins owned by mgc itself, read straight from mgc.lock (no
-/// pip-audit spawn, no foreign lockfile). Non-python entries never leak
-/// in. Empty when no mgc.lock or no python pins — callers fall through
-/// to the legacy foreign-lockfile routing below.
-/// (Pin python từ mgc.lock — không spawn, không lock ngoài.)
-pub fn python_pins_from_mgc_lock(project_root: &Path) -> Vec<osv::OsvPin> {
-    let Ok(content) = std::fs::read_to_string(project_root.join("mgc.lock")) else {
-        return Vec::new();
+/// Read MGC-owned Python pins. `None` means no mgc.lock exists; a present but
+/// malformed lock is an error and an empty Python graph remains authoritative.
+/// Đọc pin Python do MGC sở hữu. `None` là chưa có mgc.lock; lock hỏng là lỗi,
+/// còn graph Python rỗng trong lock hợp lệ vẫn là nguồn dữ liệu có thẩm quyền.
+pub fn python_pins_from_mgc_lock(project_root: &Path) -> MgResult<Option<Vec<osv::OsvPin>>> {
+    let path = project_root.join("mgc.lock");
+    let content = match std::fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(MgError::Other(format!(
+                "cannot read MGC lockfile for Python audit at {}: {error}",
+                path.display()
+            )));
+        }
     };
     let lockfile = mgc_lockfile::parser::parse_lockfile(&content)
-        .unwrap_or_else(|_| mgc_lockfile::Lockfile::new());
-    lockfile
-        .packages
-        .iter()
-        .filter(|p| p.ecosystem == mgc_lockfile::EcosystemTag::Python)
-        .map(|p| osv::OsvPin {
-            name: p.name.clone(),
-            version: p.version.clone(),
-            ecosystem: "PyPI",
-        })
-        .collect()
+        .map_err(|error| MgError::Other(format!("invalid mgc.lock for Python audit: {error}")))?;
+    Ok(Some(
+        lockfile
+            .packages
+            .iter()
+            .filter(|p| p.ecosystem == mgc_lockfile::EcosystemTag::Python)
+            .map(|p| osv::OsvPin {
+                name: p.name.clone(),
+                version: p.version.clone(),
+                ecosystem: "PyPI",
+            })
+            .collect(),
+    ))
 }
 
-/// DELEGATED: advisory evaluation runs inside the external `pip-audit`
-/// binary (not the MGC advisory engine) until the native OSV-based
-/// evaluation lands — audit-via-tool, never claimed as native.
-/// DELEGATED: đánh giá advisory chạy trong binary ngoài `pip-audit`
-/// (không phải engine advisory của MGC) cho tới khi cơ chế đánh giá native
-/// qua OSV xong — audit qua tool, không bao giờ tính là native.
+const PYPI_SIMPLE_INDEX: &str = "https://pypi.org/simple";
+
+/// Read uv.lock package pins; unknown registries remain explicitly skipped.
+/// Đọc pin từ uv.lock; registry không biết phải được ghi nhận là skipped.
+pub fn read_uv_lock_pins(raw: &str) -> MgResult<(Vec<osv::OsvPin>, Vec<String>)> {
+    let document: toml::Value = toml::from_str(raw)
+        .map_err(|error| MgError::Other(format!("invalid uv.lock TOML: {error}")))?;
+    if document.get("version").and_then(toml::Value::as_integer) != Some(1)
+        || document
+            .get("revision")
+            .and_then(toml::Value::as_integer)
+            .is_none()
+    {
+        return Err(MgError::Other(
+            "uv.lock has an unsupported or incomplete schema version".to_string(),
+        ));
+    }
+    let packages = match document.get("package") {
+        Some(value) => value
+            .as_array()
+            .ok_or_else(|| MgError::Other("uv.lock package field is not an array".to_string()))?,
+        None => return Ok((Vec::new(), Vec::new())),
+    };
+    let mut pins = std::collections::BTreeSet::new();
+    let mut skipped = Vec::new();
+    if document
+        .get("resolution-markers")
+        .and_then(toml::Value::as_array)
+        .is_some_and(|markers| !markers.is_empty())
+    {
+        skipped.push("uv.lock contains platform resolution markers; all locked variants are queried conservatively".to_string());
+    }
+    for package in packages {
+        let name = package
+            .get("name")
+            .and_then(toml::Value::as_str)
+            .ok_or_else(|| MgError::Other("uv.lock package has no valid name".to_string()))?;
+        let version = package
+            .get("version")
+            .and_then(toml::Value::as_str)
+            .ok_or_else(|| {
+                MgError::Other(format!("uv.lock package '{name}' has no valid version"))
+            })?;
+        let registry = package
+            .get("source")
+            .and_then(|source| source.get("registry"))
+            .and_then(toml::Value::as_str);
+        match registry {
+            Some(url) if url.trim_end_matches('/') == PYPI_SIMPLE_INDEX => {
+                pins.insert((normalize_python_name(name), version.to_string()));
+            }
+            Some(url) => skipped.push(format!(
+                "uv.lock package '{name}@{version}' uses unsupported registry '{url}'"
+            )),
+            None => skipped.push(format!(
+                "uv.lock package '{name}@{version}' has a non-PyPI or missing source"
+            )),
+        }
+    }
+    Ok((
+        pins.into_iter()
+            .map(|(name, version)| osv::OsvPin {
+                name,
+                version,
+                ecosystem: "PyPI",
+            })
+            .collect(),
+        skipped,
+    ))
+}
+
+/// Read exact pins from requirements files; coverage is always Partial.
+/// Đọc pin chính xác từ requirements; độ phủ luôn là Partial.
+pub fn read_requirements_pins(project_root: &Path) -> MgResult<(Vec<osv::OsvPin>, Vec<String>)> {
+    let mut paths: Vec<_> = std::fs::read_dir(project_root)
+        .map_err(|error| MgError::Other(format!("read project directory: {error}")))?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| {
+            path.is_file()
+                && path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("requirements") && name.ends_with(".txt"))
+        })
+        .collect();
+    paths.sort();
+    let mut pins = std::collections::BTreeSet::new();
+    let mut skipped =
+        vec!["requirements files do not prove a complete resolved dependency graph".to_string()];
+    for path in paths {
+        let file_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("requirements.txt");
+        let raw = std::fs::read_to_string(&path)
+            .map_err(|error| MgError::Other(format!("read {file_name}: {error}")))?;
+        for (index, line) in raw.lines().enumerate() {
+            let line = line.split('#').next().unwrap_or("").trim();
+            if line.is_empty() || line.starts_with("--hash=") {
+                continue;
+            }
+            if line.starts_with('-') {
+                skipped.push(format!(
+                    "{file_name}:{} uses an unsupported include/option",
+                    index + 1
+                ));
+                continue;
+            }
+            let requirement = line
+                .split(';')
+                .next()
+                .unwrap_or("")
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .trim();
+            let name_end = requirement
+                .find(|ch: char| !ch.is_ascii_alphanumeric() && !"._-[]".contains(ch))
+                .unwrap_or(requirement.len());
+            let raw_name = &requirement[..name_end];
+            let package_name = raw_name.split('[').next().unwrap_or("").trim();
+            let constraint = requirement[name_end..].trim();
+            let version = constraint
+                .strip_prefix("===")
+                .or_else(|| constraint.strip_prefix("=="))
+                .map(str::trim);
+            match (package_name.is_empty(), version) {
+                (false, Some(version)) if !version.is_empty() && !version.contains('*') => {
+                    pins.insert((normalize_python_name(package_name), version.to_string()));
+                    if line.contains(';') {
+                        skipped.push(format!(
+                            "{file_name}:{} has an environment marker; the query includes it conservatively",
+                            index + 1
+                        ));
+                    }
+                }
+                _ => skipped.push(format!(
+                    "{file_name}:{} is not an exact package version pin",
+                    index + 1
+                )),
+            }
+        }
+    }
+    Ok((
+        pins.into_iter()
+            .map(|(name, version)| osv::OsvPin {
+                name,
+                version,
+                ecosystem: "PyPI",
+            })
+            .collect(),
+        skipped,
+    ))
+}
+
+fn normalize_python_name(name: &str) -> String {
+    let mut normalized = String::with_capacity(name.len());
+    let mut separator = false;
+    for ch in name.to_ascii_lowercase().chars() {
+        if matches!(ch, '_' | '.' | '-') {
+            separator = true;
+        } else {
+            if separator && !normalized.is_empty() {
+                normalized.push('-');
+            }
+            separator = false;
+            normalized.push(ch);
+        }
+    }
+    normalized
+}
+
+/// Audit Python pins with MGC's parser and OSV client; no package-manager spawn.
+/// Dùng parser và OSV client của MGC để audit Python; không spawn package manager.
 pub async fn audit_python(project_root: &Path) -> MgResult<AuditReport> {
-    // mgc.lock FIRST (no-bypass rule): pins owned by mgc audit natively
-    // through OSV — no pip-audit spawn, no foreign lockfile. Only when
-    // mgc holds no python pins do we fall through to the legacy routing
-    // (requirements/pylock/uv/pyproject) below.
-    // (mgc.lock TRƯỚC: pin của mgc audit native qua OSV.)
-    let owned = python_pins_from_mgc_lock(project_root);
-    if !owned.is_empty() {
+    if let Some(owned) = python_pins_from_mgc_lock(project_root)? {
         return osv::audit_osv_pins(&owned).await;
     }
-    if which::which("pip-audit").is_err() {
-        return Ok(AuditReport::tool_missing(
-            "pip-audit",
-            "pip install pip-audit (official PyPA vulnerability scanner)",
-        ));
-    }
-
-    // Pick the audit target — first match wins; explicit over implicit.
-    // Chọn target audit — cái nào có trước dùng cái đó; tường minh hơn ngầm định.
-    let requirements = find_requirements_file(project_root);
-    let pylock = find_pylock_file(project_root);
     let uv_lock = project_root.join("uv.lock");
-
-    let target_args: Vec<String> = if let Some(req) = requirements {
-        vec!["-r".to_string(), req]
-    } else if pylock.is_some() {
-        // Official pip-audit contract for PEP 751 lockfiles: audit the
-        // project directory with --locked (NOT -r on a TOML file).
-        // Hợp đồng chính thức của pip-audit cho lockfile PEP 751: audit
-        // thư mục project bằng --locked (KHÔNG phải -r trên file TOML).
-        vec!["--locked".to_string(), ".".to_string()]
-    } else if uv_lock.exists() {
-        return Ok(AuditReport::scanner_failed(
-            "pip-audit",
-            "uv.lock found but pip-audit cannot read uv lockfiles — run `uv export --format requirements-txt > requirements.txt` or await uv-native audit support",
-        ));
-    } else if project_root.join("pyproject.toml").exists() {
-        return Ok(AuditReport::scanner_failed(
-            "pip-audit",
-            "pyproject.toml has no resolved dependency set — generate a PEP 751 lockfile (pylock.toml) or requirements.txt so the audit targets THIS project, not the ambient environment",
-        ));
+    let (pins, mut skipped, requirements_only) = if uv_lock.is_file() {
+        let raw = std::fs::read_to_string(&uv_lock)
+            .map_err(|error| MgError::Other(format!("read uv.lock: {error}")))?;
+        let (pins, skipped) = read_uv_lock_pins(&raw)?;
+        (pins, skipped, false)
+    } else if find_requirements_file(project_root).is_some() {
+        let (pins, skipped) = read_requirements_pins(project_root)?;
+        (pins, skipped, true)
     } else {
-        return Ok(AuditReport::scanner_failed(
-            "pip-audit",
-            "no Python dependency manifest found (requirements*.txt, pylock*.toml, uv.lock, pyproject.toml)",
-        ));
+        let reason = if project_root.join("pyproject.toml").is_file() {
+            "pyproject.toml has no mgc.lock or supported resolved uv.lock; audit is unverified"
+        } else if find_pylock_file(project_root).is_some() {
+            "PEP 751 pylock is not yet supported by the native Python audit parser"
+        } else {
+            "no mgc.lock, uv.lock, or requirements*.txt found for Python audit"
+        };
+        return Ok(AuditReport::scanner_failed("mgc-python-osv", reason));
     };
-
-    let mut args = vec!["--format".to_string(), "json".to_string()];
-    args.extend(target_args);
-    let exec_opts = mgc_exec::run::ExecOptions {
-        cwd: Some(project_root.to_path_buf()),
-        // pip-audit exits 1 when vulnerabilities are found.
-        // pip-audit thoát 1 khi tìm thấy lỗ hổng.
-        allowed_exit_codes: PIP_AUDIT_OK_EXIT_CODES.to_vec(),
-        // Full capture: the JSON array is one payload — findings must
-        // survive regardless of length.
-        // Capture đầy đủ: mảng JSON là một payload — finding phải sống
-        // sót bất kể độ dài.
-        capture_full_stdout: true,
-        ..Default::default()
-    };
-
-    let result = mgc_exec::run::run("pip-audit", &args, &exec_opts)
-        .map_err(|e| MgError::Other(format!("pip-audit failed: {e}")))?;
-
-    // With allowed_exit_codes=[0,1] any Err (and any exit outside {0,1})
-    // is a genuine audit ERROR, not findings — fail closed with the reason.
-    // Với allowed_exit_codes=[0,1], mọi Err (và exit ngoài {0,1}) là LỖI
-    // audit thật, không phải finding — fail-closed kèm lý do.
-    if !PIP_AUDIT_OK_EXIT_CODES.contains(&result.exit_code) {
-        return Err(MgError::Other(format!(
-            "pip-audit exited with code {}",
-            result.exit_code
-        )));
+    let mut report = osv::audit_osv_pins(&pins).await?;
+    if requirements_only || !skipped.is_empty() {
+        if skipped.is_empty() {
+            skipped.push("Python dependency coverage is incomplete".to_string());
+        }
+        report.scanner_status = mgc_types::adapter::ScannerStatus::Partial {
+            scanned: report.packages_audited,
+            skipped: skipped.len(),
+            reasons: skipped,
+        };
     }
-
-    let parsed = parse_pip_audit_json(&result.stdout_full)?;
-    Ok(AuditReport {
-        packages_audited: parsed.packages_audited,
-        vulnerability_count: parsed.vulnerabilities.len(),
-        vulnerabilities: parsed.vulnerabilities,
-        scanner_status: mgc_types::adapter::ScannerStatus::Available,
-    })
+    Ok(report)
 }

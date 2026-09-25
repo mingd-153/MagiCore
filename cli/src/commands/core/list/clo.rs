@@ -12,18 +12,14 @@ use mgc_types::Ecosystem;
 
 pub async fn list(compat_runtime: Option<String>) -> Result<()> {
     let root = shared::core_project_root("clo")?;
-    let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
-    crate::commands::dep_gate::gate(
-        &crate::commands::dep_gate::DepContext::new(
-            "clo",
-            None,
-            None,
-            None,
-            crate::commands::dep_gate::DepOp::List,
-        ),
-        None,
-        &compat,
-        Some(&root.join(".magicore").join("exec.log")),
+    let cloud_type = mgc_cloud_adapter::detect_type(&root)
+        .map(|kind| kind.as_str())
+        .ok_or_else(|| crate::error::no_mgc_project_found("clo"))?;
+    crate::commands::dep_gate::gate_cloud_project(
+        &root,
+        cloud_type,
+        crate::commands::dep_gate::DepOp::List,
+        compat_runtime.as_deref(),
     )?;
     let adapter = shared::core_adapter(&Ecosystem::Cloud);
     shared::list(&*adapter, &root).await

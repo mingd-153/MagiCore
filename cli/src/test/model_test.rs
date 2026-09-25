@@ -5,7 +5,7 @@
 #![allow(unsafe_code)]
 //! Tests for AI model OCI operations
 
-use super::{ModelManifest, cas_import, cas_pull, remove_local, save_manifest_in};
+use super::{ModelManifest, cas_import, cas_pull, quantize, remove_local, save_manifest_in};
 use std::path::PathBuf;
 
 fn tmp_store(tag: &str) -> (PathBuf, PathBuf) {
@@ -72,4 +72,15 @@ fn unsupported_source_bails() {
     let _ = &base;
     let rt = tokio::runtime::Runtime::new().unwrap();
     assert!(rt.block_on(cas_pull("file:///tmp/x")).is_err());
+}
+
+#[test]
+fn quantize_fails_closed_without_invoking_external_python() {
+    let error = quantize("model.gguf", "q4_k_m", None).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("native GGUF quantization is not implemented")
+    );
+    assert!(error.to_string().contains("will not invoke Python"));
 }

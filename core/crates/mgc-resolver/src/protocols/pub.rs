@@ -124,32 +124,11 @@ impl RegistryProtocol for PubProtocol {
             )));
         }
 
-        let mut deps = Vec::new();
         let mut markers = Vec::new();
         if !pv.pubspec.environment.sdk.is_empty() {
             markers.push(format!("sdk:{}", pv.pubspec.environment.sdk));
         }
-        for (dep_name, constraint) in &pv.pubspec.dependencies {
-            // SDK-owned packages are not resolvable on pub.dev — recorded,
-            // never silently dropped.
-            // (Package thuộc SDK không resolve được trên pub.dev — ghi
-            // nhận, không bao giờ bỏ âm thầm.)
-            if matches!(dep_name.as_str(), "flutter" | "flutter_test" | "dart") {
-                markers.push(format!("sdk-owned:{dep_name}"));
-                continue;
-            }
-            // path/git/hosted dependencies are objects, not version constraints.
-            // (Dep path/git/hosted là object, không phải ràng buộc version.)
-            let Some(dep_range) = constraint.as_str() else {
-                markers.push(format!("non-registry-dep:{dep_name}"));
-                continue;
-            };
-            if dep_range.trim().is_empty() {
-                markers.push(format!("empty-constraint:{dep_name}"));
-                continue;
-            }
-            deps.push((dep_name.clone(), dep_range.to_string()));
-        }
+        let deps = parse_pub_dependencies(&pv.pubspec.dependencies, &mut markers)?;
 
         Ok(ResolvedEntry {
             name: name.to_string(),
@@ -179,6 +158,50 @@ impl RegistryProtocol for PubProtocol {
         }
         Ok(bytes.to_vec())
     }
+}
+
+fn parse_pub_dependencies(
+    dependencies: &HashMap<String, serde_json::Value>,
+    markers: &mut Vec<String>,
+) -> MgResult<Vec<(String, String)>> {
+    let mut parsed = Vec::with_capacity(dependencies.len());
+    for (name, value) in dependencies {
+        // SDK-owned packages are part of the selected SDK, not pub.dev.
+        if matches!(
+            name.as_str(),
+            "flutter" | "flutter_test" | "integration_test" | "dart"
+        ) {
+            markers.push(format!("sdk-owned:{name}"));
+            continue;
+        }
+        let Some(range) = value.as_str() else {
+            let source = value
+                .as_object()
+                .and_then(|object| {
+                    ["path", "git", "hosted"]
+                        .into_iter()
+                        .find(|key| object.contains_key(*key))
+                })
+                .unwrap_or("non-registry");
+            return Err(MgError::Unsupported {
+                core: "app",
+                capability: "pub.dev dependency source",
+                guidance: format!(
+                    "dependency '{name}' uses {source}; the native pub.dev resolver cannot claim or substitute it"
+                ),
+            });
+        };
+        if range.trim().is_empty() {
+            return Err(MgError::Unsupported {
+                core: "app",
+                capability: "pub.dev dependency constraint",
+                guidance: format!("dependency '{name}' has an empty version constraint"),
+            });
+        }
+        parsed.push((name.clone(), range.to_string()));
+    }
+    parsed.sort();
+    Ok(parsed)
 }
 
 /// Dart constraint matcher: `any`, `^x.y.z`, bare = exact, space-separated
@@ -321,5 +344,32 @@ mod tests {
             ">=1.0.0 <2.0.0",
             &Version::parse("1.5.0").unwrap()
         ));
+    }
+
+    #[test]
+    fn pub_metadata_rejects_non_registry_dependencies_instead_of_dropping_them() {
+        for source in ["path", "git", "hosted"] {
+            let value = match source {
+                "path" => serde_json::json!({"path": "../local"}),
+                "git" => serde_json::json!({"git": {"url": "https://example.invalid/repo.git"}}),
+                _ => serde_json::json!({"hosted": "https://packages.invalid", "version": "^1.0.0"}),
+            };
+            let dependencies = HashMap::from([("local_pkg".to_string(), value)]);
+            let error = parse_pub_dependencies(&dependencies, &mut vec![]).unwrap_err();
+            assert!(matches!(error, MgError::Unsupported { .. }));
+            assert!(error.to_string().contains(source));
+        }
+    }
+
+    #[test]
+    fn pub_metadata_excludes_sdk_packages_but_keeps_registry_edges() {
+        let dependencies = HashMap::from([
+            ("flutter_test".to_string(), serde_json::json!("any")),
+            ("http".to_string(), serde_json::json!("^1.0.0")),
+        ]);
+        let mut markers = vec![];
+        let parsed = parse_pub_dependencies(&dependencies, &mut markers).unwrap();
+        assert_eq!(parsed, vec![("http".to_string(), "^1.0.0".to_string())]);
+        assert_eq!(markers, vec!["sdk-owned:flutter_test"]);
     }
 }

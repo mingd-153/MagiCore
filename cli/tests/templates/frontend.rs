@@ -46,8 +46,8 @@ fn test_real_bundler_build_succeeds() {
     // (Build script của chính framework chạy exit 0 — bundle thật.)
     let name = format!("build-{FRAMEWORK}");
     let dir = common::scaffold(FRAMEWORK, &name);
-    let (ok, _) = common::mgc_in(&dir, &["install-web"]);
-    assert!(ok, "{FRAMEWORK} install (for build) failed");
+    let (ok, out) = common::mgc_in(&dir, &["install-web"]);
+    assert!(ok, "{FRAMEWORK} install (for build) failed:\n{out}");
     let (ok, out) = common::mgc_in(&dir, &["build"]);
     assert!(ok, "{FRAMEWORK} real bundler build failed:\n{out}");
 }

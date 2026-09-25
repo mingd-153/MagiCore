@@ -1,29 +1,18 @@
 //! Swift Package.swift manifest parsing (Phase 2 — native SwiftPM lane).
 //! Parse manifest Package.swift của Swift (Phase 2 — lane SwiftPM native).
 
-use mgc_resolver::protocols::swift::{
-    SwiftDep, parse_dump_package, parse_package_resolved, parse_swift_package_deps,
-};
+use mgc_resolver::protocols::swift::{SwiftDep, parse_package_resolved, parse_swift_package_deps};
 use mgc_types::{
     DependencySpec, Ecosystem, Manifest, MgError, MgResult, PackageName, VersionRange,
 };
 use std::path::Path;
 
-/// Parse Package.swift to Manifest via `swift package dump-package`, then
-/// apply the pins recorded in an existing Package.resolved (pins win: the
-/// resolved file IS the lock).
-///
-/// The Swift toolchain is REQUIRED to read a Package.swift (it is Swift
-/// source, not data — only the compiler can evaluate it). Missing/failing
-/// toolchain fails closed with guidance instead of pretending the project
-/// has no dependencies.
-/// Parse Package.swift thành Manifest qua `swift package dump-package`, rồi
-/// áp pin ghi trong Package.resolved có sẵn (pin thắng: file resolved CHÍNH
-/// LÀ lock).
-///
-/// Toolchain Swift là BẮT BUỘC để đọc Package.swift (đây là mã nguồn Swift,
-/// không phải dữ liệu — chỉ compiler đánh giá được). Toolchain thiếu/lỗi thì
-/// fail-closed kèm hướng dẫn thay vì giả vờ project không có dependency.
+/// Parse only literal `.package(...)` declarations from Package.swift; do
+/// not execute SwiftPM or project manifest code during dependency
+/// resolution. Unsupported/dynamic declaration shapes fail closed. Existing
+/// Package.resolved pins override literal declared requirements.
+/// Chỉ parse tĩnh khai báo `.package(...)` literal; không chạy SwiftPM hay
+/// mã manifest của project khi resolve. Cú pháp động/không hỗ trợ fail-closed.
 pub fn parse_package_swift(project_root: &Path) -> MgResult<Manifest> {
     let swift_path = project_root.join("Package.swift");
     if !swift_path.exists() {
@@ -36,8 +25,34 @@ pub fn parse_package_swift(project_root: &Path) -> MgResult<Manifest> {
         .unwrap_or_else(|| "app".to_string());
     let mut manifest = Manifest::new(&name, Ecosystem::App);
 
-    let dump = run_dump_package(project_root)?;
-    let deps = parse_dump_package(&dump)?;
+    let source = std::fs::read_to_string(&swift_path)
+        .map_err(|e| MgError::Other(format!("read Package.swift: {e}")))?;
+    if !source.contains("Package(") {
+        return Err(unsupported_static_swift_manifest(
+            "no literal Package(...) declaration was found",
+        ));
+    }
+    let package_calls = source.matches(".package(").count();
+    let deps = parse_swift_package_deps(&source);
+    if deps.len() != package_calls {
+        return Err(unsupported_static_swift_manifest(
+            "one or more .package(...) declarations use unsupported or dynamic syntax",
+        ));
+    }
+    if deps.iter().any(|dep| dep.requirement_text() == "*") {
+        return Err(unsupported_static_swift_manifest(
+            "one or more .package(...) requirements are not recognized as literal versions",
+        ));
+    }
+    if let Some(value) = source
+        .split_once("dependencies:")
+        .map(|(_, value)| value.trim_start())
+        && !value.starts_with('[')
+    {
+        return Err(unsupported_static_swift_manifest(
+            "the dependencies argument is computed instead of a literal array",
+        ));
+    }
 
     // Package.resolved pins (v1 object.pins / v2-v3 pins) override the
     // declared requirement — a pin is the exact resolved identity.
@@ -48,60 +63,28 @@ pub fn parse_package_swift(project_root: &Path) -> MgResult<Manifest> {
     for dep in deps {
         let dep_name = dep.dep_name();
         let range = pin_range_for(&dep, &pins).unwrap_or_else(|| dep.requirement_text());
-        let Ok(dep_name) = PackageName::new(dep_name) else {
-            eprintln!(
-                "WARNING: Swift dependency '{}' is not a valid mgc package name — skipped",
-                dep.dep_name()
-            );
-            continue;
-        };
-        let Ok(range) = VersionRange::parse(&range) else {
-            continue;
-        };
+        let dep_name = PackageName::new(dep_name).map_err(|e| {
+            unsupported_static_swift_manifest(&format!("dependency identity is unsupported: {e}"))
+        })?;
+        let range = VersionRange::parse(&range).map_err(|e| {
+            unsupported_static_swift_manifest(&format!(
+                "dependency version range is unsupported: {e}"
+            ))
+        })?;
         manifest.add_dep(DependencySpec::new(dep_name, range), false, false, false);
     }
 
     Ok(manifest)
 }
 
-/// Run `swift package dump-package` through mgc-exec (allowlisted) and
-/// return the JSON on stdout. Non-zero exit or a missing toolchain is a
-/// fail-closed error carrying the command guidance.
-/// Chạy `swift package dump-package` qua mgc-exec (đã allowlist) và trả
-/// JSON trên stdout. Exit khác 0 hoặc thiếu toolchain là lỗi fail-closed
-/// kèm hướng dẫn lệnh.
-fn run_dump_package(project_root: &Path) -> MgResult<String> {
-    let args = vec!["package".to_string(), "dump-package".to_string()];
-    let opts = mgc_exec::run::ExecOptions {
-        cwd: Some(project_root.to_path_buf()),
-        // dump-package emits the whole manifest JSON — the line-bounded
-        // tail would truncate it.
-        // (dump-package xuất toàn bộ JSON manifest — tail giới hạn dòng sẽ
-        // cắt cụt.)
-        capture_full_stdout: true,
-        ..Default::default()
-    };
-    let report = mgc_exec::run::run("swift", &args, &opts).map_err(|e| {
-        MgError::Other(format!(
-            "`swift package dump-package` could not run: {e}\n\
-             Swift manifest parsing requires the Swift toolchain (install Xcode/\
-             swift, or set the toolchain on PATH) — fail-closed"
-        ))
-    })?;
-    if report.exit_code != 0 {
-        return Err(MgError::Other(format!(
-            "`swift package dump-package` exited {}: {} (fail-closed)",
-            report.exit_code,
-            report.stderr_tail.trim()
-        )));
+fn unsupported_static_swift_manifest(reason: &str) -> MgError {
+    MgError::Unsupported {
+        core: "app",
+        capability: "swift_manifest_parse",
+        guidance: format!(
+            "Package.swift is executable Swift; MagiCore parses only literal .package(...) declarations without running SwiftPM. {reason}. Use a supported literal manifest shape or manage this project with its Swift toolchain outside MagiCore."
+        ),
     }
-    if report.stdout_full.trim().is_empty() {
-        return Err(MgError::Other(
-            "`swift package dump-package` produced no output — cannot read the manifest (fail-closed)"
-                .to_string(),
-        ));
-    }
-    Ok(report.stdout_full)
 }
 
 /// Read Package.resolved pins (absent file = no pins, not an error).

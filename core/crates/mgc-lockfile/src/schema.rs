@@ -120,6 +120,13 @@ pub struct SignerInfo {
 /// Package entry — Entry package
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Package {
+    /// MGC core that owns this lock entry (`web`, `ai`, `app`, `lib`, …).
+    /// Absent only on legacy/imported records whose owner cannot be proven.
+    /// Core MagiCore sở hữu entry lock này; vắng mặt với lock cũ/import chưa
+    /// đủ bằng chứng để gán quyền sở hữu.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_core: Option<String>,
+
     /// Package name — Tên package
     pub name: String,
 

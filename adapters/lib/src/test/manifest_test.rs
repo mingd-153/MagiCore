@@ -14,8 +14,44 @@
 
 use crate::manifest::parse_go_mod_manifest;
 use crate::manifest::{
-    parse_cargo_manifest, parse_pyproject_manifest, write_cargo_manifest, write_pyproject_manifest,
+    parse_cargo_manifest, parse_pyproject_manifest, supports_native_python_project,
+    write_cargo_manifest, write_pyproject_manifest,
 };
+
+#[test]
+fn native_python_ownership_accepts_only_supported_pep621_inputs() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("pyproject.toml"),
+        "[project]\nname = \"demo\"\ndependencies = [\"requests>=2\"]\n",
+    )
+    .unwrap();
+    assert!(supports_native_python_project(dir.path()));
+
+    for lock in [
+        "uv.lock",
+        "PoEtRy.LoCk",
+        "pdm.lock",
+        "Pipfile.lock",
+        "requirements-dev.txt",
+        "pylock.3.13.toml",
+    ] {
+        std::fs::write(dir.path().join(lock), "foreign lock").unwrap();
+        assert!(!supports_native_python_project(dir.path()), "{lock}");
+        std::fs::remove_file(dir.path().join(lock)).unwrap();
+    }
+
+    for source in [
+        "[project]\nname=\"demo\"\noptional-dependencies={test=[\"pytest\"]}\n",
+        "[project]\nname=\"demo\"\ndynamic=[\"dependencies\"]\n",
+        "[project]\nname=\"demo\"\n[tool.poetry.dependencies]\nrequests=\"^2\"\n",
+        "[project]\nname=\"demo\"\n[tool.uv.sources]\nrequests={git=\"https://example.invalid/r.git\"}\n",
+        "[project]\nname=\"demo\"\n[dependency-groups]\ntest=[\"pytest\"]\n",
+    ] {
+        std::fs::write(dir.path().join("pyproject.toml"), source).unwrap();
+        assert!(!supports_native_python_project(dir.path()), "{source}");
+    }
+}
 
 fn write_go_mod(dir: &std::path::Path, content: &str) {
     std::fs::write(dir.join("go.mod"), content).unwrap();

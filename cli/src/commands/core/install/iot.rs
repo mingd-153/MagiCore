@@ -1,10 +1,7 @@
 //! `mgc install iot` — tách từ core/iot.rs (Phase 7 v5).
 
 use anyhow::Result;
-use mgc_types::Ecosystem;
-use mgc_types::adapter::PackageAdapter;
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use crate::commands::core::shared;
 
@@ -13,11 +10,6 @@ fn project_root() -> Result<PathBuf> {
     let root = shared::find_project_root(&cwd)?
         .ok_or_else(|| crate::error::no_mgc_project_found("iot"))?;
     Ok(root)
-}
-
-fn iot_adapter() -> Arc<dyn PackageAdapter> {
-    crate::factory::create_adapter(&Ecosystem::Iot, None, None)
-        .expect("iot adapter always available in iot core build")
 }
 
 pub async fn install(packages: Vec<String>, compat_runtime: Option<String>) -> Result<()> {
@@ -79,10 +71,13 @@ pub async fn install(packages: Vec<String>, compat_runtime: Option<String>) -> R
         )
         .await;
     }
-    // C0 ownership firewall (T0.3): the IoT install lane routes to the
-    // adapter, whose frameworks delegate (cargo/pio/west).
-    // (Tường lửa C0: lane install IoT gọi adapter, framework trong đó
-    // delegate.)
+    if framework == Some("esp32-rust") {
+        anyhow::bail!(
+            "native ESP32-Rust dependency installation requires Cargo.toml at the project root"
+        );
+    }
+    // Unsupported frameworks are rejected by the ownership gate before
+    // mutation; `--compat-runtime` is not an implementation claim.
     crate::commands::dep_gate::gate(
         &crate::commands::dep_gate::DepContext::new(
             "iot",
@@ -91,54 +86,10 @@ pub async fn install(packages: Vec<String>, compat_runtime: Option<String>) -> R
             target_owned.as_deref(),
             crate::commands::dep_gate::DepOp::Install,
         ),
-        // Exact tool for the detected framework (never None on a
-        // spawning lane): esp32-rust→cargo, platformio→pio, zephyr→west.
-        framework.and_then(shared::iot_framework_tool),
+        None,
         &compat,
         Some(&root.join(".magicore").join("exec.log")),
     )?;
-    let adapter = iot_adapter();
-    for pkg in &packages {
-        let spinner = mgc_ui::create_spinner(&format!("  Adding {}...", pkg));
-        let name = mgc_types::PackageName::new(pkg)?;
-        let opts = mgc_types::adapter::AddOptions::default();
-        adapter.add(&root, &name, None, opts).await?;
-        spinner.finish_and_clear();
-    }
-    // Delegated install (esp32-rust→cargo, platformio→pio,
-    // zephyr→west): the iot adapter has no mgc-native resolve — routing
-    // through install_with_adapter would die in prepare_install_execution
-    // with "does not support 'resolve'" on the first real dependency.
-    // Install straight into the adapter with an empty graph (each
-    // framework's installer owns its lifecycle) and print the same
-    // honest summary footer. Behavior for dependency-free manifests is
-    // unchanged (that path already reached adapter.install with an
-    // empty graph).
-    // (Install ủy thác: gọi adapter trực tiếp với graph rỗng.)
-    let started_at = std::time::Instant::now();
-    let mut summary = adapter
-        .install(
-            &mgc_types::adapter::ResolvedGraph::empty(),
-            &root,
-            mgc_types::adapter::InstallOptions {
-                legacy_flat: false,
-                ..Default::default()
-            },
-        )
-        .await?;
-    summary.duration_ms = started_at.elapsed().as_millis() as u64;
-    let cache_source = match summary.cache_mode {
-        mgc_types::adapter::InstallCacheMode::MgCStore => "shared mgc store",
-        mgc_types::adapter::InstallCacheMode::Delegated => "native toolchain cache",
-    };
-    mgc_ui::print_install_summary_source(
-        summary.added.len(),
-        summary.bytes_from_cache as usize,
-        summary.duration_ms,
-        "0 B",
-        Some(cache_source),
-    );
-    mgc_ui::blank_line();
-    mgc_ui::success("All dependencies installed");
-    Ok(())
+    let _ = packages;
+    anyhow::bail!("MagiCore does not yet own dependency installation for this IoT framework")
 }

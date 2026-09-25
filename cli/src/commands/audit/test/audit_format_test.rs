@@ -56,6 +56,43 @@ fn machine_formats_flagged_not_table() {
     assert!(!OutputFormat::Table.is_machine());
 }
 
+#[test]
+fn audit_fix_machine_output_defers_only_when_mutation_will_run() {
+    use crate::commands::audit::OutputFormat;
+    use crate::commands::audit::web::should_print_initial_report;
+
+    assert!(!should_print_initial_report(
+        true,
+        OutputFormat::Json,
+        true,
+        1
+    ));
+    assert!(should_print_initial_report(
+        true,
+        OutputFormat::Json,
+        true,
+        0
+    ));
+    assert!(should_print_initial_report(
+        true,
+        OutputFormat::Json,
+        false,
+        1
+    ));
+    assert!(should_print_initial_report(
+        false,
+        OutputFormat::Json,
+        true,
+        1
+    ));
+    assert!(should_print_initial_report(
+        true,
+        OutputFormat::Table,
+        true,
+        1
+    ));
+}
+
 /// R4/F2: non-CVE rows must be labeled by what they are — a policy
 /// finding printed as "CVE:" would mislead triage.
 /// Dòng phi-CVE phải ghi nhãn đúng bản chất — finding policy mà in

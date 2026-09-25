@@ -212,68 +212,14 @@ async fn swift_registry_without_scope_fails_closed() {
     );
 }
 
-/// Local bare-work git fixture: init → commit → tag 1.0.0. Returns
-/// (worktree, commit sha). Used ONLY to prove file:// transport is
-/// blocked (the fixture itself is never cloned from).
-/// Git fixture cục bộ: chỉ dùng để chứng minh transport file:// bị
-/// chặn (không bao giờ clone từ fixture này).
-fn local_git_repo() -> Option<(tempfile::TempDir, String)> {
-    let tmp = tempfile::tempdir().ok()?;
-    // The repo lives in a fixed-name subdir — the checkout name derives
-    // from the last path segment (GitDep-<ver>).
-    // (Repo nằm trong subdir tên cố định — tên checkout suy từ segment
-    // path cuối (GitDep-<ver>).)
-    let repo_dir = tmp.path().join("GitDep");
-    std::fs::create_dir_all(&repo_dir).ok()?;
-    let run = |args: &[&str]| {
-        let status = std::process::Command::new("git")
-            .args(args)
-            .current_dir(&repo_dir)
-            .env("GIT_AUTHOR_NAME", "mgc-test")
-            .env("GIT_AUTHOR_EMAIL", "mgc@test.local")
-            .env("GIT_COMMITTER_NAME", "mgc-test")
-            .env("GIT_COMMITTER_EMAIL", "mgc@test.local")
-            .status()
-            .expect("spawn git");
-        assert!(status.success(), "git {args:?} failed");
-    };
-    run(&["init", "-q", "-b", "main"]);
-    std::fs::write(
-        repo_dir.join("Package.swift"),
-        r#"// swift-tools-version:5.9
-let package = Package(
-    name: "GitDep",
-    dependencies: [
-        .package(id: "transitive.lib", from: "3.0.0")
-    ]
-)"#,
-    )
-    .unwrap();
-    run(&["add", "."]);
-    run(&["commit", "-q", "-m", "init"]);
-    run(&["tag", "1.0.0"]);
-    let sha = std::process::Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .current_dir(&repo_dir)
-        .output()
-        .expect("rev-parse");
-    assert!(sha.status.success());
-    Some((tmp, String::from_utf8_lossy(&sha.stdout).trim().to_string()))
-}
-
 #[tokio::test]
-async fn swift_git_dep_default_blocked_no_clone() {
-    // V1.2 (§13.3): external git transport is default-blocked — a
-    // file:// dependency fails BEFORE any clone, naming the opt-in.
-    // The local fixture exists only to name a real path.
-    let Some((repo, _sha)) = local_git_repo() else {
-        eprintln!("warning: skipping git block test (tempdir unavailable)");
-        return;
-    };
-    let name = format!("file://{}", repo.path().join("GitDep").display());
+async fn swift_file_dependency_fails_closed_without_git_process() {
     let protocol = SwiftRegistryProtocol::with_registry("http://127.0.0.1:9");
 
-    let err = protocol.resolve(&name, "tag:1.0.0").await.unwrap_err();
+    let err = protocol
+        .resolve("file:///tmp/not-a-real-repository", "tag:1.0.0")
+        .await
+        .unwrap_err();
     assert!(
         err.to_string().contains("blocked"),
         "file:// must fail closed naming the block: {err}"
@@ -281,38 +227,13 @@ async fn swift_git_dep_default_blocked_no_clone() {
 }
 
 #[tokio::test]
-async fn swift_git_dep_private_host_blocked_despite_opt_in() {
-    // Opt-in opens the gate ONLY for public allowlisted hosts: loopback
-    // stays blocked even when explicitly listed.
-    let _serial = GIT_ENV_SERIAL.lock().await;
-    set_env("MGC_GIT_DEPS", "1");
-    set_env("MGC_GIT_HOSTS", "127.0.0.1");
+async fn swift_git_dependency_is_unsupported_even_with_old_opt_in_env() {
     let result = SwiftRegistryProtocol::with_registry("http://127.0.0.1:9")
         .resolve("127.0.0.1/x.git", "branch:main")
         .await;
-    remove_env("MGC_GIT_DEPS");
-    remove_env("MGC_GIT_HOSTS");
     let err = result.unwrap_err();
     assert!(
-        err.to_string().contains("not a public address"),
-        "loopback must stay blocked: {err}"
+        err.to_string().contains("refuses to spawn Git"),
+        "the legacy opt-in must not enable an external Git process: {err}"
     );
-}
-
-static GIT_ENV_SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
-fn set_env(key: &str, value: &str) {
-    // SAFETY: test-only, serialized by GIT_ENV_SERIAL, restored by the
-    // same test before release.
-    #[allow(unsafe_code)]
-    unsafe {
-        std::env::set_var(key, value);
-    }
-}
-
-fn remove_env(key: &str) {
-    #[allow(unsafe_code)]
-    unsafe {
-        std::env::remove_var(key);
-    }
 }

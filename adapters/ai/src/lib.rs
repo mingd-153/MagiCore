@@ -12,6 +12,6 @@ pub mod install;
 pub mod native;
 pub mod registry;
 
-pub use adapter::{AiAdapter, adapter_for};
+pub use adapter::{AiAdapter, adapter_for, uses_native_python_lane};
 pub use framework::{AiFramework, detect_framework};
 pub use sbom::generate_sbom;

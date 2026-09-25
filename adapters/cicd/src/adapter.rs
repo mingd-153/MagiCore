@@ -5,11 +5,11 @@
 //! always failed (resolve/fetch/install/write_manifest/add/remove/update)
 //! is GONE — the fail-closed defaults from `mgc_types::capabilities`
 //! answer with the same `MgError::Unsupported` style. CI/CD keeps
-//! detection, listing, and its own audit lane.
+//! detection and its own audit lane; package listing is not applicable.
 //! Global Gate 1: toàn bộ mặt registry-lifecycle vốn luôn lỗi
 //! (resolve/fetch/install/write_manifest/add/remove/update) đã BỊ XÓA —
 //! default fail-closed trả lời cùng style `MgError::Unsupported`. Cicd
-//! giữ detect, list và lane audit riêng.
+//! giữ detect và lane audit riêng; list package không áp dụng.
 
 use crate::provider::{CicdProvider, detect_provider, manifest_is_cicd};
 use async_trait::async_trait;
@@ -17,8 +17,8 @@ use mgc_types::adapter::{AuditReport, InstalledPackage, PackageAdapter};
 use mgc_types::capabilities::{
     AuditProvider, Capability, CoreIdent, ProjectDetector, ScaffoldProvider,
 };
-use mgc_types::{Ecosystem, Manifest, MgResult, PackageId, Version};
-use std::path::{Path, PathBuf};
+use mgc_types::{Ecosystem, Manifest, MgResult};
+use std::path::Path;
 
 pub struct CicdAdapter {
     pub provider: CicdProvider,
@@ -134,22 +134,12 @@ impl PackageAdapter for CicdAdapter {
     }
 
     async fn list(&self, project_root: &Path) -> MgResult<Vec<InstalledPackage>> {
-        let manifest = self.parse_manifest(project_root).await?;
-        Ok(manifest
-            .all_dependencies()
-            .map(|dep| InstalledPackage {
-                id: PackageId::new(
-                    dep.name.clone(),
-                    dep.range
-                        .satisfying_version()
-                        .unwrap_or_else(|| Version::new(0, 1, 0)),
-                ),
-                path: PathBuf::new(),
-                integrity: None,
-                is_direct: true,
-                is_dev: dep.dev,
-            })
-            .collect())
+        let _ = project_root;
+        Err(mgc_types::MgError::Unsupported {
+            core: "cicd",
+            capability: "list",
+            guidance: "CI/CD workflow files are not package manifests; use workflow/provider inspection instead".to_string(),
+        })
     }
 }
 

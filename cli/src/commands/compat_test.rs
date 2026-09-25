@@ -1,9 +1,8 @@
 //! Compat-gate unit tests (native-engine architecture 2026-09-10).
 //! Prove the contract BEFORE any spawn decision: native mode refuses
-//! rival runtimes, compat mode allows only the opted-in runtime with
-//! warning, external PMs are never spawnable, invalid flags fail closed.
-//! Unit test cổng compat: native từ chối runtime đối thủ, compat chỉ cho
-//! runtime đã chọn kèm cảnh báo, PM ngoài không bao giờ spawn được.
+//! rival runtimes in every mode, external PMs are never spawnable, and
+//! invalid flags fail closed. Unit test cổng runtime: luôn từ chối runtime
+//! đối thủ và PM ngoài; giá trị compat cũ không mở đường spawn.
 
 use crate::commands::compat::{CompatMode, gate_runtime_spawn};
 
@@ -14,21 +13,24 @@ fn native_mode_refuses_bun_and_deno() {
     for runtime in ["bun", "deno"] {
         let err = gate_runtime_spawn(&mode, runtime).unwrap_err();
         assert!(
-            err.to_string().contains("NATIVE"),
-            "error must point at the native engine contract: {err}"
+            err.to_string().contains("not implemented")
+                && err.to_string().contains("no external runtime was invoked"),
+            "error must state native support is absent and delegation did not run: {err}"
         );
     }
 }
 
 #[test]
-fn compat_mode_allows_only_the_opted_in_runtime() {
+fn compat_mode_does_not_enable_a_rival_runtime() {
     let mode = CompatMode::from_flag(Some("bun")).unwrap();
-    assert!(gate_runtime_spawn(&mode, "bun").is_ok());
-    let err = gate_runtime_spawn(&mode, "deno").unwrap_err();
-    assert!(
-        err.to_string().contains("--compat-runtime"),
-        "error must name the escape hatch: {err}"
-    );
+    for runtime in ["bun", "deno"] {
+        let err = gate_runtime_spawn(&mode, runtime).unwrap_err();
+        assert!(
+            err.to_string().contains("not implemented")
+                && err.to_string().contains("no external runtime was invoked"),
+            "compat flags must not delegate to {runtime}: {err}"
+        );
+    }
 }
 
 #[test]

@@ -250,7 +250,7 @@ pub enum Commands {
         /// mỗi lần spawn; đường mặc định là engine NATIVE MagiCore.
         #[arg(
             long,
-            help = "Compatibility runtime: bun|deno (native engine by default)"
+            help = "Legacy flag; Bun/Deno execution is unsupported by the native engine"
         )]
         compat_runtime: Option<String>,
     },
@@ -263,7 +263,7 @@ pub enum Commands {
         /// Temporary rival-runtime compatibility lane (bun|deno).
         #[arg(
             long,
-            help = "Compatibility runtime: bun|deno (native engine by default)"
+            help = "Legacy flag; Bun/Deno execution is unsupported by the native engine"
         )]
         compat_runtime: Option<String>,
     },
@@ -274,7 +274,7 @@ pub enum Commands {
         /// Temporary rival-runtime compatibility lane (bun|deno).
         #[arg(
             long,
-            help = "Compatibility runtime: bun|deno (native engine by default)"
+            help = "Legacy flag; Bun/Deno execution is unsupported by the native engine"
         )]
         compat_runtime: Option<String>,
     },
@@ -290,7 +290,7 @@ pub enum Commands {
         /// Temporary rival-runtime compatibility lane (bun|deno).
         #[arg(
             long,
-            help = "Compatibility runtime: bun|deno (native engine by default)"
+            help = "Legacy flag; Bun/Deno execution is unsupported by the native engine"
         )]
         compat_runtime: Option<String>,
     },
@@ -367,7 +367,7 @@ pub enum Commands {
         /// native-support claims).
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -451,7 +451,7 @@ pub enum Commands {
         /// native-support claims).
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -466,7 +466,7 @@ pub enum Commands {
         /// native-support claims).
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -480,7 +480,7 @@ pub enum Commands {
         /// native-support claims).
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -491,7 +491,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -668,7 +668,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -684,7 +684,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -698,7 +698,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
         /// Frozen mode: fail if mgc.lock is missing or does not match
@@ -718,7 +718,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -734,7 +734,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -750,7 +750,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -766,7 +766,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
         /// Frozen mode: fail if mgc.lock is missing or does not match
@@ -786,7 +786,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
         /// Frozen mode: fail if mgc.lock is missing or does not match
@@ -806,7 +806,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -842,7 +842,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -873,7 +873,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -904,7 +904,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -935,7 +935,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -966,7 +966,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -997,7 +997,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -1028,7 +1028,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -1059,7 +1059,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -1082,7 +1082,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -1104,7 +1104,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -1120,7 +1120,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -1132,7 +1132,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -1148,7 +1148,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -1164,7 +1164,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -1180,7 +1180,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -1196,7 +1196,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -1212,7 +1212,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -1229,7 +1229,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -1240,7 +1240,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -1251,7 +1251,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -1262,7 +1262,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -1273,7 +1273,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -1284,7 +1284,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -1295,7 +1295,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -1306,7 +1306,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -1321,7 +1321,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -1338,7 +1338,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -1356,7 +1356,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -1370,7 +1370,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -1384,7 +1384,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -1402,7 +1402,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -1416,7 +1416,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -1430,7 +1430,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },
@@ -1448,7 +1448,7 @@ pub enum Commands {
         /// native-support claims). Native lanes ignore it.
         #[arg(
             long,
-            help = "Compatibility toolchain for delegated lanes (e.g. uv, cargo) — explicit opt-in only"
+            help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
     },

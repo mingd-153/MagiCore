@@ -86,15 +86,9 @@ pub struct ExecOptions {
     /// giới hạn dòng) — parser scanner cần (govulncheck phát finding rải
     /// khắp payload). Mặc định false giữ bộ nhớ phẳng cho caller thường.
     pub capture_full_stdout: bool,
-    /// Rival JS runtime (bun|deno) exempted for THIS call because the CLI
-    /// compat gate (cli compat.rs) already validated the explicit
-    /// opt-in and printed the loud warning. None = no rival runtime may
-    /// spawn (fail-closed). The exempt only ever covers the NAMED
-    /// runtime — never other PMs.
-    /// Runtime đối thủ (bun|deno) được miễn cho LỜI GỌI này vì cổng
-    /// compat ở CLI đã validate opt-in tường minh + in cảnh báo. None =
-    /// không runtime đối thủ nào được spawn (fail-closed). Miễn chỉ áp
-    /// cho runtime ĐƯỢC NÊU TÊN — không bao giờ PM khác.
+    /// Deprecated legacy field; executor policy ignores it and never
+    /// authorizes Bun/Deno or an external package manager.
+    /// Trường cũ đã deprecated; executor bỏ qua và không cấp quyền spawn.
     pub compat_runtime: Option<String>,
 }
 
@@ -209,6 +203,7 @@ pub fn run(cmd: &str, args: &[String], opts: &ExecOptions) -> Result<ExecReport>
         opts.cwd.as_deref(),
         opts.compat_runtime.as_deref(),
     )?;
+    reject_external_dependency_resolution(cmd, args, &opts.env)?;
     if opts.clean_env {
         reject_forbidden_script_file(cmd)?;
     }
@@ -227,10 +222,158 @@ pub fn run_inherited(cmd: &str, args: &[String], opts: &ExecOptions) -> Result<E
         opts.cwd.as_deref(),
         opts.compat_runtime.as_deref(),
     )?;
+    reject_external_dependency_resolution(cmd, args, &opts.env)?;
     if opts.clean_env {
         reject_forbidden_script_file(cmd)?;
     }
     execute_command(cmd, args, opts, OutputMode::Inherit)
+}
+
+/// Reject package-manager operations and require offline/frozen modes for
+/// compiler drivers that also resolve dependencies. This is a guardrail, not
+/// a claim that executing arbitrary project code is an OS sandbox.
+fn reject_external_dependency_resolution(
+    command: &str,
+    args: &[String],
+    env: &[(String, String)],
+) -> Result<()> {
+    let mut tool = process_basename(command);
+    if tool.starts_with("python") {
+        tool = "python".to_string();
+    }
+    let args: Vec<String> = args
+        .iter()
+        .take_while(|arg| arg.as_str() != "--")
+        .map(|arg| arg.to_ascii_lowercase())
+        .collect();
+    let has = |flag: &str| args.iter().any(|arg| arg == flag);
+    let (first, second) = first_command(&args);
+
+    let reason = match tool.as_str() {
+        "cargo"
+            if matches!(
+                first,
+                "add" | "remove" | "update" | "fetch" | "install" | "vendor"
+            ) =>
+        {
+            Some("Cargo dependency-management subcommands are not allowed through mgc-exec")
+        }
+        "cargo"
+            if matches!(
+                first,
+                "build" | "test" | "check" | "run" | "clippy" | "metadata"
+            ) && !(has("--locked") && has("--offline")) =>
+        {
+            Some("Cargo compile/test commands must include --locked --offline")
+        }
+        "python"
+            if args.windows(2).any(|pair| {
+                pair[0] == "-m" && matches!(pair[1].as_str(), "pip" | "uv" | "poetry")
+            }) =>
+        {
+            Some("Python package-manager modules are not allowed through mgc-exec")
+        }
+        "python"
+            if args
+                .windows(2)
+                .any(|pair| pair[0] == "-m" && pair[1] == "build")
+                && !has("--no-isolation") =>
+        {
+            Some(
+                "Python build frontend must include --no-isolation to prevent dependency installation",
+            )
+        }
+        "py" if args
+            .windows(2)
+            .any(|pair| pair[0] == "-m" && matches!(pair[1].as_str(), "pip" | "uv" | "poetry")) =>
+        {
+            Some("Python package-manager modules are not allowed through mgc-exec")
+        }
+        "go" if matches!(first, "get" | "install")
+            || (first == "mod" && matches!(second, "download" | "tidy" | "vendor")) =>
+        {
+            Some("Go dependency-management subcommands are not allowed through mgc-exec")
+        }
+        "go" if matches!(first, "build" | "test" | "run")
+            && (!has("-mod=readonly")
+                || !env
+                    .iter()
+                    .any(|(key, value)| key == "GOPROXY" && value == "off")) =>
+        {
+            Some("Go compile/test commands must use -mod=readonly and GOPROXY=off")
+        }
+        "dotnet" if matches!(first, "restore" | "add" | "remove") => {
+            Some(".NET dependency-management subcommands are not allowed through mgc-exec")
+        }
+        "dotnet" if matches!(first, "build" | "test" | "publish") && !has("--no-restore") => {
+            Some(".NET compile/test commands must include --no-restore")
+        }
+        "flutter" | "dart" if has("pub") => {
+            Some("Dart/Flutter package-manager commands are not allowed through mgc-exec")
+        }
+        "flutter" if matches!(first, "build" | "test" | "run") && !has("--no-pub") => {
+            Some("Flutter build/test/run commands must include --no-pub")
+        }
+        "swift" if has("package") => {
+            Some("SwiftPM dependency-management commands are not allowed through mgc-exec")
+        }
+        "swift"
+            if matches!(first, "build" | "test" | "run")
+                && !(has("--skip-update") && has("--disable-automatic-resolution")) =>
+        {
+            Some(
+                "Swift compile/test commands must disable package updates and automatic resolution",
+            )
+        }
+        "gradle" | "gradlew" if !has("--offline") => Some("Gradle commands must include --offline"),
+        "mvn" | "mvnw" if !has("-o") && !has("--offline") => {
+            Some("Maven commands must include offline mode (-o)")
+        }
+        _ => None,
+    };
+
+    if let Some(reason) = reason {
+        anyhow::bail!("external dependency resolution blocked: {reason}");
+    }
+    Ok(())
+}
+
+fn first_command(args: &[String]) -> (&str, &str) {
+    let mut positional = Vec::with_capacity(2);
+    let mut skip_value = false;
+    for arg in args {
+        if skip_value {
+            skip_value = false;
+            continue;
+        }
+        if matches!(
+            arg.as_str(),
+            "--manifest-path"
+                | "--config"
+                | "--color"
+                | "--message-format"
+                | "--target-dir"
+                | "--target"
+                | "--package"
+                | "--exclude"
+                | "--package-path"
+                | "-C"
+        ) {
+            skip_value = true;
+            continue;
+        }
+        if arg.starts_with('-') || arg.starts_with('+') {
+            continue;
+        }
+        positional.push(arg.as_str());
+        if positional.len() == 2 {
+            break;
+        }
+    }
+    (
+        positional.first().copied().unwrap_or_default(),
+        positional.get(1).copied().unwrap_or_default(),
+    )
 }
 /// Run a concrete project/package binary path with guardrails but without static tool allowlist.
 /// Chạy binary cụ thể đã định vị trong project/cache, vẫn có clean env + blocker + audit.
@@ -269,6 +412,8 @@ fn execute_project_binary(
             basename
         );
     }
+
+    reject_external_dependency_resolution(&canonical.display().to_string(), args, &opts.env)?;
 
     if opts.clean_env {
         reject_forbidden_script_file(&canonical.display().to_string())?;
@@ -412,36 +557,11 @@ fn execute_command(
 
     // Forbidden PM tools stay blocked in every cwd.
     // PM ngoài bị chặn tuyệt đối, không còn ngoại lệ React Native.
-    // Scoped exempt: PM tools allowed in TestRunner/BuildRunner/DevServer scopes (00-index §5.2 + TEST_RUNNER_SECURITY_MODEL.md)
-    // PM tools allowed in TestRunner/BuildRunner/DevServer: không tạo blocker shim
-    let scope = opts
-        .execution_scope
-        .unwrap_or(crate::allowlist::ExecutionScope::Install);
-    // P0-1/F-A (2026-09-10): the CLI compat gate (already validated +
-    // warned by allowlist::check_tool_with_scope_compat above) names ONE
-    // rival runtime for THIS invocation. Only that runtime skips the
-    // shadow-path blocker shim; scope rules stay untouched — Install
-    // scope lifecycle scripts (no compat runtime) still get EVERY
-    // blocker shim.
-    // Cổng compat ở CLI đã validate + cảnh báo, nêu tên MỘT runtime cho
-    // lời gọi này — chỉ runtime đó bỏ qua blocker shim; luật scope giữ
-    // nguyên (lifecycle Install không compat vẫn đủ mọi shim).
-    let mut scoped_exempt: Vec<&str> = if scope.allows_pm_tools() {
-        crate::allowlist::FORBIDDEN_TOOLS.to_vec()
-    } else {
-        Vec::new()
-    };
-    if let Some(runtime) = opts.compat_runtime.as_deref()
-        && matches!(runtime, "bun" | "deno")
-        && !scoped_exempt.contains(&runtime)
-    {
-        scoped_exempt.push(match runtime {
-            "bun" => "bun",
-            "deno" => "deno",
-            other => other,
-        });
-    }
-    let scoped_exempt: &[&str] = &scoped_exempt;
+    // No package manager is exempt in any scope. A compatibility runtime
+    // may be invoked only as a runtime; the PM executable itself stays
+    // blocked by the command validator and descendant monitor.
+    // No package manager or rival runtime receives a process-tree exemption.
+    let scoped_exempt: &[&str] = &[];
 
     if opts.dry_run {
         // dry-run: in lệnh, không chạy, vẫn ghi audit với exit_code 0 + dry_run flag (§5.5)
@@ -1026,6 +1146,7 @@ fn process_basename(command: &str) -> String {
         .to_ascii_lowercase();
     base.strip_suffix(".cmd")
         .or_else(|| base.strip_suffix(".exe"))
+        .or_else(|| base.strip_suffix(".bat"))
         .or_else(|| base.strip_suffix(".ps1"))
         .unwrap_or(&base)
         .to_string()

@@ -64,6 +64,7 @@ fn v3_roundtrip_preserves_all_new_fields() {
         "https://static.crates.io/crates/serde/serde-1.0.219.crate".to_string(),
         "blake3-abc".to_string(),
     );
+    pkg.owner_core = Some("lib".to_string());
     pkg.ecosystem = EcosystemTag::Rust;
     pkg.registry = Some("crates://sparse.crates.io".to_string());
     pkg.artifact = Some(ArtifactRef {
@@ -103,6 +104,7 @@ fn v2_lockfile_parses_with_v3_defaults() {
     assert_eq!(lock.version, "2");
 
     let pkg = lock.get_package("react").unwrap();
+    assert_eq!(pkg.owner_core, None);
     assert_eq!(pkg.ecosystem, EcosystemTag::Other);
     assert_eq!(pkg.registry, None);
     assert_eq!(pkg.artifact, None);

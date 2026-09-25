@@ -316,7 +316,11 @@ async fn run_test_step(root: &std::path::Path, core: &str) -> Result<()> {
                 clean_env: true,
                 ..Default::default()
             };
-            mgc_exec::prelude::run_inherited("cargo", &["test".into()], &opts)?;
+            mgc_exec::prelude::run_inherited(
+                "cargo",
+                &["test".into(), "--locked".into(), "--offline".into()],
+                &opts,
+            )?;
             return Ok(());
         }
         return Err(crate::error::lib_no_test_runner());

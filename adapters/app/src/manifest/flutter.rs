@@ -16,35 +16,38 @@ pub fn parse_pubspec(project_root: &Path) -> MgResult<Manifest> {
     let pubspec: PubspecYaml = serde_yaml::from_str(&content)
         .map_err(|e| MgError::Other(format!("failed to parse pubspec.yaml: {}", e)))?;
 
+    if pubspec
+        .dependency_overrides
+        .as_ref()
+        .is_some_and(|overrides| !overrides.is_empty())
+    {
+        return Err(MgError::Unsupported {
+            core: "app",
+            capability: "Flutter dependency_overrides",
+            guidance: "MagiCore does not yet implement pub dependency override semantics; remove dependency_overrides before native resolution".to_string(),
+        });
+    }
+    if pubspec
+        .workspace
+        .as_ref()
+        .is_some_and(|members| !members.is_empty())
+    {
+        return Err(MgError::Unsupported {
+            core: "app",
+            capability: "Flutter pub workspace resolution",
+            guidance: "MagiCore does not yet resolve Dart pub workspaces as one graph; run this operation only after workspace support is implemented".to_string(),
+        });
+    }
+
     let mut manifest = Manifest::new(&pubspec.name, Ecosystem::App);
 
     // Parse dependencies
     if let Some(deps) = pubspec.dependencies {
-        for (name, value) in deps {
-            if name == "flutter" {
-                continue; // Skip Flutter SDK dependency
-            }
-            let version = parse_pubspec_version(&value);
-            // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
-            if let Ok(pkg_name) = PackageName::new(&name)
-                && let Ok(range) = VersionRange::parse(&version)
-            {
-                manifest.add_dep(DependencySpec::new(pkg_name, range), false, false, false);
-            }
-        }
+        parse_dependency_section(&mut manifest, deps, false)?;
     }
 
-    // Parse dev_dependencies
     if let Some(dev_deps) = pubspec.dev_dependencies {
-        for (name, value) in dev_deps {
-            let version = parse_pubspec_version(&value);
-            // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
-            if let Ok(pkg_name) = PackageName::new(&name)
-                && let Ok(range) = VersionRange::parse(&version)
-            {
-                manifest.add_dep(DependencySpec::new(pkg_name, range), true, false, false);
-            }
-        }
+        parse_dependency_section(&mut manifest, dev_deps, true)?;
     }
 
     Ok(manifest)
@@ -134,42 +137,96 @@ pub fn write_pubspec(project_root: &Path, manifest: &Manifest) -> MgResult<()> {
 pub fn parse_podfile(project_root: &Path) -> MgResult<Manifest> {
     let podfile_path = project_root.join("Podfile");
     if !podfile_path.exists() {
-        let name = project_root
-            .file_name()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| "app".to_string());
-        return Ok(Manifest::new(&name, Ecosystem::App));
+        return Err(MgError::Other("Podfile not found".to_string()));
     }
 
-    // Issue #13: Parse Podfile (Ruby DSL format)
-    let name = project_root
-        .file_name()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "app".to_string());
-    Ok(Manifest::new(&name, Ecosystem::App))
+    Err(MgError::Unsupported {
+        core: "app",
+        capability: "parse-podfile",
+        guidance: format!(
+            "{} is executable Ruby DSL; MagiCore has no safe CocoaPods manifest parser",
+            podfile_path.display()
+        ),
+    })
 }
 
 /// Write Manifest back to Podfile.
 pub fn write_podfile(_project_root: &Path, _manifest: &Manifest) -> MgResult<()> {
-    // Issue #13: Implement Podfile write
-    Ok(())
+    Err(MgError::Unsupported {
+        core: "app",
+        capability: "write-podfile",
+        guidance: "MagiCore does not rewrite executable Ruby Podfile content".to_string(),
+    })
 }
 
 /// Parse pubspec version value (can be string or object).
-fn parse_pubspec_version(value: &serde_yaml::Value) -> String {
-    match value {
-        serde_yaml::Value::String(s) => s.clone(),
-        serde_yaml::Value::Mapping(m) => {
-            // Handle git/path dependencies
-            if let Some(serde_yaml::Value::String(s)) =
-                m.get(serde_yaml::Value::String("version".to_string()))
-            {
-                return s.clone();
+fn parse_dependency_section(
+    manifest: &mut Manifest,
+    dependencies: HashMap<String, serde_yaml::Value>,
+    dev: bool,
+) -> MgResult<()> {
+    for (name, value) in dependencies {
+        if let serde_yaml::Value::Mapping(mapping) = &value {
+            let sdk = mapping
+                .get(serde_yaml::Value::String("sdk".to_string()))
+                .and_then(serde_yaml::Value::as_str);
+            if let Some(sdk) = sdk {
+                if mapping.len() != 1 {
+                    return Err(MgError::Unsupported {
+                        core: "app",
+                        capability: "mixed Flutter SDK dependency source",
+                        guidance: format!(
+                            "dependency '{name}' combines an SDK source with other fields; MagiCore refuses to guess its resolution"
+                        ),
+                    });
+                }
+                // SDK dependencies (flutter, flutter_test, integration_test,
+                // etc.) are provided by the selected Flutter/Dart SDK, not
+                // packages from pub.dev.
+                if !sdk.is_empty() {
+                    continue;
+                }
             }
-            "*".to_string()
+
+            let source = ["path", "git", "hosted"]
+                .into_iter()
+                .find(|key| mapping.contains_key(serde_yaml::Value::String((*key).to_string())))
+                .unwrap_or("non-registry");
+            return Err(MgError::Unsupported {
+                core: "app",
+                capability: "Flutter non-pub.dev dependency source",
+                guidance: format!(
+                    "dependency '{name}' uses {source}; MagiCore currently resolves only pub.dev registry dependencies and will not substitute a same-name pub.dev package"
+                ),
+            });
         }
-        _ => "*".to_string(),
+
+        let range = match value {
+            serde_yaml::Value::String(range) if !range.trim().is_empty() => range,
+            serde_yaml::Value::Null => "*".to_string(),
+            _ => {
+                return Err(MgError::Unsupported {
+                    core: "app",
+                    capability: "Flutter dependency constraint",
+                    guidance: format!(
+                        "dependency '{name}' has an unsupported pubspec value; expected a version string or an SDK dependency"
+                    ),
+                });
+            }
+        };
+        let package = PackageName::new(&name).map_err(|error| MgError::Unsupported {
+            core: "app",
+            capability: "Flutter dependency name",
+            guidance: format!("MagiCore cannot safely resolve dependency '{name}': {error}"),
+        })?;
+        let range = VersionRange::parse(&range).map_err(|error| MgError::Unsupported {
+            core: "app",
+            capability: "Flutter dependency range",
+            guidance: format!("MagiCore cannot safely resolve '{name}': {error}"),
+        })?;
+        manifest.add_dep(DependencySpec::new(package, range), dev, false, false);
     }
+    Ok(())
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -179,4 +236,8 @@ struct PubspecYaml {
     dependencies: Option<HashMap<String, serde_yaml::Value>>,
     #[serde(default)]
     dev_dependencies: Option<HashMap<String, serde_yaml::Value>>,
+    #[serde(default)]
+    dependency_overrides: Option<HashMap<String, serde_yaml::Value>>,
+    #[serde(default)]
+    workspace: Option<Vec<String>>,
 }

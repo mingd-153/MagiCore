@@ -20,7 +20,7 @@ use mgc_types::adapter::{AuditReport, InstalledPackage, PackageAdapter};
 use mgc_types::capabilities::{
     AuditProvider, Capability, CoreIdent, OptimizerProvider, ProjectDetector,
 };
-use mgc_types::{Ecosystem, Manifest, MgResult, PackageId, PackageName, Version};
+use mgc_types::{Ecosystem, Manifest, MgResult};
 use std::path::Path;
 
 pub struct HardwareAdapter;
@@ -42,10 +42,6 @@ impl HardwareAdapter {
         Capability::OptimizerProvider,
         Capability::AuditProvider,
     ];
-}
-
-fn placeholder_id(name: &PackageName) -> PackageId {
-    PackageId::new(name.clone(), Version::new(0, 1, 0))
 }
 
 impl CoreIdent for HardwareAdapter {
@@ -122,19 +118,12 @@ impl PackageAdapter for HardwareAdapter {
     }
 
     async fn list(&self, project_root: &Path) -> MgResult<Vec<InstalledPackage>> {
-        let mut pkgs = Vec::new();
-        for sub in ["optimizer", "bench"] {
-            if project_root.join(sub).exists() {
-                pkgs.push(InstalledPackage {
-                    id: placeholder_id(&PackageName::new(sub)?),
-                    path: project_root.join(sub),
-                    integrity: None,
-                    is_direct: true,
-                    is_dev: false,
-                });
-            }
-        }
-        Ok(pkgs)
+        let _ = project_root;
+        Err(mgc_types::MgError::Unsupported {
+            core: "hardware",
+            capability: "list",
+            guidance: "optimizer/bench folders are MagiCore templates, not installed packages; use `mgc optimize` or inspect the project templates directly".to_string(),
+        })
     }
 }
 

@@ -14,23 +14,8 @@ fn tmp(tag: &str) -> PathBuf {
     dir
 }
 
-/// Hermetic guard: true when the scanner tool IS installed — tests that
-/// assert "unavailable without tool" must skip in that environment.
-/// Guard hermetic: true khi scanner ĐÃ cài — test assert "unavailable khi
-/// thiếu tool" phải bỏ qua trong môi trường đó.
-fn tool_installed(tool: &str) -> bool {
-    std::process::Command::new("which")
-        .arg(tool)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
-
 #[tokio::test]
-async fn audit_rust_without_cargo_audit_is_unavailable_not_clean() {
-    if tool_installed("cargo-audit") {
-        return;
-    }
+async fn audit_rust_requires_a_lockfile_instead_of_reporting_clean() {
     let dir = tmp("rust-no-tool");
     std::fs::write(
         dir.join("Cargo.toml"),
@@ -40,21 +25,23 @@ async fn audit_rust_without_cargo_audit_is_unavailable_not_clean() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(dir.join("src/lib.rs"), "// empty lib\n").unwrap();
 
-    // Missing scanner must be ToolMissing — never a fake clean report.
-    // Thiếu scanner phải ToolMissing — không bao giờ báo sạch giả.
-    let report = audit_rust(&dir).await.unwrap();
-    assert_eq!(report.vulnerability_count, 0);
-    assert!(matches!(
-        report.scanner_status,
-        ScannerStatus::ToolMissing { .. }
-    ));
+    // No dependency graph means no audit result; absence is not clean.
+    // Không có graph dependency thì không có kết quả audit; thiếu không có nghĩa là sạch.
+    assert!(audit_rust(&dir).await.is_err());
 }
 
 #[tokio::test]
-async fn audit_python_without_pip_audit_is_unavailable_not_clean() {
-    if tool_installed("pip-audit") {
-        return;
-    }
+async fn audit_rust_empty_lock_is_a_native_clean_result_without_external_tools() {
+    let dir = tmp("rust-empty-lock");
+    std::fs::write(dir.join("Cargo.lock"), "version = 4\n").unwrap();
+    let report = audit_rust(&dir).await.unwrap();
+    assert_eq!(report.packages_audited, 0);
+    assert_eq!(report.vulnerability_count, 0);
+    assert!(matches!(report.scanner_status, ScannerStatus::Available));
+}
+
+#[tokio::test]
+async fn audit_python_without_a_resolved_lock_is_unverified_not_clean() {
     let dir = tmp("py-no-tool");
     std::fs::write(
         dir.join("pyproject.toml"),
@@ -62,13 +49,13 @@ async fn audit_python_without_pip_audit_is_unavailable_not_clean() {
     )
     .unwrap();
 
-    // Missing scanner must be ToolMissing — never a fake clean report.
-    // Thiếu scanner phải ToolMissing — không bao giờ báo sạch giả.
+    // A project manifest without a resolved graph cannot prove a clean audit.
+    // Manifest không có graph đã resolve không thể chứng minh audit sạch.
     let report = audit_python(&dir).await.unwrap();
     assert_eq!(report.vulnerability_count, 0);
     assert!(matches!(
         report.scanner_status,
-        ScannerStatus::ToolMissing { .. }
+        ScannerStatus::Failed { .. }
     ));
 }
 

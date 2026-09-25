@@ -3,6 +3,33 @@ use mgc_lockfile::{Lockfile, Package};
 use mgc_types::{DependencySpec, Ecosystem, PackageName, VersionRange};
 
 #[test]
+fn shared_dependency_mutations_refuse_toolchain_owned_paths() {
+    assert!(ensure_native_manifest_owner(true, "add").is_ok());
+
+    let add_error = ensure_native_manifest_owner(false, "add").unwrap_err();
+    assert!(
+        add_error
+            .to_string()
+            .contains("native MagiCore manifest owner")
+    );
+
+    let remove_error = ensure_native_manifest_owner(false, "remove").unwrap_err();
+    assert!(
+        remove_error
+            .to_string()
+            .contains("native MagiCore manifest owner")
+    );
+
+    assert!(ensure_native_update_owner(true).is_ok());
+    let update_error = ensure_native_update_owner(false).unwrap_err();
+    assert!(
+        update_error
+            .to_string()
+            .contains("native MagiCore update engine")
+    );
+}
+
+#[test]
 fn generic_python_ai_detects_torch_from_pep621_dependencies() {
     let temp = tempfile::tempdir().expect("tempdir");
     std::fs::write(
@@ -79,6 +106,51 @@ fn v2_lock_rejects_stale_manifest_requirement() {
 }
 
 #[test]
+fn locked_graph_excludes_sibling_core_packages_with_same_ecosystem_and_name() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    mgc_config::project::ProjectConfig::write_core_marker_at(temp.path(), "ai").unwrap();
+    let mut lock = Lockfile::new();
+    let mut ai = Package::new(
+        "shared-python".into(),
+        "2.1.0".into(),
+        "https://pypi.org/ai.whl".into(),
+        "sha256-ai".into(),
+    );
+    ai.ecosystem = mgc_lockfile::EcosystemTag::Python;
+    ai.owner_core = Some("ai".into());
+    let mut lib = Package::new(
+        "shared-python".into(),
+        "1.8.0".into(),
+        "https://pypi.org/lib.whl".into(),
+        "sha256-lib".into(),
+    );
+    lib.ecosystem = mgc_lockfile::EcosystemTag::Python;
+    lib.owner_core = Some("lib".into());
+    lock.packages = vec![ai, lib];
+    std::fs::write(
+        temp.path().join("mgc.lock"),
+        mgc_lockfile::writer::serialize_lockfile(&lock).unwrap(),
+    )
+    .unwrap();
+    let mut manifest = Manifest::new("ai-project", Ecosystem::Ai);
+    manifest.add_dep(
+        DependencySpec::new(
+            PackageName::new("shared-python").unwrap(),
+            VersionRange::parse("^2.0.0").unwrap(),
+        ),
+        false,
+        false,
+        false,
+    );
+
+    let graph = load_locked_graph(temp.path(), "ai", &manifest)
+        .unwrap()
+        .expect("the lock should contain the AI-owned dependency");
+    assert_eq!(graph.packages.len(), 1);
+    assert_eq!(graph.packages[0].id.version().to_string(), "2.1.0");
+}
+
+#[test]
 fn v2_graph_preserves_dependency_edges() {
     let mut lock = Lockfile::new();
     let mut react = Package::new(
@@ -134,6 +206,7 @@ fn rollback_error_carries_both_install_and_restore_failures() {
 }
 
 #[tokio::test]
+#[cfg(feature = "lib")]
 async fn interrupted_remove_journal_recovers_manifest_and_lock() {
     // Hermetic crash-recovery test (NO registry): stage a journal, run
     // the op's own write + post-image, then "crash" — a fresh process
@@ -199,6 +272,80 @@ async fn interrupted_remove_journal_recovers_manifest_and_lock() {
     );
 }
 
+#[tokio::test]
+#[cfg(feature = "lib")]
+async fn mutation_gateway_rejects_signed_lock_before_creating_a_journal() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    python_fixture(root);
+    let lock_path = root.join("mgc.lock");
+    let mut signed = mgc_lockfile::Lockfile::new();
+    let mut package = mgc_lockfile::Package::new(
+        "six".into(),
+        "1.17.0".into(),
+        "https://files.pythonhosted.org/six.whl".into(),
+        "sha256-test".into(),
+    );
+    package.ecosystem = mgc_lockfile::EcosystemTag::Python;
+    package.owner_core = Some("lib".into());
+    signed.packages.push(package);
+    let key = mgc_crypto::keyring::KeyPair::generate().unwrap();
+    mgc_lockfile::sign_and_write_lockfile(&mut signed, &lock_path, &key).unwrap();
+    let lock_before = std::fs::read(&lock_path).unwrap();
+    let sig_path = lock_path.with_extension("lock.sig");
+    let sig_before = std::fs::read(&sig_path).unwrap();
+    let adapter = mgc_lib_adapter::adapter_for(root, None, None)
+        .unwrap()
+        .expect("pyproject must detect a python lib adapter");
+
+    let error = begin_dependency_mutation(&adapter, root, MutationOperation::Add)
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("signed mgc.lock"));
+    assert_eq!(std::fs::read(lock_path).unwrap(), lock_before);
+    assert_eq!(std::fs::read(sig_path).unwrap(), sig_before);
+    assert!(
+        !root
+            .join(".magicore/journal/dependency-mutation/journal.json")
+            .exists()
+    );
+}
+
+#[tokio::test]
+#[cfg(feature = "lib")]
+async fn install_gateway_allows_an_existing_signed_lock_for_read_only_reuse() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    python_fixture(root);
+    let lock_path = root.join("mgc.lock");
+    let mut lock = mgc_lockfile::Lockfile::new();
+    let mut package = mgc_lockfile::Package::new(
+        "six".into(),
+        "1.17.0".into(),
+        "https://files.pythonhosted.org/six.whl".into(),
+        "sha256-test".into(),
+    );
+    package.ecosystem = mgc_lockfile::EcosystemTag::Python;
+    package.owner_core = Some("lib".into());
+    lock.packages.push(package);
+    let key = mgc_crypto::keyring::KeyPair::generate().unwrap();
+    mgc_lockfile::sign_and_write_lockfile(&mut lock, &lock_path, &key).unwrap();
+    let adapter = mgc_lib_adapter::adapter_for(root, None, None)
+        .unwrap()
+        .expect("pyproject must detect a python lib adapter");
+
+    let guard = begin_dependency_mutation(&adapter, root, MutationOperation::Install)
+        .await
+        .expect("plain install must be able to read/reuse a valid signed lock");
+
+    assert_eq!(
+        mgc_lockfile::verify_lockfile(&lock_path).unwrap(),
+        mgc_lockfile::VerificationStatus::Valid
+    );
+    drop(guard);
+}
+
 fn python_fixture(root: &std::path::Path) {
     std::fs::write(
         root.join("pyproject.toml"),
@@ -208,6 +355,7 @@ fn python_fixture(root: &std::path::Path) {
     std::fs::write(root.join("mgc.lock"), "LOCK-BEFORE").unwrap();
 }
 
+#[cfg(feature = "lib")]
 fn test_adapter_and_lock(
     root: &std::path::Path,
 ) -> (
@@ -222,6 +370,7 @@ fn test_adapter_and_lock(
 }
 
 #[tokio::test]
+#[cfg(feature = "lib")]
 async fn completed_journal_deletes_without_restoring() {
     // P0-A: a stale COMPLETED journal (success + failed cleanup) must
     // NEVER roll back — recovery only deletes it, files stay untouched.
@@ -281,6 +430,7 @@ async fn completed_journal_deletes_without_restoring() {
 }
 
 #[tokio::test]
+#[cfg(feature = "lib")]
 async fn corrupt_journal_fails_closed() {
     // Journal hỏng: không đoán — lỗi fail-closed.
     // (Corrupt journal fails closed, never guesses.)
@@ -297,6 +447,7 @@ async fn corrupt_journal_fails_closed() {
 }
 
 #[tokio::test]
+#[cfg(feature = "lib")]
 async fn missing_journal_is_a_noop() {
     // Không có journal: không làm gì.
     // (Missing journal is a no-op.)
@@ -315,6 +466,7 @@ async fn missing_journal_is_a_noop() {
 
 #[cfg(unix)]
 #[tokio::test]
+#[cfg(feature = "lib")]
 async fn symlinked_journal_dir_is_refused() {
     // Journal dir là symlink: từ chối, không ghi ra ngoài project.
     // (Symlinked journal dir is refused, never followed.)
@@ -391,6 +543,7 @@ fn canonical_digest_distinguishes_ranges_groups_and_project() {
 
 #[cfg(unix)]
 #[tokio::test]
+#[cfg(feature = "lib")]
 async fn symlinked_journal_file_is_never_followed() {
     // journal.json là symlink trỏ ra ngoài: recovery từ chối, artifact
     // giữ nguyên (Item 2 — đọc sau khi chống, không trước).
@@ -458,6 +611,7 @@ async fn symlinked_magicore_parent_is_refused() {
 }
 
 #[tokio::test]
+#[cfg(feature = "lib")]
 async fn user_edit_after_crash_fails_closed() {
     // User sửa manifest sau crash (không khớp pre/post): recovery LỖI,
     // không ghi đè việc của user; artifact giữ nguyên.
@@ -498,6 +652,7 @@ async fn user_edit_after_crash_fails_closed() {
 }
 
 #[tokio::test]
+#[cfg(feature = "lib")]
 async fn missing_manifest_backup_fails_closed() {
     // Journal in_progress nhưng mất backup: lỗi, không đoán từ manifest
     // hiện tại (pre-image đã mất).
@@ -525,6 +680,7 @@ async fn missing_manifest_backup_fails_closed() {
 }
 
 #[tokio::test]
+#[cfg(feature = "lib")]
 async fn staged_journal_in_project_a_never_blocks_project_b() {
     // P0-2: không còn cờ global — project A giữ journal đang mở, project
     // B vẫn stage/post/finish bình thường trong CÙNG process (MCP,
@@ -592,6 +748,7 @@ async fn staged_journal_in_project_a_never_blocks_project_b() {
 }
 
 #[tokio::test]
+#[cfg(feature = "lib")]
 async fn aborted_task_leaves_recoverable_journal() {
     // Hủy task giữa mutation (panic/cancel): guard rớt theo future,
     // lock OS tự nhả, journal ở lại cho gateway entry sau (không còn
@@ -600,6 +757,10 @@ async fn aborted_task_leaves_recoverable_journal() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_path_buf();
     python_fixture(&root);
+    // This recovery test needs to exercise an absent pre-image, not an
+    // intentionally malformed lockfile used by byte-rollback tests.
+    // (Bài test recovery này kiểm tra pre-image không có lockfile.)
+    std::fs::remove_file(root.join("mgc.lock")).unwrap();
     let root_clone = root.clone();
     let handle = tokio::spawn(async move {
         let adapter = mgc_lib_adapter::adapter_for(&root_clone, None, None)
@@ -663,6 +824,7 @@ async fn aborted_task_leaves_recoverable_journal() {
 }
 
 #[tokio::test]
+#[cfg(feature = "lib")]
 async fn foreign_core_journal_is_never_restored() {
     // P0-3: journal của core khác (web) đem sang project lib — recovery
     // phải từ chối, không được lấy adapter hiện tại làm authority.
@@ -725,6 +887,7 @@ async fn foreign_core_journal_is_never_restored() {
 }
 
 #[tokio::test]
+#[cfg(feature = "lib")]
 async fn copied_project_journal_recovers_same_lineage() {
     // P1-2: copy cả project (UUID đi cùng) — lineage giống nhau, state
     // giống nhau → recovery thành công đúng đắn (không phải ngoại lai).
@@ -771,6 +934,7 @@ async fn copied_project_journal_recovers_same_lineage() {
 }
 
 #[tokio::test]
+#[cfg(feature = "lib")]
 async fn moved_project_recovers_with_notice() {
     // P1-2: rename/move checkout (UUID đi cùng) — recovery thành công
     // (move hợp lệ, khác với copy-sang-project-lạ).
@@ -802,6 +966,7 @@ async fn moved_project_recovers_with_notice() {
 }
 
 #[tokio::test]
+#[cfg(feature = "lib")]
 async fn missing_project_id_fails_closed() {
     // P1-2: có journal nhưng mất project.id (thư mục bị thay/khuyết) —
     // fail-closed, không đoán lineage.
@@ -856,6 +1021,7 @@ fn copy_dir_recursive(source: &std::path::Path, dest: &std::path::Path) -> std::
 }
 
 #[tokio::test]
+#[cfg(feature = "lib")]
 async fn traversal_packages_field_is_inert() {
     // Journal packages chứa traversal không thể thoát ra ngoài: field
     // này không bao giờ thành path (chỉ diagnostic). Recovery vẫn chạy
@@ -894,6 +1060,7 @@ async fn traversal_packages_field_is_inert() {
 }
 
 #[tokio::test]
+#[cfg(feature = "lib")]
 async fn legacy_journal_path_is_adopted_then_recovered() {
     // P1-3: journal ở path cũ (journal/remove) được rename nguyên tử
     // sang path mới rồi phục hồi bình thường — không mất, không double.
@@ -937,6 +1104,7 @@ async fn legacy_journal_path_is_adopted_then_recovered() {
 
 #[cfg(unix)]
 #[tokio::test]
+#[cfg(feature = "lib")]
 async fn symlinked_legacy_marker_fails_closed() {
     // P1-3: marker legacy là symlink ra ngoài — adopt dời cả thư mục
     // nhưng recovery từ chối theo link, không đọc file ngoài.
@@ -969,6 +1137,7 @@ async fn symlinked_legacy_marker_fails_closed() {
 }
 
 #[tokio::test]
+#[cfg(feature = "lib")]
 async fn adopt_refuses_when_current_dir_has_garbage() {
     // P1-3: current dir tồn tại nhưng không marker + legacy có journal —
     // rename thất bại → lỗi fail-closed, không merge, không mất.
@@ -1131,6 +1300,7 @@ async fn cloud_terraform_journal_rejected_by_cdk_command() {
 }
 
 #[tokio::test]
+#[cfg(feature = "lib")]
 async fn relpath_participates_in_identity() {
     // Blocker 1: cùng core/language/format nhưng khác relpath vẫn
     // mismatch — relpath có tham gia so sánh (không phải trường trang trí).

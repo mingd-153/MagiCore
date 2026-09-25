@@ -8,15 +8,12 @@
 //!    - PM tools (npm/pnpm/yarn/bun) FORBIDDEN → use `mgc install` (resolver + audit)
 //!    - Rationale: Prevent arbitrary package fetch bypassing mgc resolver
 //!
-//! 2. **Test/Build/Dev scopes (MEDIUM RISK)**: Project-local scripts execution
-//!    - PM tools ALLOWED with constraints: cwd locked to project root, audit log
-//!    - Rationale: package.json scripts are user code, run under user's permission
-//!    - mgc doesn't sandbox npm scripts (would require OS-level isolation)
+//! 2. **Test/Build/Dev scopes**: package-manager executables remain forbidden.
+//!    Compiler/runtime execution is a separate, explicit allowlist decision.
 //!
 //! ## ExecutionScope
-//! Test-runner security model: npm/pnpm/yarn/bun FORBIDDEN for Install scope,
-//! but ALLOWED for TestRunner/BuildRunner/DevServer scopes (project-local scripts only).
-//! See docs/architecture/TEST_RUNNER_SECURITY_MODEL.md for full threat model.
+//! Package managers are forbidden in every scope. Test/build/dev may execute
+//! approved compilers and runtimes, but never package resolution/install tools.
 
 use anyhow::{Result, bail};
 use std::path::Path;
@@ -30,16 +27,13 @@ pub enum ExecutionScope {
     /// npm/pnpm/yarn/bun FORBIDDEN in this scope.
     Install,
 
-    /// MEDIUM RISK: Test runner execution (project-local test scripts only).
-    /// npm/pnpm/yarn/bun ALLOWED with constraints: cwd locked, audit log, no shell injection.
+    /// Test runner execution; package managers remain forbidden.
     TestRunner,
 
-    /// MEDIUM RISK: Build runner execution (project-local build scripts).
-    /// npm/pnpm/yarn/bun ALLOWED with constraints: cwd locked, audit log.
+    /// Build runner execution; package managers remain forbidden.
     BuildRunner,
 
-    /// MEDIUM RISK: Dev server execution (project-local dev scripts).
-    /// npm/pnpm/yarn/bun ALLOWED with constraints: cwd locked, audit log.
+    /// Dev server execution; package managers remain forbidden.
     DevServer,
 }
 
@@ -87,10 +81,7 @@ impl ExecutionScope {
 
     /// Check if PM tools (npm/pnpm/yarn/bun) are allowed in this scope.
     pub fn allows_pm_tools(self) -> bool {
-        matches!(
-            self,
-            ExecutionScope::TestRunner | ExecutionScope::BuildRunner | ExecutionScope::DevServer
-        )
+        false
     }
 }
 
@@ -104,8 +95,6 @@ pub struct ScriptInvocation {
 /// Tools được phép passthrough — allowlist bất biến (00-index §5.1).
 /// Mỗi core khai báo subset; thêm tool phải review + ghi lý do.
 pub const ALLOWED_TOOLS: &[&str] = &[
-    "pip",
-    "pip3", // pip3 fallback on systems without pip alias
     "python3",
     "pytest", // AI test runner
     // TypeScript compiler (lib/ts + web test lanes, P0 finding
@@ -138,15 +127,12 @@ pub const ALLOWED_TOOLS: &[&str] = &[
     // được spawn là dependency của chính project, không phải file lạ
     // xâm nhập từ PATH.
     "vite",
-    "uv",
     "go",
-    "pub",
     "dart",
     "gradle",
     "mvn",
     "composer",
     "node",
-    "deno", // Runtime adapter: Deno projects (optimizer support)
     "swift",
     "cargo",
     "espflash",
@@ -181,9 +167,33 @@ pub const ALLOWED_TOOLS: &[&str] = &[
     "govulncheck", // Official Go vulnerability scanner (golang.org/x/vuln)
 ];
 
-/// Tools with mgc resolver coverage — PM tools forbidden in Install scope, allowed in Test/Build/Dev scopes.
-/// (npm/npx/pnpm/yarn/bun: Install scope FORBIDDEN → use `mgc install`; Test/Build/Dev scope ALLOWED → project-local scripts)
-pub const FORBIDDEN_TOOLS: &[&str] = &["npm", "npx", "pnpm", "yarn", "bun", "bunx"];
+/// Package-manager executables are forbidden in every execution scope.
+pub const FORBIDDEN_TOOLS: &[&str] = &[
+    "npm",
+    "npx",
+    "pnpm",
+    "yarn",
+    "bun",
+    "bunx",
+    "composer",
+    "pub",
+    "deno",
+    "pip",
+    "pip3",
+    "uv",
+    "uvx",
+    "poetry",
+    "pipenv",
+    "pdm",
+    "conda",
+    "mamba",
+    "pipx",
+    "hatch",
+    "rye",
+    "pixi",
+    "pip-compile",
+    "pip-sync",
+];
 
 /// Kiểm tool trước khi exec: cấm vĩnh viễn → lỗi rõ lý do; ngoài allowlist → lỗi.
 /// DEPRECATED: Use check_tool_with_scope for new code (supports ExecutionScope).
@@ -192,7 +202,7 @@ pub fn check_tool(name: &str) -> Result<()> {
 }
 
 /// Check tool with execution scope — new primary API.
-/// PM tools (npm/pnpm/yarn/bun) forbidden in Install scope, allowed in TestRunner/BuildRunner/DevServer.
+/// PM tools (npm/pnpm/yarn/bun) are forbidden in every scope.
 pub fn check_tool_with_scope(
     name: &str,
     scope: ExecutionScope,
@@ -201,21 +211,15 @@ pub fn check_tool_with_scope(
     check_tool_with_scope_compat(name, scope, project_root, None)
 }
 
-/// P0-1/F-A (2026-09-10): scope check + rival-runtime compat lane. The
-/// CLI compat gate (cli compat.rs) validates `--compat-runtime` and
-/// prints the loud warning BEFORE calling exec; this variant accepts the
-/// NAMED runtime as the only exemption. Everything else follows the same
-/// scope rules (PM tools still forbidden in Install, bun/deno still
-/// blocked in Install for lifecycle scripts — the compat exemption only
-/// applies to the caller-supplied project lane, never dependency
-/// lifecycle scripts which pass no compat runtime).
-/// Scope check + lane compat: cổng compat ở CLI đã validate + cảnh báo;
-/// biến thể này chấp nhận ĐÚNG runtime được nêu tên là ngoại lệ duy nhất.
+/// Historical API retained for source compatibility. The compatibility
+/// argument never authorizes a process; deny-list policy is enforced here,
+/// beneath every CLI/router call site.
+/// Giữ API cũ để tương thích source; tham số compat không cấp quyền spawn.
 pub fn check_tool_with_scope_compat(
     name: &str,
     scope: ExecutionScope,
-    project_root: Option<&Path>,
-    compat_runtime: Option<&str>,
+    _project_root: Option<&Path>,
+    _compat_runtime: Option<&str>,
 ) -> Result<()> {
     let name = name.trim();
     if name.is_empty() {
@@ -224,77 +228,19 @@ pub fn check_tool_with_scope_compat(
 
     let normalized = normalize_script_token(name).unwrap_or_else(|| name.to_ascii_lowercase());
 
-    // Compat lane (P0-1): runtime ĐỐI THỦ được nêu tên trong
-    // --compat-runtime đã qua cổng CLI (validate + cảnh báo) — chỉ runtime
-    // ĐÓ được phép; mọi runtime khác vẫn theo luật scope thường.
-    let compat_named = compat_runtime
-        .map(|r| r.to_ascii_lowercase())
-        .filter(|r| matches!(r.as_str(), "bun" | "deno"));
-    let is_compat_named_rival = compat_named
-        .as_deref()
-        .is_some_and(|r| r == normalized.as_str());
-
-    // Compat lane valid: đúng runtime được chọn + caller gắn project cwd.
-    // Chỉ ĐÚNG runtime được nêu tên qua cổng mới đi tiếp — dependency
-    // lifecycle scripts không bao giờ mang compat runtime nên fail-closed.
-    // (Valid compat lane: the named runtime via the CLI gate + a
-    // project-bound caller; lifecycle scripts never carry one.)
-    if is_compat_named_rival {
-        if project_root.is_none() {
-            bail!(
-                "rival runtime '{name}' in compat mode requires a project root (cwd) — refusing context-free spawn"
-            );
-        }
-        return Ok(());
-    }
-
-    // PM tools: forbidden in Install scope, allowed in others. The compat
-    // lane NEVER exempts PM usage of bun — `bun install` stays forbidden;
-    // only the CLI gate may grant `bun run <script>` as a RUNTIME.
+    // Package managers and rival runtimes are forbidden in every scope.
     let is_pm_tool = FORBIDDEN_TOOLS.contains(&normalized.as_str());
     if is_pm_tool {
-        if scope.allows_pm_tools() {
-            // ALLOWED: TestRunner/BuildRunner/DevServer scope
-            // Verify constraints
-            let constraints = scope.constraints();
-
-            if constraints.cwd_locked {
-                // Issue #12: Verify project_root is valid (not /tmp, not parent of workspace)
-                // For now, just require it's provided
-                if project_root.is_none() {
-                    bail!(
-                        "tool '{name}' requires project_root in {:?} scope (security constraint: cwd_locked)",
-                        scope
-                    );
-                }
-            }
-
-            // Audit log handled by caller (run.rs)
-            return Ok(());
-        } else {
-            // FORBIDDEN: Install scope
-            bail!(
-                "tool '{name}' is permanently forbidden in {:?} scope (mgc resolver covers its format — use `mgc install` instead)",
-                scope
-            );
-        }
+        bail!(
+            "tool '{name}' is forbidden in {:?} scope; dependency operations must be owned by MagiCore",
+            scope
+        );
     }
 
     // Non-PM tools: check against general allowlist
     if !ALLOWED_TOOLS.contains(&normalized.as_str()) {
         bail!(
             "tool '{name}' is not on the allowlist (00-index §5.1) — add it there only after review"
-        );
-    }
-
-    // F-A fix (2026-09-10 supply-chain audit): rival JS runtimes (bun/deno)
-    // must NEVER execute in Install scope — lifecycle scripts of untrusted
-    // dependencies ("postinstall": "deno run evil.ts") are a supply-chain
-    // spawn vector. Rival runtimes only run behind the explicit compat
-    // gate (handled above), never during install.
-    if scope == ExecutionScope::Install && matches!(normalized.as_str(), "bun" | "deno") {
-        bail!(
-            "rival JS runtime '{name}' is forbidden in Install scope (dependency lifecycle scripts are untrusted — supply-chain guard). Rival runtimes only run in compatibility mode (`--compat-runtime`) in dev/test/build lanes, or migrate with `mgc import`"
         );
     }
 
@@ -466,6 +412,7 @@ fn normalize_script_token(token: &str) -> Option<String> {
     let base = base
         .strip_suffix(".cmd")
         .or_else(|| base.strip_suffix(".exe"))
+        .or_else(|| base.strip_suffix(".bat"))
         .or_else(|| base.strip_suffix(".ps1"))
         .unwrap_or(&base)
         .to_string();

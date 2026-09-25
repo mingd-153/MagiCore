@@ -18,12 +18,13 @@ mgc-sbom = { workspace = true }
 mgc-cache = { workspace = true }
 mgc-adapter-base = { workspace = true }
 mgc-config = { workspace = true }
-mgc-exec = { workspace = true }
 mgc-store = { workspace = true }
 mgc-platform = { workspace = true }
 mgc-resolver = { workspace = true }
 mgc-web-adapter = { path = "../web" }
 mgc-ui = { workspace = true }
+libc = { workspace = true }
+chrono = { workspace = true }
 
 # Async
 tokio = { workspace = true }

@@ -320,18 +320,10 @@ fn lane_go_10_concurrent_streams_stay_independent() {
     });
 }
 
-/// R6 (native OSV fallback): without the govulncheck binary, go.mod
-/// require pins must ride a real OSV `Go` query — never ToolMissing.
-/// Dead endpoint keeps it hermetic: the fallback must EXIST (Failed
-/// naming osv-dev-api), proving pins reached a query.
-/// Không có binary govulncheck, ghim go.mod phải đi query OSV thật —
-/// không ToolMissing. Endpoint chết giữ hermetic: fallback phải TỒN
-/// TẠI (Failed nêu osv-dev-api).
+/// Go audit must use MGC's OSV path regardless of installed toolchains.
+/// Audit Go phải dùng OSV của MGC bất kể toolchain nào đã cài.
 #[test]
-fn audit_go_without_tool_falls_back_to_osv_not_tool_missing() {
-    if which::which("govulncheck").is_ok() {
-        return;
-    }
+fn audit_go_queries_osv_natively_without_toolchain_dependency() {
     let dir = std::env::temp_dir().join(format!("mgc-go-fallback-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();

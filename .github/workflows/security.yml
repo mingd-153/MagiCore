@@ -75,14 +75,14 @@ jobs:
   audit-e2e:
     # Audit exit-contract proof lane (Tech Lead P0-5 2026-09-09): the
     # audit E2E suite must EXECUTE, never silently skip. Tools are
-    # provisioned here; MGC_E2E_AUDIT_TOOLS=required turns any missing
-    # tool into a hard failure.
+    # require live OSV reachability; missing external audit CLIs are not
+    # part of the native Rust/Python scanner contract.
     # Lane chứng minh exit contract của audit: E2E phải CHẠY, không skip
     # âm thầm. Tool được provision sẵn; thiếu tool là fail cứng.
     name: audit E2E (strict contract)
     runs-on: ubuntu-latest
     env:
-      MGC_E2E_AUDIT_TOOLS: required
+      MGC_E2E_AUDIT_NETWORK: required
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install cargo-audit
@@ -134,7 +134,7 @@ jobs:
     # design; this lane proves the EXEC layer (drain, hermetic PATH,
     # exit codes) on every runner. macOS/Windows carry no scanner
     # toolchain assumptions: their E2E asserts the honest
-    # ToolMissing/exit-2 contract with MGC_E2E_AUDIT_TOOLS unset.
+    # ToolMissing/exit-2 compatibility contract; no OSV network is required.
     # E2E audit đa nền tảng: lane parser bất độc lập OS; lane này chứng
     # minh tầng EXEC (drain, PATH hermetic, exit code) trên mọi runner.
     # macOS/Windows không cài scanner: E2E khẳng định hợp đồng
@@ -179,7 +179,7 @@ jobs:
           cargo test -p mgc --test audit_cli_e2e --locked -- --test-threads=1 --exact audit_app_swift_via_cli_reports_real_osv_findings_exit_1
           cargo test -p mgc --test audit_cli_e2e --locked -- --test-threads=1 --exact audit_app_flutter_via_cli_reports_real_osv_finding_exit_1
         env:
-          MGC_E2E_AUDIT_TOOLS: required
+          MGC_E2E_AUDIT_NETWORK: required
       - name: Exec-layer E2E (hermetic contract)
         shell: bash
         run: cargo test -p mgc --test audit_cli_e2e --locked audit_lib_go_without -- --nocapture
@@ -213,7 +213,7 @@ jobs:
     name: flutter audit (real toolchain)
     runs-on: ubuntu-latest
     env:
-      MGC_E2E_AUDIT_TOOLS: required
+      MGC_E2E_AUDIT_NETWORK: required
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 

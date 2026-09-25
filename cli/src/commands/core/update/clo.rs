@@ -11,26 +11,13 @@ pub async fn update(
     compat_runtime: Option<String>,
 ) -> Result<()> {
     let root = shared::core_project_root("clo")?;
-    // C0 ownership firewall (T0.3): terraform delegates; the CDK/Pulumi
-    // branch rides the native web engine and skips the gate.
-    // (Tường lửa C0: terraform delegate; nhánh CDK/Pulumi đi engine web
-    // native nên không qua gate.)
     let cloud_kind = super::super::dev::clo::cloud_type(&root)?;
-    if cloud_kind == "terraform" {
-        let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
-        crate::commands::dep_gate::gate(
-            &crate::commands::dep_gate::DepContext::new(
-                "clo",
-                Some(crate::commands::dep_gate::eco::TERRAFORM),
-                None,
-                None,
-                crate::commands::dep_gate::DepOp::Update,
-            ),
-            Some("terraform"),
-            &compat,
-            Some(&root.join(".magicore").join("exec.log")),
-        )?;
-    }
+    crate::commands::dep_gate::gate_cloud_project(
+        &root,
+        &cloud_kind,
+        crate::commands::dep_gate::DepOp::Update,
+        compat_runtime.as_deref(),
+    )?;
     let adapter = shared::core_adapter(&Ecosystem::Cloud);
     shared::update(&*adapter, &root, packages, install).await
 }

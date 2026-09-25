@@ -1,10 +1,7 @@
 //! `mgc remove iot` — tách từ core/iot.rs (Phase 7 v5).
 
 use anyhow::Result;
-use mgc_types::Ecosystem;
-use mgc_types::adapter::PackageAdapter;
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use crate::commands::core::shared;
 
@@ -13,11 +10,6 @@ fn project_root() -> Result<PathBuf> {
     let root = shared::find_project_root(&cwd)?
         .ok_or_else(|| crate::error::no_mgc_project_found("iot"))?;
     Ok(root)
-}
-
-fn iot_adapter() -> Arc<dyn PackageAdapter> {
-    crate::factory::create_adapter(&Ecosystem::Iot, None, None)
-        .expect("iot adapter always available in iot core build")
 }
 
 pub async fn remove(packages: Vec<String>, compat_runtime: Option<String>) -> Result<()> {
@@ -49,10 +41,12 @@ pub async fn remove(packages: Vec<String>, compat_runtime: Option<String>) -> Re
             .map_err(|e| anyhow::anyhow!("iot native remove needs the lib Cargo engine: {e}"))?;
         return shared::remove(&*lib_adapter, &root, packages, true).await;
     }
-    // C0 ownership firewall (T0.3): the IoT remove lane routes to the
-    // adapter, whose frameworks delegate (cargo/pio/west).
-    // (Tường lửa C0: lane remove IoT gọi adapter, framework trong đó
-    // delegate.)
+    if framework == Some("esp32-rust") {
+        anyhow::bail!(
+            "native ESP32-Rust dependency removal requires Cargo.toml at the project root"
+        );
+    }
+    // Non-native IoT package operations fail closed.
     crate::commands::dep_gate::gate(
         &crate::commands::dep_gate::DepContext::new(
             "iot",
@@ -61,12 +55,10 @@ pub async fn remove(packages: Vec<String>, compat_runtime: Option<String>) -> Re
             target_owned.as_deref(),
             crate::commands::dep_gate::DepOp::Remove,
         ),
-        // Exact tool for the detected framework (never None on a
-        // spawning lane).
-        framework.and_then(shared::iot_framework_tool),
+        None,
         &compat,
         Some(&root.join(".magicore").join("exec.log")),
     )?;
-    let adapter = iot_adapter();
-    shared::remove(&*adapter, &root, packages, true).await
+    let _ = packages;
+    anyhow::bail!("MagiCore does not yet own dependency removal for this IoT framework")
 }

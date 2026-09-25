@@ -36,11 +36,6 @@ base64 = { workspace = true }
 # Maven engine: sha1 for .jar.sha1 verification (pinned workspace dep).
 # (Engine Maven: sha1 để xác minh .jar.sha1 — workspace dep đã ghim.)
 sha1 = { workspace = true }
-# Swift engine: git clone/ls-remote for git-only deps via the mgc-exec
-# allowlist (workspace-internal crate — no new external dependency).
-# (Engine Swift: git clone/ls-remote cho dep chỉ-git qua allowlist
-# mgc-exec (crate nội bộ workspace — không thêm dependency ngoài).)
-mgc-exec = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
@@ -48,6 +43,11 @@ criterion = { workspace = true }
 tempfile = { workspace = true }
 mockito.workspace = true
 mgc-store = { workspace = true }
+
+# Windows atomic replacement for extracted archive files.
+# Thay file giải nén nguyên tử trên Windows.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = ["Win32_Storage_FileSystem", "Win32_Foundation"] }
 
 # Test riêng — test/ folder (RULE §5: cấm #[cfg(test)] trong src/)
 [[test]]

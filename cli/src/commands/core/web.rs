@@ -1588,21 +1588,6 @@ fn native_python_program(project_root: &Path) -> PathBuf {
     PathBuf::from("python3")
 }
 
-fn native_pip_program(project_root: &Path) -> PathBuf {
-    let venv_pip = native_venv_executable(project_root, "pip");
-    if venv_pip.exists() {
-        return venv_pip;
-    }
-
-    #[cfg(windows)]
-    {
-        return PathBuf::from("pip");
-    }
-
-    #[allow(unreachable_code)]
-    PathBuf::from("pip3")
-}
-
 fn native_venv_executable(project_root: &Path, bin_name: &str) -> PathBuf {
     #[cfg(windows)]
     {
@@ -1621,150 +1606,40 @@ fn native_venv_executable(project_root: &Path, bin_name: &str) -> PathBuf {
 /// the tool that will be spawned, never a sibling (`pip3`/`uv` do NOT
 /// open the pip branch — the spawn runs `pip`, so only `pip` opens it).
 /// (Map cứng member → tool: chỉ đúng tool được spawn mới mở được nhánh.)
-fn required_compat_tool(project_root: &Path) -> Option<&'static str> {
+fn non_native_member_ecosystem(project_root: &Path) -> Option<&'static str> {
     if project_root.join("go.mod").exists() {
         Some("go")
     } else if project_root.join("requirements.txt").exists() {
-        Some("pip")
+        Some("python")
     } else if project_root.join("Cargo.toml").exists() {
-        Some("cargo")
+        Some("rust")
     } else if project_root.join("pom.xml").exists() {
-        Some("mvn")
+        Some("java")
     } else if project_root.join("composer.json").exists() || project_root.join("artisan").exists() {
-        Some("composer")
+        Some("php")
     } else {
         None
     }
 }
 
-/// Exact executables a compat branch spawns (owner contract — the gate
-/// authorizes the TOOL, this names what the tool runs; no hidden extra
-/// spawns beyond this list).
-/// (Liệt kê đúng executable mỗi nhánh spawn — hợp đồng owner.)
-fn tool_spawn_desc(tool: &str) -> &'static str {
-    match tool {
-        "go" => "go mod tidy",
-        "pip" => "python3 -m venv (local env provisioning) + pip install -r requirements.txt",
-        "cargo" => "cargo fetch",
-        "mvn" => "mvn dependency:go-offline",
-        "composer" => "composer install",
-        _ => "unknown toolchain command",
-    }
-}
-
-/// Does this compat mode authorize this tool? Exact match, plus the
-/// documented `pip3 ⇒ pip` alias (same installer family; the spawn still
-/// runs `pip`, and the warning says so).
-/// (Đúng tool hoặc alias pip3⇒pip đã ghi nhận.)
-fn tool_authorized(compat: &crate::commands::compat::CompatMode, tool: &str) -> bool {
-    compat.allows(tool) || (tool == "pip" && compat.allows("pip3"))
-}
-
-/// Pure gate decision (no spawn): Ok(tool) when the invocation opted
-/// into EXACTLY the member's tool, else a fail-closed denial naming the
-/// required flag. Unit-tested allow+deny+alias+unknown (the spawner
-/// below adds no further logic).
-/// (Quyết định gate thuần — test được mà không spawn.)
-fn compat_gate_decision(
-    project_root: &Path,
-    compat: &crate::commands::compat::CompatMode,
-) -> Result<&'static str> {
-    let tool = required_compat_tool(project_root);
-    if tool.is_some_and(|t| tool_authorized(compat, t)) {
-        return Ok(tool.expect("authorized implies a known member kind"));
-    }
-    let have_opt_in = match compat {
-        crate::commands::compat::CompatMode::Native => "native (no opt-in)".to_string(),
-        crate::commands::compat::CompatMode::Explicit(t) => t.clone(),
+/// Fail closed for non-JS package manifests until MGC owns their lifecycle.
+/// Từ chối manifest ngoài JS đến khi MGC sở hữu lifecycle tương ứng.
+fn compat_gate_decision(project_root: &Path) -> Result<&'static str> {
+    let Some(ecosystem) = non_native_member_ecosystem(project_root) else {
+        return Err(crate::error::web_no_install_flow(project_root));
     };
-    Err(crate::error::monorepo_compat_tool_denied(
-        project_root,
-        tool,
-        &have_opt_in,
+    Err(crate::error::native_dependency_engine_unavailable(
+        "web monorepo member",
+        ecosystem,
+        "install",
     ))
 }
 
 fn compat_install_target(
     project_root: &Path,
-    compat: &crate::commands::compat::CompatMode,
+    _compat: &crate::commands::compat::CompatMode,
 ) -> Result<()> {
-    // Per-tool compat gate (P0): a delegated toolchain install runs ONLY
-    // when the invocation opted into EXACTLY the tool about to spawn —
-    // one valid flag never opens every branch (`--compat-runtime=cargo`
-    // opens Cargo members, not Go/Python ones). Without the matching
-    // opt-in, fail closed with guidance instead of silently delegating.
-    // (Gate theo từng tool: chỉ đúng tool được spawn mới chạy.)
-    let tool = compat_gate_decision(project_root, compat)?;
-    mgc_ui::warning(&format!(
-        "COMPATIBILITY MODE: delegating to `{}` for {} — this is NOT the native MagiCore engine path (owner: {tool} toolchain).",
-        tool_spawn_desc(tool),
-        project_root.display()
-    ));
-    if project_root.join("go.mod").exists() {
-        info(&format!(
-            "Delegating to `go mod tidy` in {} under explicit compatibility mode",
-            project_root.display()
-        ));
-        return run_native_install(project_root, "go", &["mod", "tidy"]);
-    }
-
-    if project_root.join("requirements.txt").exists() {
-        info(&format!(
-            "Delegating to `pip install -r requirements.txt` in {} under explicit compatibility mode",
-            project_root.display()
-        ));
-        run_native_install(project_root, "python3", &["-m", "venv", ".venv"])?;
-        return run_native_install(
-            project_root,
-            &native_pip_program(project_root).to_string_lossy(),
-            &["install", "-r", "requirements.txt"],
-        );
-    }
-
-    if project_root.join("Cargo.toml").exists() {
-        info(&format!(
-            "Delegating to `cargo fetch` in {} under explicit compatibility mode",
-            project_root.display()
-        ));
-        return run_native_install(project_root, "cargo", &["fetch"]);
-    }
-
-    if project_root.join("pom.xml").exists() {
-        info(&format!(
-            "Delegating to `mvn dependency:go-offline` in {} under explicit compatibility mode",
-            project_root.display()
-        ));
-        return run_native_install(
-            project_root,
-            "mvn",
-            &["-q", "-DskipTests", "dependency:go-offline"],
-        );
-    }
-
-    if project_root.join("composer.json").exists() || project_root.join("artisan").exists() {
-        info(&format!(
-            "Delegating to `composer install` in {} under explicit compatibility mode",
-            project_root.display()
-        ));
-        return run_native_install(project_root, "composer", &["install"]);
-    }
-
-    Err(crate::error::web_no_install_flow(project_root))
-}
-
-fn run_native_install(project_root: &Path, program: &str, args: &[&str]) -> Result<()> {
-    let env = native_install_env(project_root, program)?;
-    let opts = mgc_exec::prelude::ExecOptions {
-        cwd: Some(project_root.to_path_buf()),
-        log_path: Some(project_root.join(".magicore").join("exec.log")),
-        clean_env: true,
-        env,
-        ..Default::default()
-    };
-    let args = args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
-    mgc_exec::prelude::run(program, &args, &opts)
-        .with_context(|| format!("failed to run native install '{}'", program))?;
-    Ok(())
+    compat_gate_decision(project_root).map(|_| ())
 }
 
 fn native_install_env(project_root: &Path, program: &str) -> Result<Vec<(String, String)>> {

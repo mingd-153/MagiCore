@@ -2,7 +2,7 @@
 //! Trộn lockfile 3 chiều — dùng cho merge nhánh / rebase.
 //!
 //! Semantics:
-//! - Packages are keyed by *name*; the version is the value being merged.
+//! - Packages are keyed by core owner + ecosystem + name; version is the value.
 //! - A package added on one side (not in base) is kept.
 //! - A package removed on one side (unchanged on the other) is dropped.
 //! - A package changed on both sides into different versions is a conflict
@@ -77,10 +77,38 @@ impl std::fmt::Display for MergeConflict {
     }
 }
 
-type PkgMap = BTreeMap<String, Package>;
+type PackageIdentity = (Option<String>, String, String);
+type PkgMap = BTreeMap<PackageIdentity, Package>;
 
-fn index_pkgs(pkgs: &[Package]) -> PkgMap {
-    pkgs.iter().map(|p| (p.name.clone(), p.clone())).collect()
+fn index_pkgs(pkgs: &[Package]) -> Result<PkgMap, MergeConflict> {
+    let mut indexed = PkgMap::new();
+    for package in pkgs {
+        let identity = (
+            package.owner_core.clone(),
+            package.ecosystem.as_str().to_string(),
+            package.name.clone(),
+        );
+        if let Some(previous) = indexed.get(&identity) {
+            if previous != package {
+                // A single core/ecosystem/name can legitimately have more
+                // than one installed version (peer contexts). This v3
+                // three-way merger cannot represent those instances as one
+                // logical value, so fail closed instead of silently keeping
+                // the last package in the map.
+                // (Nhiều version hợp lệ nhưng merger v3 chưa mô hình hóa
+                // instance; từ chối thay vì âm thầm giữ entry cuối.)
+                return Err(MergeConflict {
+                    name: package.name.clone(),
+                    base_version: None,
+                    ours_version: previous.version.clone(),
+                    theirs_version: package.version.clone(),
+                });
+            }
+            continue;
+        }
+        indexed.insert(identity, package.clone());
+    }
+    Ok(indexed)
 }
 
 /// Merge `theirs` into `ours` relative to `base`.
@@ -91,24 +119,24 @@ pub fn merge3(
     ours: &Lockfile,
     theirs: &Lockfile,
 ) -> Result<Lockfile, MergeConflict> {
-    let base_p = index_pkgs(&base.packages);
-    let ours_p = index_pkgs(&ours.packages);
-    let theirs_p = index_pkgs(&theirs.packages);
+    let base_p = index_pkgs(&base.packages)?;
+    let ours_p = index_pkgs(&ours.packages)?;
+    let theirs_p = index_pkgs(&theirs.packages)?;
 
     let mut out = ours.clone();
     out.packages = vec![];
 
-    let names: std::collections::BTreeSet<String> = base_p
+    let identities: std::collections::BTreeSet<PackageIdentity> = base_p
         .keys()
         .cloned()
         .chain(ours_p.keys().cloned())
         .chain(theirs_p.keys().cloned())
         .collect();
 
-    for name in &names {
-        let b = base_p.get(name);
-        let o = ours_p.get(name);
-        let t = theirs_p.get(name);
+    for identity in &identities {
+        let b = base_p.get(identity);
+        let o = ours_p.get(identity);
+        let t = theirs_p.get(identity);
         match (b, o, t) {
             // added on exactly one side → adoption
             (None, Some(o), None) => out.packages.push(o.clone()),
@@ -131,7 +159,7 @@ pub fn merge3(
             // divergent bumps → fail-closed conflict
             (Some(b), Some(o), Some(t)) => {
                 return Err(MergeConflict {
-                    name: name.clone(),
+                    name: identity.2.clone(),
                     base_version: Some(b.version.clone()),
                     ours_version: o.version.clone(),
                     theirs_version: t.version.clone(),
@@ -147,7 +175,7 @@ pub fn merge3(
             (None, Some(o), Some(t)) if o.version == t.version => out.packages.push(o.clone()),
             (None, Some(o), Some(t)) => {
                 return Err(MergeConflict {
-                    name: name.clone(),
+                    name: identity.2.clone(),
                     base_version: None,
                     ours_version: o.version.clone(),
                     theirs_version: t.version.clone(),

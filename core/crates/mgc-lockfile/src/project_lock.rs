@@ -74,7 +74,7 @@ impl ProjectWriteLock {
                 }
                 // Contention: wait out the timeout, then LockBusy (never
                 // steal a live holder's lock).
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                Err(e) if is_lock_contention(&e) => {
                     if start.elapsed() >= timeout {
                         return Err(LockfileError::LockBusy(format!(
                             "project lock held by a live process ('{}'); refusing to reclaim",
@@ -166,6 +166,25 @@ impl ProjectWriteLock {
     }
 }
 
+/// `fs2` exposes Windows `ERROR_LOCK_VIOLATION` (33) as a raw OS error,
+/// not `ErrorKind::WouldBlock`. Treat only that documented lock-conflict
+/// code as contention; unrelated errors must remain immediate failures.
+/// (Windows fs2 trả lock contention bằng raw code; lỗi khác vẫn fail ngay.)
+fn is_lock_contention(error: &std::io::Error) -> bool {
+    if error.kind() == std::io::ErrorKind::WouldBlock {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        return error.raw_os_error()
+            == Some(windows_sys::Win32::Foundation::ERROR_LOCK_VIOLATION as i32);
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
 /// True when the path is a symlink (all platforms) or a Windows
 /// reparse point (junction/mount). Shared by journal/backup/lock writers
 /// so every project writer refuses link-swapped paths the same way.
@@ -184,6 +203,30 @@ pub fn path_is_link_or_reparse(path: &Path) -> bool {
     #[cfg(not(windows))]
     {
         false
+    }
+}
+
+#[cfg(test)]
+mod lock_contention_tests {
+    use super::is_lock_contention;
+
+    #[test]
+    fn would_block_is_contention_but_unrelated_errors_are_not() {
+        assert!(is_lock_contention(&std::io::Error::from(
+            std::io::ErrorKind::WouldBlock
+        )));
+        assert!(!is_lock_contention(&std::io::Error::from(
+            std::io::ErrorKind::PermissionDenied
+        )));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn fs2_windows_lock_violation_is_contention() {
+        let error = std::io::Error::from_raw_os_error(
+            windows_sys::Win32::Foundation::ERROR_LOCK_VIOLATION as i32,
+        );
+        assert!(is_lock_contention(&error));
     }
 }
 

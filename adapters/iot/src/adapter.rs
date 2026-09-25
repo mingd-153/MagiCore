@@ -1,22 +1,11 @@
 //! PackageAdapter implementation for IoT cores.
 //! Điều phối Cargo/PlatformIO/Zephyr riêng khỏi detect và helper tooling.
 //!
-//! Global Gate 1 (2026-09-16): `resolve`/`fetch` overrides are GONE — the
-//! fail-closed defaults answer now (IoT toolchains own their graphs).
-//! The toolchain-delegating add/remove/update stay real (the CLI
-//! per-core lane calls `adapter.add`) while the DependencyResolver
-//! capability is NOT claimed because `resolve` is fail-closed. The
-//! silent Ok no-op for Platformio/Zephyr write_manifest is now
-//! fail-closed too (hardware precedent).
-//! Global Gate 1: override resolve/fetch đã BỊ XÓA — default fail-closed
-//! trả lời (toolchain IoT tự sở hữu graph). add/remove/update ủy quyền
-//! toolchain giữ nguyên (lane CLI per-core gọi `adapter.add`) nhưng
-//! capability DependencyResolver KHÔNG claim vì `resolve` fail-closed.
-//! No-op Ok âm thầm của write_manifest Platformio/Zephyr giờ cũng
-//! fail-closed (tiền lệ hardware).
+//! Dependency operations fail closed until a MagiCore-owned ecosystem
+//! engine exists. Device flashing remains an explicit hardware-toolchain
+//! boundary and is not presented as package management.
 
 use crate::framework::{IotFramework, detect_framework, manifest_is_iot, target_from_manifest};
-use crate::tooling::{cargo_dep_version, exec_tool, placeholder_id};
 use async_trait::async_trait;
 use mgc_types::adapter::{
     AddOptions, AuditReport, InstallOptions, InstallSummary, InstalledPackage, PackageAdapter,
@@ -29,7 +18,7 @@ use mgc_types::capabilities::{
 use mgc_types::{
     Ecosystem, Manifest, MgResult, PackageId, PackageName, ResolvedGraph, VersionRange,
 };
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 pub struct IotAdapter {
     framework: IotFramework,
@@ -40,9 +29,8 @@ impl IotAdapter {
     /// - ProjectDetector: `detect_framework`/`manifest_is_iot` — real.
     /// - ScaffoldProvider: src/scaffold (esp32-rust/platformio/zephyr
     ///   generators) + the `mgc create-iot` CLI lane — real.
-    /// - ContentStoreProvider: install is REAL per framework (esp32-rust
-    ///   → `cargo fetch`, platformio → `pio pkg install`, zephyr →
-    ///   `west update`) — claimed.
+    /// - ContentStoreProvider is not claimed: esp32-rust uses the shared
+    ///   native Lib/Rust engine in the CLI; PlatformIO/Zephyr are delegated.
     /// - AuditProvider: shared polyglot dispatch — real.
     ///
     /// DependencyResolver/LockfileProvider NOT claimed: resolve is
@@ -51,7 +39,6 @@ impl IotAdapter {
     pub const CAPABILITIES: &'static [Capability] = &[
         Capability::ProjectDetector,
         Capability::ScaffoldProvider,
-        Capability::ContentStoreProvider,
         Capability::AuditProvider,
     ];
 }
@@ -86,47 +73,25 @@ impl ScaffoldProvider for IotAdapter {
 
 #[async_trait]
 impl ContentStoreProvider for IotAdapter {
-    /// Evidence: install is real per framework (cargo fetch / pio pkg
-    /// install / west update via exec_tool below).
-    /// Dẫn chứng: install thật theo framework (cargo fetch / pio pkg
-    /// install / west update qua exec_tool bên dưới).
     fn probe_content_store(&self) -> MgResult<()> {
-        Ok(())
+        Err(mgc_types::capabilities::unsupported_capability(
+            "iot",
+            "content_store",
+            "esp32-rust uses the shared native Lib/Rust engine; PlatformIO/Zephyr remain toolchain-owned",
+        ))
     }
 
     async fn install(
         &self,
-        graph: &ResolvedGraph,
-        project_root: &Path,
+        _graph: &ResolvedGraph,
+        _project_root: &Path,
         _opts: InstallOptions,
     ) -> MgResult<InstallSummary> {
-        match self.framework {
-            IotFramework::Esp32Rust => exec_tool(project_root, "cargo", &["fetch".to_string()])?,
-            IotFramework::Platformio => {
-                exec_tool(
-                    project_root,
-                    "pio",
-                    &["pkg".to_string(), "install".to_string()],
-                )?;
-            }
-            IotFramework::Zephyr => exec_tool(project_root, "west", &["update".to_string()])?,
-        }
-        // DELEGATED: install is owned by the toolchain (cargo fetch /
-        // pio pkg install / west update ran for real above); mgc does
-        // not own this lifecycle. The summary is HONEST — it only
-        // counts the packages the manifest graph named. An empty graph
-        // yields an empty summary (truthful), never a fabricated list;
-        // cache bytes stay uncounted (Delegated mode).
-        // DELEGATED: install thuộc toolchain (cargo fetch / pio pkg
-        // install / west update đã chạy thật bên trên); mgc KHÔNG sở hữu
-        // lifecycle này. Summary TRUNG THỰC — chỉ đếm package mà graph
-        // manifest nêu. Graph rỗng → summary rỗng (trung thực), không
-        // bao giờ bịa danh sách; byte cache không đếm (chế độ Delegated).
-        Ok(InstallSummary {
-            added: graph.packages.iter().map(|p| p.id.clone()).collect(),
-            cache_mode: mgc_types::adapter::InstallCacheMode::Delegated,
-            ..Default::default()
-        })
+        Err(mgc_types::capabilities::unsupported_capability(
+            "iot",
+            "install",
+            "the IoT adapter has no MagiCore-owned installer for this ecosystem; dependency installation is unsupported",
+        ))
     }
 }
 
@@ -146,8 +111,7 @@ impl LockfileProvider for IotAdapter {
                     core: "iot",
                     capability: "write_manifest",
                     guidance: format!(
-                        "{} projects do not use mgc-written manifests; regenerate via \
-                         `mgc create-iot` or edit platformio.ini/west.yml directly",
+                        "{} projects do not have a MagiCore-owned dependency manifest; dependency mutation is unsupported",
                         self.framework.as_str()
                     ),
                 })
@@ -165,105 +129,34 @@ impl DependencyResolver for IotAdapter {
         range: Option<&VersionRange>,
         opts: AddOptions,
     ) -> MgResult<PackageId> {
-        // DELEGATED: esp32-rust runs `cargo add` + `cargo fetch`, pio runs
-        // `pio pkg install` for real — mgc orchestrates only.
-        // (DELEGATED: esp32-rust chạy `cargo add` + `cargo fetch`, pio
-        // chạy `pio pkg install` thật — mgc chỉ điều phối.)
-        if opts.no_save {
-            return Ok(placeholder_id(name, range));
-        }
-        match self.framework {
-            IotFramework::Esp32Rust => {
-                let mut args = vec!["add".to_string()];
-                if let Some(r) = range.filter(|r| !r.is_star()) {
-                    args.push(format!("{}@{}", name.as_str(), r.as_str()));
-                } else {
-                    args.push(name.as_str().to_string());
-                }
-                exec_tool(project_root, "cargo", &args)?;
-                exec_tool(project_root, "cargo", &["fetch".to_string()])?;
-                Ok(cargo_dep_version(project_root, name)
-                    .map(|v| PackageId::new(name.clone(), v))
-                    .unwrap_or_else(|| placeholder_id(name, range)))
-            }
-            IotFramework::Platformio => {
-                // pio 6.x requires `-l/--library` for library specs — a
-                // bare positional spec is rejected ("unexpected extra
-                // argument"). Verified against pio 6.2.0 `--help`.
-                // (pio 6.x đòi `-l` cho spec library.)
-                let mut args = vec![
-                    "pkg".to_string(),
-                    "install".to_string(),
-                    "-l".to_string(),
-                ];
-                if let Some(r) = range.filter(|r| !r.is_star()) {
-                    args.push(format!("{}@{}", name.as_str(), r.as_str()));
-                } else {
-                    args.push(name.as_str().to_string());
-                }
-                exec_tool(project_root, "pio", &args)?;
-                Ok(placeholder_id(name, range))
-            }
-            IotFramework::Zephyr => Err(mgc_types::MgError::Other(
-                "zephyr deps are managed via west.yml (passthrough west update) — mgc add for zephyr is not supported yet, P1 (04 §4)".to_string(),
-            )),
-        }
+        // No dependency operation is delegated from this adapter.
+        // Adapter này không ủy quyền thao tác dependency ra công cụ ngoài.
+        let _ = (project_root, name, range, opts);
+        Err(mgc_types::capabilities::unsupported_capability(
+            "iot",
+            "add",
+            "the IoT adapter has no MagiCore-owned resolver/writer for this ecosystem; dependency addition is unsupported",
+        ))
     }
 
-    async fn remove(&self, project_root: &Path, name: &PackageName) -> MgResult<()> {
-        // DELEGATED: esp32-rust runs `cargo remove`, pio runs
-        // `pio pkg uninstall` for real — mgc orchestrates only.
-        // (DELEGATED: esp32-rust chạy `cargo remove`, pio chạy
-        // `pio pkg uninstall` thật — mgc chỉ điều phối.)
-        match self.framework {
-            IotFramework::Esp32Rust => exec_tool(
-                project_root,
-                "cargo",
-                &["remove".to_string(), name.as_str().to_string()],
-            ),
-            IotFramework::Platformio => exec_tool(
-                project_root,
-                "pio",
-                &[
-                    "pkg".to_string(),
-                    "uninstall".to_string(),
-                    "-l".to_string(),
-                    name.as_str().to_string(),
-                ],
-            ),
-            IotFramework::Zephyr => Err(mgc_types::MgError::Other(
-                "zephyr deps are managed via west.yml".to_string(),
-            )),
-        }
+    async fn remove(&self, _project_root: &Path, _name: &PackageName) -> MgResult<()> {
+        Err(mgc_types::capabilities::unsupported_capability(
+            "iot",
+            "remove",
+            "the IoT adapter has no MagiCore-owned dependency remover for this ecosystem; dependency removal is unsupported",
+        ))
     }
 
     async fn update(
         &self,
-        project_root: &Path,
-        name: Option<&PackageName>,
+        _project_root: &Path,
+        _name: Option<&PackageName>,
     ) -> MgResult<Vec<UpdatedPackage>> {
-        // DELEGATED: esp32-rust/pio run their own update commands, zephyr
-        // runs `west update` — mgc orchestrates only.
-        // (DELEGATED: esp32-rust/pio chạy lệnh update của chúng, zephyr
-        // chạy `west update` — mgc chỉ điều phối.)
-        match self.framework {
-            IotFramework::Esp32Rust => {
-                let mut args = vec!["update".to_string()];
-                if let Some(n) = name {
-                    args.push(n.as_str().to_string());
-                }
-                exec_tool(project_root, "cargo", &args)?;
-            }
-            IotFramework::Platformio => {
-                let mut args = vec!["pkg".to_string(), "update".to_string(), "-l".to_string()];
-                if let Some(n) = name {
-                    args.push(n.as_str().to_string());
-                }
-                exec_tool(project_root, "pio", &args)?;
-            }
-            IotFramework::Zephyr => exec_tool(project_root, "west", &["update".to_string()])?,
-        }
-        Ok(vec![])
+        Err(mgc_types::capabilities::unsupported_capability(
+            "iot",
+            "update",
+            "the IoT adapter has no MagiCore-owned dependency updater for this ecosystem; dependency updates are unsupported",
+        ))
     }
 }
 
@@ -347,17 +240,15 @@ impl PackageAdapter for IotAdapter {
     }
 
     async fn list(&self, project_root: &Path) -> MgResult<Vec<InstalledPackage>> {
-        let manifest = self.parse_manifest(project_root).await?;
-        Ok(manifest
-            .all_dependencies()
-            .map(|dep| InstalledPackage {
-                id: placeholder_id(&dep.name, Some(&dep.range)),
-                path: PathBuf::new(),
-                integrity: None,
-                is_direct: true,
-                is_dev: dep.dev,
-            })
-            .collect())
+        let _ = project_root;
+        Err(mgc_types::MgError::Unsupported {
+            core: "iot",
+            capability: "list",
+            guidance: format!(
+                "{} dependency declarations are not verified installed-state; the IoT adapter has no installed package inventory",
+                self.framework.as_str()
+            ),
+        })
     }
 }
 

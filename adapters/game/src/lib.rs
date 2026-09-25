@@ -5,7 +5,6 @@
 mod adapter;
 mod engine;
 mod sbom;
-mod tooling;
 
 pub mod cache;
 pub mod dev;

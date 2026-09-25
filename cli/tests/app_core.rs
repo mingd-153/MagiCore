@@ -53,5 +53,8 @@ fn test_add_app_without_cli_passthrough_is_unsupported() {
     // Compat cannot open a cell with no runner.
     let (ok, out) = common::mgc_in(&dir, &["add-app", "somepkg", "--compat-runtime", "swift"]);
     assert!(!ok, "compat must not open swift add");
-    assert!(out.contains("unsupported"), "got: {out}");
+    assert!(
+        out.contains("unsupported") || out.contains("disabled for dependency operations"),
+        "got: {out}"
+    );
 }

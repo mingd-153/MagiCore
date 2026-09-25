@@ -5,6 +5,90 @@ use crate::language::find_csproj;
 use mgc_types::{DependencySpec, Ecosystem, Manifest, MgResult, PackageName, VersionRange};
 use std::path::Path;
 
+/// Whether the MGC native Python engine can own this project's dependency
+/// declarations without silently ignoring another tool's lock or source.
+/// This is intentionally conservative: the current parser implements only
+/// PEP 621 `[project].dependencies` and does not import foreign lockfiles.
+/// (Chỉ nhận lane Python native khi MGC sở hữu đủ khai báo và không bỏ qua
+/// lockfile/nguồn dependency do tool khác quản lý.)
+pub fn supports_native_python_project(root: &Path) -> bool {
+    let manifest_path = root.join("pyproject.toml");
+    let Ok(content) = std::fs::read_to_string(&manifest_path) else {
+        return false;
+    };
+    let Ok(document) = toml::from_str::<toml::Value>(&content) else {
+        return false;
+    };
+    let Some(project) = document.get("project").and_then(toml::Value::as_table) else {
+        return false;
+    };
+    if project
+        .get("dynamic")
+        .and_then(toml::Value::as_array)
+        .is_some_and(|dynamic| dynamic.iter().any(|v| v.as_str() == Some("dependencies")))
+        || project
+            .get("dependencies")
+            .is_some_and(|dependencies| dependencies.as_array().is_none())
+        || project
+            .get("optional-dependencies")
+            .is_some_and(|dependencies| {
+                !dependencies
+                    .as_table()
+                    .is_some_and(toml::map::Map::is_empty)
+            })
+    {
+        return false;
+    }
+
+    // Do not select only PEP 621 dependencies when a second manager or
+    // dependency-group mechanism may contribute packages to the environment.
+    let tool = document.get("tool");
+    let uv = tool.and_then(|v| v.get("uv"));
+    let has_foreign_dependency_source = [
+        tool.and_then(|v| v.get("poetry")),
+        tool.and_then(|v| v.get("pdm")),
+        tool.and_then(|v| v.get("pixi")),
+        uv.and_then(|v| v.get("sources")),
+        uv.and_then(|v| v.get("dev-dependencies")),
+        uv.and_then(|v| v.get("dependency-groups")),
+        document.get("dependency-groups"),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|value| !value.as_table().is_some_and(toml::map::Map::is_empty));
+    if has_foreign_dependency_source {
+        return false;
+    }
+
+    let Ok(mut entries) = std::fs::read_dir(root) else {
+        return false;
+    };
+    entries.all(|entry| {
+        let Ok(entry) = entry else {
+            return false;
+        };
+        let Some(name) = entry.file_name().into_string().ok() else {
+            return false;
+        };
+        let name = name.to_ascii_lowercase();
+        !matches!(
+            name.as_str(),
+            "uv.lock"
+                | "poetry.lock"
+                | "pdm.lock"
+                | "pipfile"
+                | "pipfile.lock"
+                | "pixi.lock"
+                | "conda-lock.yml"
+                | "conda-lock.yaml"
+                | "requirements.lock"
+                | "requirements.txt"
+                | "pylock.toml"
+        ) && !(name.starts_with("requirements") && name.ends_with(".txt"))
+            && !(name.starts_with("pylock.") && name.ends_with(".toml"))
+    })
+}
+
 pub(crate) fn parse_cargo_manifest(root: &Path) -> MgResult<Manifest> {
     mgc_adapter_base::cargo_manifest::parse_manifest(root, Ecosystem::Lib)
 }

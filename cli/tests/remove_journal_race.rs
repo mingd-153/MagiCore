@@ -844,7 +844,7 @@ fn fault_injection_journal_complete_keeps_journal_then_recovers() {
 fn toolchain_owned_packages_fail_before_any_side_effect() {
     // P0-1 negative: generic install + packages on platformio.ini
     // (toolchain-owned) fails BEFORE any adapter call — even WITH a
-    // compat opt-in (the gate passes, the ownership rule still refuses):
+    // a compatibility opt-in (which is rejected before any mutation):
     // manifest byte-identical, no journal, no network, no spawn.
     // (Manifest của tool + packages → lỗi trước side effect.)
     let temp = TempDir::new().unwrap();
@@ -867,7 +867,7 @@ fn toolchain_owned_packages_fail_before_any_side_effect() {
         .arg("bench")
         .arg("some-pkg")
         .current_dir(&project)
-        .env("MGC_COMPAT_RUNTIME", "pio")
+        .env_remove("MGC_COMPAT_RUNTIME")
         .env("MGC_CACHE_DIR", project.join(".magicore"))
         .stdout(stdout)
         .stderr(stderr)

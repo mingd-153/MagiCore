@@ -8,10 +8,42 @@ use mgc_lib_adapter::native::engine::resolve_with_protocol;
 use mgc_lockfile::EcosystemTag;
 use mgc_resolver::protocols::CratesProtocol;
 use mgc_resolver::protocols::sha256_hex;
+use mgc_resolver::protocols::{RegistryProtocol, ResolvedEntry};
 use mgc_types::{
     DependencyResolver, DependencySpec, Ecosystem, Manifest, PackageAdapter, PackageName,
     VersionRange,
 };
+
+struct CrossRootConflictProtocol;
+
+#[async_trait::async_trait]
+impl RegistryProtocol for CrossRootConflictProtocol {
+    async fn resolve(&self, name: &str, range: &str) -> mgc_types::MgResult<ResolvedEntry> {
+        let (version, deps) = match name {
+            "root-a" => ("1.0.0", vec![("shared".to_string(), "^1".to_string())]),
+            "root-b" => ("1.0.0", vec![("shared".to_string(), "^2".to_string())]),
+            "shared" if range == "^1" => ("1.5.0", vec![]),
+            "shared" if range == "^2" => ("2.1.0", vec![]),
+            _ => {
+                return Err(mgc_types::MgError::Other(format!(
+                    "unexpected {name}@{range}"
+                )));
+            }
+        };
+        Ok(ResolvedEntry {
+            name: name.to_string(),
+            version: version.to_string(),
+            deps,
+            artifact_url: format!("https://registry.invalid/{name}/{version}"),
+            sha256: "00".repeat(32),
+            extra_markers: vec![],
+        })
+    }
+
+    async fn download(&self, _entry: &ResolvedEntry) -> mgc_types::MgResult<Vec<u8>> {
+        Ok(vec![])
+    }
+}
 
 async fn mock_server() -> Option<mockito::ServerGuard> {
     match std::net::TcpListener::bind("127.0.0.1:0") {
@@ -121,6 +153,31 @@ async fn resolve_with_protocol_builds_graph_and_v3_lock_entries() {
     // blake3 content_hash is filled at install, not resolve — honest empty.
     assert!(artifact.content_hash.is_empty());
     assert!(lock_serde.store_ref.is_none());
+}
+
+#[tokio::test]
+async fn resolve_with_protocol_rejects_cross_root_version_conflicts() {
+    let mut manifest = Manifest::new("demo-lib", Ecosystem::Lib);
+    for name in ["root-a", "root-b"] {
+        manifest.add_dep(
+            DependencySpec::new(PackageName::new(name).unwrap(), VersionRange::star()),
+            false,
+            false,
+            false,
+        );
+    }
+
+    let error = resolve_with_protocol(
+        &CrossRootConflictProtocol,
+        EcosystemTag::Rust,
+        "test://registry",
+        &manifest,
+    )
+    .await
+    .unwrap_err();
+
+    assert!(matches!(error, mgc_types::MgError::DependencyConflict(_)));
+    assert!(error.to_string().contains("ambiguous lock graph"));
 }
 
 #[tokio::test]

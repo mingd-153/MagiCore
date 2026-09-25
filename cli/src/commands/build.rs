@@ -3,6 +3,17 @@ use colored::Colorize;
 use mgc_ui::info;
 use std::path::{Path, PathBuf};
 
+/// Prevent Go's compiler driver from downloading/updating dependency metadata
+/// during a MagiCore build. Dependencies must already be present and verified
+/// by the selected install path.
+fn go_offline_env() -> Vec<(String, String)> {
+    vec![
+        ("GOPROXY".to_string(), "off".to_string()),
+        ("GOSUMDB".to_string(), "off".to_string()),
+        ("GOTOOLCHAIN".to_string(), "local".to_string()),
+    ]
+}
+
 pub async fn run(
     core: Option<&str>,
     target: Option<String>,
@@ -102,7 +113,7 @@ async fn build_ai(root: &Path) -> Result<()> {
             info("Building Python AI package: python -m build");
             let env = optimizer_envs.into_iter().collect::<Vec<_>>();
             let env = (!env.is_empty()).then_some(env);
-            run_allowlisted_tool_with_env(root, python, &["-m", "build"], env)
+            run_allowlisted_tool_with_env(root, python, &["-m", "build", "--no-isolation"], env)
                 .map_err(|error| crate::error::python_build_failed(&error))?;
         }
         DetectedRuntime::RustCandle => {
@@ -115,9 +126,14 @@ async fn build_ai(root: &Path) -> Result<()> {
             if tool_unavailable("go") {
                 return Err(crate::error::build_toolchain_missing("go"));
             }
-            let env = optimizer_envs.into_iter().collect::<Vec<_>>();
-            let env = (!env.is_empty()).then_some(env);
-            run_allowlisted_tool_with_env(root, "go", &["build", "./..."], env)?;
+            let mut env = optimizer_envs.into_iter().collect::<Vec<_>>();
+            env.extend(go_offline_env());
+            run_allowlisted_tool_with_env(
+                root,
+                "go",
+                &["build", "-mod=readonly", "./..."],
+                Some(env),
+            )?;
         }
         _ => unreachable!("AI build selects only an AI runtime"),
     }
@@ -240,8 +256,13 @@ async fn build_lib(root: &Path) -> Result<()> {
         let env: Vec<(String, String)> = optimizer_envs.clone().into_iter().collect();
         let env_opt = if env.is_empty() { None } else { Some(env) };
 
-        return run_allowlisted_tool_with_env(root, python, &["-m", "build"], env_opt)
-            .map_err(|e| crate::error::python_build_failed(&e));
+        return run_allowlisted_tool_with_env(
+            root,
+            python,
+            &["-m", "build", "--no-isolation"],
+            env_opt,
+        )
+        .map_err(|e| crate::error::python_build_failed(&e));
     }
     // Go modules build through the go toolchain (mgc owns
     // resolve/fetch/install; compilation stays toolchain territory,
@@ -251,10 +272,15 @@ async fn build_lib(root: &Path) -> Result<()> {
             return Err(crate::error::build_toolchain_missing("go"));
         }
         info("Building go lib: go build ./...");
-        let env: Vec<(String, String)> = optimizer_envs.into_iter().collect();
-        let env_opt = if env.is_empty() { None } else { Some(env) };
-        return run_allowlisted_tool_with_env(root, "go", &["build", "./..."], env_opt)
-            .map_err(|e| crate::error::go_build_failed(&e));
+        let mut env: Vec<(String, String)> = optimizer_envs.into_iter().collect();
+        env.extend(go_offline_env());
+        return run_allowlisted_tool_with_env(
+            root,
+            "go",
+            &["build", "-mod=readonly", "./..."],
+            Some(env),
+        )
+        .map_err(|e| crate::error::go_build_failed(&e));
     }
     // .NET: dotnet SDK build (toolchain-gated; absent SDK fails closed
     // with guidance instead of a false native claim).
@@ -265,7 +291,7 @@ async fn build_lib(root: &Path) -> Result<()> {
         info("Building dotnet lib: dotnet build");
         let env: Vec<(String, String)> = optimizer_envs.into_iter().collect();
         let env_opt = if env.is_empty() { None } else { Some(env) };
-        return run_allowlisted_tool_with_env(root, "dotnet", &["build"], env_opt)
+        return run_allowlisted_tool_with_env(root, "dotnet", &["build", "--no-restore"], env_opt)
             .map_err(|e| crate::error::dotnet_build_failed(&e));
     }
     let tsc = root.join("node_modules").join(".bin").join("tsc");
@@ -352,15 +378,18 @@ async fn build_app(root: &Path) -> Result<()> {
     let env_opt = if env.is_empty() { None } else { Some(env) };
 
     let (tool, args): (&str, &[&str]) = match language {
-        "kotlin" => ("gradle", &["build"]),
-        "swift" => ("swift", &["build"]),
+        "kotlin" => ("gradle", &["build", "--offline"]),
+        "swift" => (
+            "swift",
+            &["build", "--skip-update", "--disable-automatic-resolution"],
+        ),
         // `flutter build web` is the universal CI target — no Android
         // SDK, no Xcode, runs on all three runners. `bundle` (the old
         // default) only produces asset dirs for mobile toolchains.
         // `flutter build web` là target CI phổ quát — không cần Android
         // SDK, không cần Xcode, chạy được cả ba runner. `bundle` (mặc
         // định cũ) chỉ sinh asset dir cho toolchain mobile.
-        _ => ("flutter", &["build", "web"]),
+        _ => ("flutter", &["build", "web", "--no-pub"]),
     };
     if tool_unavailable(tool) {
         return Err(crate::error::build_toolchain_missing(tool));
@@ -421,7 +450,7 @@ fn build_multi_app(root: &Path, v: &toml::Value) -> Result<()> {
                     mgc_ui::warning("gradle not found — skipping android build");
                     continue;
                 }
-                run_allowlisted_tool(&dir, "gradle", &["build"])?;
+                run_allowlisted_tool(&dir, "gradle", &["build", "--offline"])?;
                 built += 1;
             }
             "ios" => {
@@ -429,7 +458,11 @@ fn build_multi_app(root: &Path, v: &toml::Value) -> Result<()> {
                     mgc_ui::warning("swift not found — skipping ios build");
                     continue;
                 }
-                run_allowlisted_tool(&dir, "swift", &["build"])?;
+                run_allowlisted_tool(
+                    &dir,
+                    "swift",
+                    &["build", "--skip-update", "--disable-automatic-resolution"],
+                )?;
                 built += 1;
             }
             "react-native" => {
@@ -452,7 +485,7 @@ fn build_multi_app(root: &Path, v: &toml::Value) -> Result<()> {
                 // không cần Android SDK, không cần Xcode, chạy được cả
                 // ba runner (P0 finding 2026-09-12: matrix lifecycle
                 // trung thực bắt được `flutter build` trần fail).
-                run_allowlisted_tool(&dir, "flutter", &["build", "web"])?;
+                run_allowlisted_tool(&dir, "flutter", &["build", "web", "--no-pub"])?;
                 built += 1;
             }
             other => mgc_ui::warning(&format!("Unknown platform '{other}' — skipping")),

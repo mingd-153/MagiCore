@@ -33,6 +33,43 @@ fn merge3_keeps_both_additions() {
 }
 
 #[test]
+fn merge3_preserves_same_name_packages_owned_by_distinct_cores() {
+    let mut ai = pkg("shared", "1.0.0");
+    ai.owner_core = Some("ai".to_string());
+    ai.ecosystem = mgc_lockfile::EcosystemTag::Python;
+    let mut lib = pkg("shared", "1.0.0");
+    lib.owner_core = Some("lib".to_string());
+    lib.ecosystem = mgc_lockfile::EcosystemTag::Python;
+
+    let out = merge3(&lock(&[]), &lock(&[ai]), &lock(&[lib])).unwrap();
+
+    assert_eq!(out.packages.len(), 2);
+    assert!(
+        out.packages
+            .iter()
+            .any(|package| package.owner_core.as_deref() == Some("ai"))
+    );
+    assert!(
+        out.packages
+            .iter()
+            .any(|package| package.owner_core.as_deref() == Some("lib"))
+    );
+}
+
+#[test]
+fn merge3_refuses_ambiguous_multi_version_entries_instead_of_dropping_one() {
+    let mut one = pkg("shared", "1.0.0");
+    one.owner_core = Some("web".to_string());
+    let mut two = one.clone();
+    two.version = "2.0.0".to_string();
+
+    let err = merge3(&lock(&[]), &lock(&[one, two]), &lock(&[])).unwrap_err();
+
+    assert_eq!(err.name, "shared");
+    assert!(err.to_string().contains("conflict"));
+}
+
+#[test]
 fn merge3_keeps_common_changed_version() {
     let base = lock(&[pkg("a", "1.0.0")]);
     let ours = lock(&[pkg("a", "1.1.0")]);

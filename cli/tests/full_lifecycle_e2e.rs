@@ -195,6 +195,10 @@ fn test_lib_full_lifecycle() {
         project_path.join("Cargo.toml").exists(),
         "Cargo.toml not created"
     );
+    assert!(
+        project_path.join("Cargo.lock").exists(),
+        "deterministic empty Cargo.lock not created"
+    );
 
     // === STEP 2: BUILD ===
     println!("\n=== STEP 2: mgc build ===");
@@ -314,23 +318,8 @@ fn test_ai_full_lifecycle() {
     // === STEP 2: Add dependency to create lockfile ===
     println!("\n=== STEP 2: mgc add (create lockfile) ===");
 
-    // C0 (T0.3): ai lanes delegate to uv/pip — this E2E exercises the
-    // EXPLICIT compat path (the only supported way to run delegated
-    // lanes). The tool mirrors the lane's own pick order (uv.lock →
-    // requirements.lock → uv on PATH → pip) so the gate always sees the
-    // owning toolchain.
-    // (C0: lane ai delegate uv/pip — E2E này chạy đường compat tường
-    // minh (cách duy nhất được hỗ trợ cho lane delegate). Tool chọn
-    // giống thứ tự của lane để gate luôn thấy đúng toolchain.)
-    let compat_tool = if project_path.join("uv.lock").exists() {
-        "uv"
-    } else if project_path.join("requirements.lock").exists() {
-        "pip"
-    } else if Command::new("uv").arg("--version").output().is_ok() {
-        "uv"
-    } else {
-        "pip"
-    };
+    // AI PEP 621 dependencies must use MagiCore's native resolver.
+    // Dependency PEP 621 của AI phải qua resolver native MagiCore.
 
     // AI scaffold has pyproject.toml but no initial deps
     // Run `mgc add` to create lockfile before `mgc install`
@@ -338,7 +327,7 @@ fn test_ai_full_lifecycle() {
         .arg("add")
         .arg("pytest") // Add pytest as a dev dependency
         .current_dir(&project_path)
-        .env("MGC_COMPAT_RUNTIME", compat_tool)
+        .env_remove("MGC_COMPAT_RUNTIME")
         .output()
         .expect("mgc add failed");
 
@@ -359,7 +348,7 @@ fn test_ai_full_lifecycle() {
     let install_output = Command::new(&mgc)
         .arg("install")
         .current_dir(&project_path)
-        .env("MGC_COMPAT_RUNTIME", compat_tool)
+        .env_remove("MGC_COMPAT_RUNTIME")
         .output()
         .expect("mgc install failed");
 

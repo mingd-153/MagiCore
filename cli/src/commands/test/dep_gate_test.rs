@@ -32,7 +32,7 @@ fn web_is_native_only_for_declared_js_ts() {
             DepOp::Gc,
         ] {
             assert!(gate(&ctx("web", eco, op), None, &native(), None).is_ok());
-            assert!(gate(&ctx("web", eco, op), None, &explicit("cargo"), None).is_ok());
+            assert!(gate(&ctx("web", eco, op), None, &explicit("cargo"), None).is_err());
         }
     }
     // Undeclared ecosystem never defaults open.
@@ -103,7 +103,7 @@ fn lib_typescript_native_protocol_langs_split_pipeline_vs_edits() {
         gate(
             &ctx("lib", Some(eco::PYTHON), DepOp::Add),
             Some("pip"),
-            &explicit("pip"),
+            &native(),
             None
         )
         .is_ok()
@@ -112,11 +112,11 @@ fn lib_typescript_native_protocol_langs_split_pipeline_vs_edits() {
         gate(
             &ctx("lib", Some(eco::PYTHON), DepOp::Add),
             Some("pip"),
-            &explicit("pip3"),
+            &native(),
             None
         )
         .is_ok(),
-        "pip~pip3 alias: same owner"
+        "native operation has no compatibility requirement"
     );
     // Native Add ignores compat flags (native engine always runs) — a uv
     // opt-in on a native lane is a no-op info, never a spawn and never a
@@ -127,11 +127,11 @@ fn lib_typescript_native_protocol_langs_split_pipeline_vs_edits() {
         gate(
             &ctx("lib", Some(eco::PYTHON), DepOp::Add),
             Some("pip"),
-            &explicit("uv"),
+            &native(),
             None
         )
         .is_ok(),
-        "compat on native add is ignored (native always runs)"
+        "native engine remains available without compatibility"
     );
     // Native Remove/Update ignore any opt-in (the last delegated verb
     // is gone for lib).
@@ -139,21 +139,21 @@ fn lib_typescript_native_protocol_langs_split_pipeline_vs_edits() {
         gate(
             &ctx("lib", Some(eco::PYTHON), DepOp::Remove),
             Some("pip"),
-            &explicit("uv"),
+            &native(),
             None
         )
         .is_ok(),
-        "compat on native remove is ignored"
+        "native remove remains available"
     );
     assert!(
         gate(
             &ctx("lib", Some(eco::PYTHON), DepOp::Update),
             Some("pip"),
-            &explicit("uv"),
+            &native(),
             None
         )
         .is_ok(),
-        "compat on native update is ignored"
+        "native update remains available"
     );
     // Per-language tool sets: native Add/Remove/Update ignore any
     // opt-in (no delegated lib verbs left).
@@ -161,7 +161,7 @@ fn lib_typescript_native_protocol_langs_split_pipeline_vs_edits() {
         gate(
             &ctx("lib", Some(eco::RUST), DepOp::Add),
             Some("cargo"),
-            &explicit("cargo"),
+            &native(),
             None
         )
         .is_ok()
@@ -170,56 +170,54 @@ fn lib_typescript_native_protocol_langs_split_pipeline_vs_edits() {
         gate(
             &ctx("lib", Some(eco::RUST), DepOp::Add),
             Some("cargo"),
-            &explicit("uv"),
+            &native(),
             None
         )
         .is_ok(),
-        "compat on native add is ignored"
+        "native add remains available"
     );
     assert!(
         gate(
             &ctx("lib", Some(eco::RUST), DepOp::Remove),
             Some("cargo"),
-            &explicit("uv"),
+            &native(),
             None
         )
         .is_ok(),
-        "compat on native remove is ignored"
+        "native remove remains available"
     );
-    // Go remove runs natively on the mgc-written go.mod.
-    for mode in [native(), explicit("go")] {
-        assert!(
-            gate(
-                &ctx("lib", Some(eco::GO), DepOp::Remove),
-                Some("go"),
-                &mode,
-                None
-            )
-            .is_ok(),
-            "lib[go] remove is native"
-        );
-    }
+    // Go remove runs natively; an explicit PM mode is rejected globally.
+    assert!(
+        gate(
+            &ctx("lib", Some(eco::GO), DepOp::Remove),
+            None,
+            &native(),
+            None
+        )
+        .is_ok()
+    );
+    assert!(
+        gate(
+            &ctx("lib", Some(eco::GO), DepOp::Remove),
+            Some("go"),
+            &explicit("go"),
+            None
+        )
+        .is_err()
+    );
     // Java/DOTNET Update run natively (resolve-latest + rewrite); gradle
     // projects fail closed in prepare_add/write_manifest.
     for lang in [eco::JAVA, eco::DOTNET] {
-        for op in [DepOp::Update] {
-            for mode in [native(), explicit("mvn"), explicit("dotnet")] {
-                assert!(
-                    gate(&ctx("lib", Some(lang), op), None, &mode, None).is_ok(),
-                    "lib[{lang}] {} is native",
-                    op.as_str()
-                );
-            }
-        }
-    }
-    for op in [DepOp::Update] {
-        for mode in [native(), explicit("dotnet")] {
-            assert!(
-                gate(&ctx("lib", Some(eco::DOTNET), op), None, &mode, None).is_ok(),
-                "lib[dotnet] {} is native",
-                op.as_str()
-            );
-        }
+        assert!(
+            gate(
+                &ctx("lib", Some(lang), DepOp::Update),
+                None,
+                &native(),
+                None
+            )
+            .is_ok(),
+            "lib[{lang}] update is native"
+        );
     }
     // Undetected lib language: pipeline ops fail closed (P1 wildcard fix).
     assert!(gate(&ctx("lib", None, DepOp::Install), None, &native(), None).is_err());
@@ -227,66 +225,138 @@ fn lib_typescript_native_protocol_langs_split_pipeline_vs_edits() {
 }
 
 #[test]
-fn lib_list_is_native_manifest_read_for_any_ecosystem() {
-    for eco in [None, Some(eco::TS), Some(eco::RUST), Some("unknown-lang")] {
+fn lib_list_requires_verified_installed_inventory() {
+    for eco in [Some(eco::PYTHON), Some(eco::TS)] {
         assert!(gate(&ctx("lib", eco, DepOp::List), None, &native(), None).is_ok());
+    }
+    for eco in [
+        None,
+        Some(eco::RUST),
+        Some(eco::GO),
+        Some(eco::JAVA),
+        Some(eco::DOTNET),
+        Some("unknown-lang"),
+    ] {
+        assert!(gate(&ctx("lib", eco, DepOp::List), None, &native(), None).is_err());
     }
 }
 
 #[test]
-fn ai_python_delegated_unknown_ecosystem_unsupported() {
-    assert!(
-        gate(
-            &ctx("ai", Some(eco::PYTHON), DepOp::Install),
-            Some("uv"),
-            &explicit("uv"),
-            None
-        )
-        .is_ok()
-    );
-    // pip ~ pip3 alias: same owner, either opt-in opens the lane.
-    assert!(
-        gate(
-            &ctx("ai", Some(eco::PYTHON), DepOp::Install),
-            Some("pip"),
-            &explicit("pip3"),
-            None
-        )
-        .is_ok()
-    );
-    // uv vs pip on the NATIVE install/add lanes: compat is ignored
-    // (native always runs) — no mismatch error. The flag==process
-    // contract lives on the still-delegated ai verbs (Remove).
-    assert!(
-        gate(
-            &ctx("ai", Some(eco::PYTHON), DepOp::Install),
-            Some("uv"),
-            &explicit("pip"),
-            None
-        )
-        .is_ok(),
-        "compat on native ai install is ignored"
-    );
-    assert!(
-        gate(
-            &ctx("ai", Some(eco::PYTHON), DepOp::Add),
-            Some("uv"),
-            &explicit("pip"),
-            None
-        )
-        .is_ok(),
-        "compat on native ai add is ignored"
-    );
-    assert!(
-        gate(
-            &ctx("ai", Some(eco::PYTHON), DepOp::Remove),
-            Some("uv"),
-            &explicit("pip"),
-            None
-        )
-        .is_err(),
-        "uv vs pip still mismatches on delegated ai remove"
-    );
+fn list_is_not_native_when_the_core_cannot_read_its_dependency_manifest() {
+    for (core, ecosystem, framework) in [
+        ("game", Some("godot"), Some("godot")),
+        ("game", Some("unity"), Some("unity")),
+        ("game", Some("unreal"), Some("unreal")),
+        ("iot", Some("zephyr"), Some("zephyr")),
+        ("clo", Some("terraform"), Some("terraform")),
+        ("clo", Some("cloudflare"), Some("cloudflare")),
+    ] {
+        let context = DepContext::new(core, ecosystem, framework, None, DepOp::List);
+        assert!(
+            matches!(owner_for(&context), DepOwner::Unsupported),
+            "{core}/{ecosystem:?} has no native package list implementation"
+        );
+    }
+}
+
+#[test]
+fn game_and_iot_list_are_blocked_without_installed_state_evidence() {
+    for (core, ecosystem, framework) in [
+        ("game", Some(eco::BEVY), Some(eco::BEVY)),
+        ("iot", Some("esp32-rust"), Some("esp32-rust")),
+        ("iot", Some("platformio"), Some("platformio")),
+    ] {
+        let context = DepContext::new(core, ecosystem, framework, None, DepOp::List);
+        assert!(matches!(owner_for(&context), DepOwner::Unsupported));
+    }
+}
+
+#[test]
+fn cloud_list_is_native_only_for_web_backed_cdk_or_pulumi_manifests() {
+    for framework in ["cdk", "pulumi"] {
+        let context = DepContext::new("clo", Some(eco::JS), Some(framework), None, DepOp::List);
+        assert!(matches!(owner_for(&context), DepOwner::Native));
+    }
+    for (ecosystem, framework) in [
+        (Some("terraform"), Some("terraform")),
+        (Some("cloudflare"), Some("cloudflare")),
+        (None, Some("pulumi")),
+    ] {
+        let context = DepContext::new("clo", ecosystem, framework, None, DepOp::List);
+        assert!(matches!(owner_for(&context), DepOwner::Unsupported));
+    }
+}
+
+#[test]
+fn cloud_cdk_and_pulumi_dependency_lifecycle_is_native_only_with_js_manifest() {
+    use crate::commands::dep_gate::{DepContext, DepOp, DepOwner, eco, owner_for};
+
+    for framework in ["cdk", "pulumi"] {
+        for op in [
+            DepOp::Install,
+            DepOp::Add,
+            DepOp::Remove,
+            DepOp::Update,
+            DepOp::List,
+        ] {
+            let context = DepContext::new("clo", Some(eco::JS), Some(framework), None, op);
+            assert!(
+                matches!(owner_for(&context), DepOwner::Native),
+                "clo/{framework} {} must use the embedded MGC JS dependency engine",
+                op.as_str()
+            );
+        }
+    }
+
+    for framework in ["terraform", "cloudflare"] {
+        let context = DepContext::new("clo", None, Some(framework), None, DepOp::Install);
+        assert!(matches!(owner_for(&context), DepOwner::Unsupported));
+    }
+}
+
+#[test]
+fn cloud_gate_requires_embedded_js_manifest_and_rejects_compat() {
+    use crate::commands::dep_gate::{DepOp, gate_cloud_project};
+
+    let missing_manifest = tempfile::tempdir().unwrap();
+    assert!(gate_cloud_project(missing_manifest.path(), "cdk", DepOp::Install, None).is_err());
+
+    let js_project = tempfile::tempdir().unwrap();
+    std::fs::write(js_project.path().join("package.json"), "{}\n").unwrap();
+    assert!(gate_cloud_project(js_project.path(), "cdk", DepOp::Install, None).is_ok());
+    assert!(gate_cloud_project(js_project.path(), "pulumi", DepOp::Add, None).is_ok());
+    assert!(gate_cloud_project(js_project.path(), "terraform", DepOp::Install, None).is_err());
+    assert!(gate_cloud_project(js_project.path(), "cdk", DepOp::Install, Some("npm")).is_err());
+}
+
+#[test]
+fn ai_python_dependency_gate_rejects_compat_for_every_operation() {
+    for op in [
+        DepOp::Install,
+        DepOp::Add,
+        DepOp::Remove,
+        DepOp::Update,
+        DepOp::List,
+    ] {
+        let native_result = gate(&ctx("ai", Some(eco::PYTHON), op), None, &native(), None);
+        if matches!(op, DepOp::Install | DepOp::Add | DepOp::Update) {
+            assert!(native_result.is_ok(), "AI Python {op:?} static native lane");
+        } else {
+            assert!(
+                native_result.is_err(),
+                "AI Python {op:?} lacks static ownership"
+            );
+        }
+        assert!(
+            gate(
+                &ctx("ai", Some(eco::PYTHON), op),
+                Some("uv"),
+                &explicit("uv"),
+                None
+            )
+            .is_err()
+        );
+    }
     // Undetected ai ecosystem never defaults open.
     assert!(gate(&ctx("ai", None, DepOp::Install), None, &native(), None).is_err());
 }
@@ -303,9 +373,10 @@ fn app_rn_unsupported_flutter_delegated_unknown_unsupported() {
     ] {
         for mode in [native(), explicit("flutter"), explicit("npm")] {
             let err = gate(&ctx("app", Some(eco::RN), op), None, &mode, None).unwrap_err();
+            let message = err.to_string();
             assert!(
-                err.to_string().contains("rn"),
-                "RN failure must name the ecosystem: {err}"
+                message.contains("disabled for dependency operations") || message.contains("rn"),
+                "failure must explain the compat ban or unsupported RN lane: {err}"
             );
         }
     }
@@ -313,7 +384,7 @@ fn app_rn_unsupported_flutter_delegated_unknown_unsupported() {
         gate(
             &ctx("app", Some(eco::FLUTTER), DepOp::Install),
             Some("flutter"),
-            &explicit("flutter"),
+            &native(),
             None
         )
         .is_ok()
@@ -329,17 +400,18 @@ fn app_rn_unsupported_flutter_delegated_unknown_unsupported() {
         .is_ok(),
         "flutter install is native (no toolchain spawn)"
     );
-    // Undetected app ecosystem never falls back to generic-delegated.
-    assert!(gate(&ctx("app", None, DepOp::Install), None, &native(), None).is_err());
     assert!(
         gate(
-            &ctx("app", None, DepOp::Install),
+            &ctx("app", Some(eco::FLUTTER), DepOp::Add),
             None,
-            &explicit("flutter"),
+            &native(),
             None
         )
-        .is_err()
+        .is_ok()
     );
+    // Undetected app ecosystem never falls back to generic-delegated.
+    assert!(gate(&ctx("app", None, DepOp::Install), None, &native(), None).is_err());
+    assert!(gate(&ctx("app", None, DepOp::Install), None, &native(), None).is_err());
 }
 
 #[test]
@@ -348,55 +420,37 @@ fn game_iot_clo_need_declared_ecosystem() {
         gate(
             &ctx("game", Some(eco::BEVY), DepOp::Install),
             None,
-            &explicit("cargo"),
+            &native(),
             None
         )
         .is_ok()
     );
-    assert!(
-        gate(
-            &ctx("game", None, DepOp::Install),
-            None,
-            &explicit("cargo"),
-            None
-        )
-        .is_err()
-    );
-    for fw in ["esp32-rust", "platformio", "zephyr"] {
+    assert!(gate(&ctx("game", None, DepOp::Install), None, &native(), None).is_err());
+    assert!(matches!(
+        owner_for(&ctx("iot", Some("esp32-rust"), DepOp::Install)),
+        DepOwner::Native
+    ));
+    for fw in ["platformio", "zephyr"] {
         assert!(
-            gate(
-                &ctx("iot", Some(fw), DepOp::Install),
-                None,
-                &explicit("pio"),
-                None
-            )
-            .is_ok(),
-            "iot[{fw}] must open for its toolchain set"
+            gate(&ctx("iot", Some(fw), DepOp::Install), None, &native(), None).is_err(),
+            "iot[{fw}] has no adapter-owned install lane; compatibility is not silently opened"
         );
     }
-    assert!(
-        gate(
-            &ctx("iot", None, DepOp::Install),
-            None,
-            &explicit("pio"),
-            None
-        )
-        .is_err()
-    );
+    assert!(gate(&ctx("iot", None, DepOp::Install), None, &native(), None).is_err());
     assert!(
         gate(
             &ctx("clo", Some(eco::TERRAFORM), DepOp::Install),
             Some("terraform"),
-            &explicit("terraform"),
+            &native(),
             None
         )
-        .is_ok()
+        .is_err()
     );
     assert!(
         gate(
             &ctx("clo", None, DepOp::Install),
             Some("terraform"),
-            &explicit("terraform"),
+            &native(),
             None
         )
         .is_err()
@@ -404,15 +458,15 @@ fn game_iot_clo_need_declared_ecosystem() {
 }
 
 #[test]
-fn delegated_lane_fails_closed_without_compat() {
+fn lanes_without_native_owner_fail_closed_without_compat_escape() {
     for (core, eco, op) in [
         ("ai", Some(eco::PYTHON), DepOp::Remove),
         ("clo", Some(eco::TERRAFORM), DepOp::Install),
     ] {
         let err = gate(&ctx(core, eco, op), None, &native(), None).unwrap_err();
         assert!(
-            err.to_string().contains("--compat-runtime"),
-            "{core} {} must name the escape hatch: {err}",
+            err.to_string().contains("unsupported") || err.to_string().contains("does not yet own"),
+            "{core} {} must fail without a compat escape: {err}",
             op.as_str()
         );
     }
@@ -420,44 +474,25 @@ fn delegated_lane_fails_closed_without_compat() {
 
 #[test]
 fn compat_with_wrong_tool_stays_closed() {
-    // Native install/add ignore any opt-in; delegated ai Remove still
-    // enforces exact ownership.
-    assert!(
-        gate(
-            &ctx("ai", Some(eco::PYTHON), DepOp::Install),
-            Some("uv"),
-            &explicit("cargo"),
-            None
+    for (core, ecosystem, operation, tool) in [
+        ("ai", Some(eco::PYTHON), DepOp::Install, "cargo"),
+        ("ai", Some(eco::PYTHON), DepOp::Remove, "pip"),
+        ("clo", Some(eco::TERRAFORM), DepOp::Install, "terraform"),
+    ] {
+        let error = gate(
+            &ctx(core, ecosystem, operation),
+            Some(tool),
+            &explicit(tool),
+            None,
         )
-        .is_ok(),
-        "compat on native ai install is ignored"
-    );
-    assert!(
-        gate(
-            &ctx("ai", Some(eco::PYTHON), DepOp::Add),
-            Some("uv"),
-            &explicit("cargo"),
-            None
-        )
-        .is_ok(),
-        "compat on native ai add is ignored"
-    );
-    let err = gate(
-        &ctx("ai", Some(eco::PYTHON), DepOp::Remove),
-        Some("uv"),
-        &explicit("cargo"),
-        None,
-    )
-    .unwrap_err();
-    assert!(err.to_string().contains("does not own"), "{err}");
-    let err = gate(
-        &ctx("clo", Some(eco::TERRAFORM), DepOp::Install),
-        None,
-        &explicit("uv"),
-        None,
-    )
-    .unwrap_err();
-    assert!(err.to_string().contains("does not own"), "{err}");
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("disabled for dependency operations"),
+            "{error}"
+        );
+    }
 }
 
 #[test]
@@ -493,54 +528,81 @@ fn unsupported_cells_fail_in_every_mode_including_compat() {
 
 #[test]
 fn app_exact_verbs_match_real_runners() {
-    // Reviewer table: flutter install + update and swift/kotlin update
-    // native; add/remove delegated; swift/kotlin install+list delegated; objc install only; everything else
-    // Unsupported — including under compat.
+    // Native operations pass; source/catalog mutations without transaction
+    // support and every compat mode fail.
+    // Operation native thì chạy; lane chưa hỗ trợ và mọi compat đều bị chặn.
     assert!(
         gate(
             &ctx("app", Some(eco::FLUTTER), DepOp::Update),
             Some("flutter"),
-            &explicit("flutter"),
+            &native(),
             None
         )
         .is_ok()
     );
-    for lang in [eco::SWIFT, eco::KOTLIN] {
-        let tool = if lang == eco::SWIFT {
-            "swift"
-        } else {
-            "gradle"
-        };
-        assert!(
-            gate(
-                &ctx("app", Some(lang), DepOp::Install),
-                None,
-                &explicit(tool),
-                None
-            )
-            .is_ok(),
-            "app[{lang}] install opens for its toolchain"
-        );
-        assert!(
-            gate(
-                &ctx("app", Some(lang), DepOp::List),
-                None,
-                &explicit(tool),
-                None
-            )
-            .is_ok(),
-            "app[{lang}] list opens for its toolchain"
-        );
+    assert!(
+        gate(
+            &ctx("app", Some(eco::SWIFT), DepOp::Install),
+            None,
+            &native(),
+            None
+        )
+        .is_ok()
+    );
+    for op in [DepOp::Add, DepOp::Remove, DepOp::Update] {
+        assert!(gate(&ctx("app", Some(eco::SWIFT), op), None, &native(), None).is_err());
+        assert!(gate(&ctx("app", Some(eco::KOTLIN), op), None, &native(), None).is_err());
     }
     assert!(
         gate(
-            &ctx("app", Some(eco::OBJC), DepOp::Install),
-            Some("xcodebuild"),
-            &explicit("xcodebuild"),
+            &ctx("app", Some(eco::SWIFT), DepOp::List),
+            None,
+            &native(),
             None
         )
-        .is_ok()
+        .is_err()
     );
+    assert!(
+        gate(
+            &ctx("app", Some(eco::KOTLIN), DepOp::Install),
+            None,
+            &native(),
+            None
+        )
+        .is_err()
+    );
+    assert!(
+        gate(
+            &ctx("app", Some(eco::KOTLIN), DepOp::List),
+            None,
+            &native(),
+            None
+        )
+        .is_err()
+    );
+    assert!(
+        gate(
+            &ctx("app", Some(eco::OBJC), DepOp::Install),
+            None,
+            &native(),
+            None
+        )
+        .is_err()
+    );
+    for core_eco_op in [
+        ("app", eco::FLUTTER, DepOp::Install),
+        ("app", eco::SWIFT, DepOp::Install),
+    ] {
+        assert!(
+            gate(
+                &ctx(core_eco_op.0, Some(core_eco_op.1), core_eco_op.2),
+                None,
+                &explicit("flutter"),
+                None
+            )
+            .is_err()
+        );
+    }
 }
 
 #[test]
@@ -564,14 +626,25 @@ fn scaffold_only_lanes_say_so() {
 }
 
 #[test]
-fn dep_flag_parsing_accepts_toolchain_rejects_unknown() {
+fn dep_flag_parsing_rejects_all_compat_values() {
     assert!(from_dep_flag(None).is_ok());
-    assert!(from_dep_flag(Some("uv")).is_ok());
-    assert!(from_dep_flag(Some("cargo")).is_ok());
-    assert!(from_dep_flag(Some("terraform")).is_ok());
-    assert!(from_dep_flag(Some("dotnet")).is_ok());
-    assert!(from_dep_flag(Some("mvn")).is_ok());
-    assert!(from_dep_flag(Some("not-a-tool")).is_err());
+    for tool in [
+        "uv",
+        "cargo",
+        "terraform",
+        "dotnet",
+        "mvn",
+        "bun",
+        "deno",
+        "not-a-tool",
+    ] {
+        let error = from_dep_flag(Some(tool)).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("disabled for dependency operations")
+        );
+    }
 }
 
 #[test]
@@ -665,16 +738,32 @@ fn capabilities_json_carries_dep_gate_ownership() {
     }
     assert_eq!(app_languages["flutter"]["install"]["owner"], "mgc-native");
     assert_eq!(app_languages["flutter"]["update"]["owner"], "mgc-native");
-    assert_eq!(app_languages["swift"]["update"]["owner"], "mgc-native");
-    assert_eq!(app_languages["kotlin"]["update"]["owner"], "mgc-native");
-    // Exact app verbs: swift/kotlin add unsupported, objc list
-    // unsupported, objc install delegated.
+    assert_eq!(app_languages["swift"]["update"]["owner"], "unsupported");
+    // Exact app verbs stay native only where complete; no delegated labels.
     assert_eq!(app_languages["swift"]["add"]["owner"], "unsupported");
-    assert_eq!(app_languages["swift"]["install"]["owner"], "delegated");
-    assert_eq!(app_languages["kotlin"]["remove"]["owner"], "mgc-native");
-    assert_eq!(app_languages["kotlin"]["list"]["owner"], "delegated");
-    assert_eq!(app_languages["objc"]["list"]["owner"], "unsupported");
-    assert_eq!(app_languages["objc"]["install"]["owner"], "delegated");
+    assert_eq!(app_languages["swift"]["install"]["owner"], "mgc-native");
+    assert_eq!(app_languages["swift"]["remove"]["owner"], "unsupported");
+    assert!(app_languages.get("kotlin").is_none()); // all operations inherit unsupported base owner.
+    for op in [
+        DepOp::Add,
+        DepOp::Remove,
+        DepOp::Update,
+        DepOp::Install,
+        DepOp::List,
+    ] {
+        assert!(matches!(
+            owner_for(&ctx("app", Some(eco::KOTLIN), op)),
+            DepOwner::Unsupported
+        ));
+    }
+    assert!(matches!(
+        owner_for(&ctx("app", Some(eco::OBJC), DepOp::List)),
+        DepOwner::Unsupported
+    ));
+    assert!(matches!(
+        owner_for(&ctx("app", Some(eco::OBJC), DepOp::Install)),
+        DepOwner::Unsupported
+    ));
     // Hardware list reads scaffold-only, never mgc-native.
     let hardware_full = dependency_ownership("hardware");
     assert_eq!(
@@ -688,33 +777,19 @@ fn capabilities_json_carries_dep_gate_ownership() {
 }
 
 #[test]
-fn zephyr_add_remove_unsupported_install_update_delegated() {
-    // Zephyr add/remove have NO runner (west.yml is hand-managed; the
-    // adapter answers an honest not-supported error) — Unsupported even
-    // with compat. Install/Update delegate to west.
-    // (Zephyr add/remove không có runner — Unsupported.)
-    for op in [DepOp::Add, DepOp::Remove] {
-        assert!(
-            gate(
-                &ctx("iot", Some("zephyr"), op),
-                Some("west"),
-                &explicit("west"),
-                None
-            )
-            .is_err(),
-            "zephyr {op:?} must stay Unsupported"
-        );
-    }
-    for op in [DepOp::Install, DepOp::Update] {
-        assert!(
-            gate(
-                &ctx("iot", Some("zephyr"), op),
-                Some("west"),
-                &explicit("west"),
-                None
-            )
-            .is_ok(),
-            "zephyr {op:?} must delegate to west"
-        );
+fn non_native_iot_package_operations_are_unsupported_even_with_compat() {
+    for (framework, tool) in [("zephyr", "west"), ("platformio", "pio")] {
+        for op in [DepOp::Install, DepOp::Add, DepOp::Remove, DepOp::Update] {
+            assert!(
+                gate(
+                    &ctx("iot", Some(framework), op),
+                    Some(tool),
+                    &explicit(tool),
+                    None
+                )
+                .is_err(),
+                "iot/{framework} {op:?} must remain unsupported until MGC owns the lifecycle"
+            );
+        }
     }
 }

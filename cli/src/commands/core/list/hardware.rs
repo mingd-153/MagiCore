@@ -32,10 +32,18 @@ pub async fn list(compat_runtime: Option<String>) -> Result<()> {
         &compat,
         Some(&root.join(".magicore").join("exec.log")),
     )?;
-    shared::list(
-        &*crate::factory::create_adapter(&mgc_types::Ecosystem::Hardware, None, None)
-            .expect("hardware adapter always available in hardware core build"),
-        &root,
-    )
-    .await
+    let mut templates = Vec::new();
+    for name in ["optimizer", "bench"] {
+        if root.join(name).is_dir() {
+            templates.push(name);
+        }
+    }
+    if templates.is_empty() {
+        mgc_ui::info("No optimizer or benchmark templates found");
+    } else {
+        for template in templates {
+            mgc_ui::info(&format!("  {template} (MagiCore template)"));
+        }
+    }
+    Ok(())
 }

@@ -1,37 +1,29 @@
 //! Audit scanner for mobile platforms — honest security audit only.
 //! Scanner audit cho nền tảng mobile — chỉ audit bảo mật trung thực.
 //!
-//! `flutter pub outdated` reports VERSION DRIFT, not CVEs: it feeds
-//! `dependency_health_flutter`, never the security audit. The security
-//! audit stays unavailable until a real CVE scanner exists — a fake clean
-//! report is worse than an honest unavailable one.
-//! `flutter pub outdated` báo LỆCH VERSION, không phải CVE: kết quả đi vào
-//! `dependency_health_flutter`, không bao giờ vào security audit. Audit
-//! bảo mật giữ unavailable đến khi có scanner CVE thật — báo sạch giả còn
-//! tệ hơn unavailable trung thực.
+//! This module exposes native OSV audit lanes; unsupported health checks fail closed.
+//! Module này cung cấp lane audit OSV native; health check chưa hỗ trợ sẽ từ chối rõ.
 
+use mgc_types::adapter::{AuditReport, DependencyHealthReport};
+#[cfg(test)]
 use mgc_types::adapter::{
-    AuditReport, DependencyHealthReport, FindingClass, OutdatedDependency, ScannerStatus,
-    Vulnerability, VulnerabilitySeverity,
+    FindingClass, OutdatedDependency, ScannerStatus, Vulnerability, VulnerabilitySeverity,
 };
-use mgc_types::{MgError, MgResult, PackageId, PackageName, Version};
+use mgc_types::{MgError, MgResult};
+#[cfg(test)]
+use mgc_types::{PackageId, PackageName, Version};
+#[cfg(test)]
 use serde::Deserialize;
 use std::path::Path;
 
-/// Exit codes that mean "tool ran fine" (1 = findings/outdated found).
-/// Exit code nghĩa là "tool chạy xong" (1 = có finding/outdated).
-const PUB_OUTDATED_OK_EXIT_CODES: [i32; 2] = [0, 1];
-
 // ---------------------------------------------------------------------------
-// Typed schemas — mirror REAL tool output. OWASP dependency-check JSON
-// report schema verified against the official reporter format; flutter
-// `pub outdated --json` verified against the Dart pub tool docs. Parsers
-// fail closed on schema mismatch.
-// Schema typed — khớp output THẬT của tool; lệch schema thì fail-closed.
+// Legacy parser fixtures retained for unit regression tests only.
+// Parser cũ chỉ giữ làm fixture kiểm thử hồi quy.
 // ---------------------------------------------------------------------------
 
 /// `flutter pub outdated --json` — top-level object with package groups
 /// (camelCase keys per the real Dart pub output).
+#[cfg(test)]
 #[derive(Debug, Deserialize)]
 struct PubOutdatedReport {
     /// At least one recognized group must exist, else the payload is not a
@@ -46,6 +38,7 @@ struct PubOutdatedReport {
     dependency_overrides: Vec<PubOutdatedEntry>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Deserialize)]
 struct PubOutdatedEntry {
     package: String,
@@ -59,6 +52,7 @@ struct PubOutdatedEntry {
 /// report — version drift, NOT vulnerabilities.
 /// Parse output `flutter pub outdated --json` thành báo cáo ĐỘ TƯƠI
 /// dependency — lệch version, KHÔNG phải lỗ hổng.
+#[cfg(test)]
 pub(crate) fn parse_flutter_outdated_json(raw: &str) -> MgResult<DependencyHealthReport> {
     let json_start = raw.find('{').unwrap_or(0);
     let report: PubOutdatedReport = serde_json::from_str(raw[json_start..].trim())
@@ -128,48 +122,15 @@ pub(crate) fn parse_flutter_outdated_json(raw: &str) -> MgResult<DependencyHealt
     })
 }
 
-/// Dependency health check for Flutter — runs `flutter pub outdated --json`
-/// and reports version drift. This is NOT a security audit.
-/// Kiểm tra độ tươi dependency Flutter — chạy `flutter pub outdated --json`
-/// và báo lệch version. Đây KHÔNG phải security audit.
-///
-/// DELEGATED: the `flutter` CLI runs for real — mgc orchestrates only.
-/// (DELEGATED: CLI `flutter` chạy thật — mgc chỉ điều phối.)
+/// Flutter freshness remains unsupported until MagiCore owns the registry query.
+/// Chưa hỗ trợ freshness Flutter cho tới khi MGC tự truy vấn registry.
 pub async fn dependency_health_flutter(project_root: &Path) -> MgResult<DependencyHealthReport> {
-    // Fail closed: without the CLI we CANNOT know freshness — returning a
-    // default report would fake "everything is up to date".
-    // Fail-closed: không có CLI thì KHÔNG BIẾT độ tươi — trả report mặc
-    // định đồng nghĩa bịa "mọi thứ đều mới".
-    if which::which("flutter").is_err() {
-        return Err(MgError::Other(
-            "flutter CLI not installed — cannot check dependency freshness".to_string(),
-        ));
-    }
-
-    let args = vec![
-        "pub".to_string(),
-        "outdated".to_string(),
-        "--json".to_string(),
-    ];
-    let exec_opts = mgc_exec::run::ExecOptions {
-        cwd: Some(project_root.to_path_buf()),
-        // Exit 1 means outdated packages found — JSON payload still valid.
-        // Exit 1 nghĩa là có outdated — payload JSON vẫn hợp lệ.
-        allowed_exit_codes: PUB_OUTDATED_OK_EXIT_CODES.to_vec(),
-        ..Default::default()
-    };
-
-    let result = mgc_exec::run::run("flutter", &args, &exec_opts)
-        .map_err(|e| MgError::Other(format!("flutter pub outdated failed: {}", e)))?;
-
-    if !PUB_OUTDATED_OK_EXIT_CODES.contains(&result.exit_code) {
-        return Err(MgError::Other(format!(
-            "flutter pub outdated exited with code {}",
-            result.exit_code
-        )));
-    }
-
-    parse_flutter_outdated_json(&result.stdout_tail)
+    let _ = project_root;
+    Err(MgError::Unsupported {
+        core: "app",
+        capability: "flutter_dependency_health",
+        guidance: "MagiCore has no native pub.dev freshness resolver yet; this command will not invoke Flutter or report a guessed result".to_string(),
+    })
 }
 
 /// Security audit for Flutter — honestly unavailable: `pub outdated` is a
@@ -190,91 +151,27 @@ pub async fn audit_flutter(project_root: &Path) -> MgResult<AuditReport> {
     mgc_audit::scanners::audit_flutter_osv(project_root).await
 }
 
-// DELEGATED: gradle/gradlew runs for real — mgc orchestrates only; the
-// version scan is the tool's own output.
-// (DELEGATED: gradle/gradlew chạy thật — mgc chỉ điều phối; kết quả quét
-// version là output của tool.)
+/// Kotlin security audit uses the native lock/manifest OSV reader and never
+/// launches Gradle. Incomplete dependency metadata remains partial/unsupported.
+/// Audit Kotlin dùng reader OSV native; không khởi chạy Gradle.
 pub async fn audit_kotlin(project_root: &Path) -> MgResult<AuditReport> {
-    let tool = if project_root.join("gradlew").exists() {
-        "./gradlew"
-    } else if which::which("gradle").is_ok() {
-        "gradle"
-    } else {
-        return Ok(AuditReport::tool_missing(
-            "gradle/gradlew",
-            "install Gradle (https://gradle.org/install/) or add the Gradle wrapper to the project",
-        ));
-    };
-
-    let args = vec!["dependencyCheckAnalyze".to_string()];
-    let exec_opts = mgc_exec::run::ExecOptions {
-        cwd: Some(project_root.to_path_buf()),
-        ..Default::default()
-    };
-
-    let report_path = project_root
-        .join("build")
-        .join("reports")
-        .join("dependency-check-report.json");
-
-    // Stale-report guard (Tech Lead P0-4): remove any report from a
-    // PREVIOUS run BEFORE invoking the scanner. After a successful
-    // delete, the ONLY way the file exists again is that THIS scanner
-    // run wrote it — no mtime comparison (some filesystems have coarse
-    // timestamp resolution) and no stale reuse path.
-    // Chống stale report: xóa report của lần chạy TRƯỚC trước khi gọi
-    // scanner. Sau khi xóa thành công, file chỉ có thể tồn tại trở lại
-    // nếu CHÍNH LẦN CHẠY NÀY ghi ra — không so mtime (một số filesystem
-    // độ phân giải timestamp thấp) và không còn đường tái dùng report cũ.
-    let removed_previous = std::fs::remove_file(&report_path);
-    // remove_file errors ONLY when the file did not exist (ENOENT) —
-    // any other error (permissions etc.) must fail the audit closed.
-    // remove_file chỉ lỗi khi file KHÔNG tồn tại (ENOENT) — lỗi khác
-    // (quyền...) thì audit phải fail-closed.
-    if let Err(e) = &removed_previous
-        && e.kind() != std::io::ErrorKind::NotFound
-    {
-        return Ok(AuditReport::scanner_failed(
-            "owasp-dependency-check",
-            format!("cannot remove stale report {}: {e}", report_path.display()),
-        ));
-    }
-
-    let result = mgc_exec::run::run(tool, &args, &exec_opts);
-    // OWASP dependency-check writes its report regardless of the gradle
-    // exit code; parse the JSON report ONLY when it was freshly written
-    // by THIS run (pre-run delete guarantees existence == fresh), else
-    // fail closed with the real reason.
-    // dependency-check ghi report bất kể exit code; chỉ parse JSON khi
-    // file được CHÍNH LẦN NÀY ghi (đã xóa trước run nên tồn tại == mới),
-    // không thì fail-closed với lý do thật.
-    let report_fresh = report_path.exists();
-    if !report_fresh {
-        let reason = match &result {
-            Ok(r) if r.exit_code == 0 => {
-                "OWASP dependency-check ran but produced no fresh report — is the plugin configured?"
-                    .to_string()
-            }
-            Ok(r) => format!("dependencyCheckAnalyze exited with code {}", r.exit_code),
-            Err(e) => format!("dependencyCheckAnalyze failed: {e}"),
-        };
-        return Ok(AuditReport::scanner_failed(
-            "owasp-dependency-check",
-            reason,
-        ));
-    }
-
-    parse_owasp_dependency_check_json(&std::fs::read_to_string(&report_path)?)
+    // Kotlin projects use the native lock/manifest OSV reader. This path
+    // never starts Gradle; unresolved Gradle models remain Partial or
+    // Unsupported instead of being delegated to a build task.
+    // Kotlin dùng reader native lock/manifest + OSV; không khởi chạy Gradle.
+    mgc_audit::scanners::audit_java(project_root).await
 }
 
 /// Typed OWASP dependency-check report schema — verified against the
 /// official JSON reporter format (dependencies[].packages[].package.id
 /// purl, vulnerabilities[].cvssv3/cvssv2, projectReportDate etc.).
+#[cfg(test)]
 #[derive(Debug, Deserialize)]
 struct OwaspReport {
     dependencies: Vec<OwaspDependency>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Deserialize)]
 struct OwaspDependency {
     #[serde(default)]
@@ -283,17 +180,20 @@ struct OwaspDependency {
     vulnerabilities: Vec<OwaspVulnerability>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Deserialize)]
 struct OwaspPackageWrapper {
     package: OwaspPackage,
 }
 
+#[cfg(test)]
 #[derive(Debug, Deserialize)]
 struct OwaspPackage {
     /// Package URL, e.g. `pkg:maven/com.example/lib@1.0`.
     id: String,
 }
 
+#[cfg(test)]
 #[derive(Debug, Deserialize)]
 struct OwaspVulnerability {
     name: String,
@@ -305,6 +205,7 @@ struct OwaspVulnerability {
     description: Option<String>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Deserialize)]
 struct OwaspCvss {
     /// baseScore — may be absent on partial CVSS records.
@@ -315,6 +216,7 @@ struct OwaspCvss {
 
 /// Parse an OWASP dependency-check JSON report into an audit report.
 /// Parse report JSON của dependency-check thành audit report.
+#[cfg(test)]
 pub(crate) fn parse_owasp_dependency_check_json(raw: &str) -> MgResult<AuditReport> {
     let report: OwaspReport = serde_json::from_str(raw)
         .map_err(|e| MgError::Other(format!("invalid dependency-check JSON: {e}")))?;
@@ -373,6 +275,7 @@ pub(crate) fn parse_owasp_dependency_check_json(raw: &str) -> MgResult<AuditRepo
 /// Tách purl `pkg:maven/com.example/lib@1.0` thành (name, version).
 /// Version sau '@' là version BỊ ẢNH HƯỞNG — giữ nó làm finding có ích,
 /// không thay bằng 0.0.0 giả.
+#[cfg(test)]
 fn purl_name_version(purl: &str) -> (PackageName, Option<Version>) {
     let (id_part, version) = match purl.rsplit_once('@') {
         Some((id, v)) => (id, Version::parse(v).ok()),
@@ -396,6 +299,7 @@ fn purl_name_version(purl: &str) -> (PackageName, Option<Version>) {
 /// severity string. Bands follow CVSS qualitative ratings.
 /// Map severity dependency-check: ưu tiên base score CVSS v3/v2; còn lại
 /// theo chuỗi severity. Bảng theo xếp loại định tính CVSS.
+#[cfg(test)]
 fn owasp_severity(vuln: &OwaspVulnerability) -> VulnerabilitySeverity {
     let score = vuln
         .cvssv3
@@ -416,6 +320,7 @@ fn owasp_severity(vuln: &OwaspVulnerability) -> VulnerabilitySeverity {
 /// boundaries — advisory text is external data and may contain any UTF-8.
 /// Cắt tối đa `max_chars` ký tự, đúng ranh giới ký tự (không phải byte) —
 /// text advisory là dữ liệu ngoài, có thể chứa UTF-8 bất kỳ.
+#[cfg(test)]
 fn truncate_utf8(text: &str, max_chars: usize) -> String {
     if text.chars().count() <= max_chars {
         return text.to_string();

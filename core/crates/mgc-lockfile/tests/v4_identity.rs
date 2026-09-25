@@ -65,6 +65,7 @@ fn target_tuple_parses_strict_triples() {
     assert_eq!(parsed.canonical(), "linux-x86_64-gnu");
     assert!(TargetTuple::parse("linux-x86_64").is_none());
     assert!(TargetTuple::parse("linux--gnu").is_none());
+    assert!(TargetTuple::parse("linux-x86_64-gnu-extra").is_none());
     assert!(TargetTuple::parse("").is_none());
 }
 

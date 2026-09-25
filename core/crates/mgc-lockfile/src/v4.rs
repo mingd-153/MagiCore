@@ -78,9 +78,9 @@ impl TargetTuple {
     /// Parse `os-arch-abi` (exactly three dash-separated parts).
     /// Parse `os-arch-abi` (đúng ba phần cách bằng gạch nối).
     pub fn parse(raw: &str) -> Option<Self> {
-        let mut parts = raw.splitn(3, '-');
+        let mut parts = raw.split('-');
         let (os, arch, abi) = (parts.next()?, parts.next()?, parts.next()?);
-        if os.is_empty() || arch.is_empty() || abi.is_empty() {
+        if os.is_empty() || arch.is_empty() || abi.is_empty() || parts.next().is_some() {
             return None;
         }
         Some(Self {

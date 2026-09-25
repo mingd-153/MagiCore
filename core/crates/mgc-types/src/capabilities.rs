@@ -151,14 +151,12 @@ pub trait ProjectDetector: CoreIdent {
     fn can_handle(&self, project_root: &Path) -> bool;
 }
 
-/// Resolves/edits the dependency set through mgc.
-/// Note: some cores (game/iot/cloud) keep REAL toolchain-delegating
-/// `add/remove/update` overrides while `resolve` stays fail-closed — they
-/// deliberately do NOT claim this capability (the full surface is not real).
-/// Resolver/edit tập dependency qua mgc. Lưu ý: một số core (game/iot/cloud)
-/// giữ override `add/remove/update` thật (ủy quyền toolchain) trong khi
-/// `resolve` vẫn fail-closed — các core đó CHỦ Ý không claim capability này
-/// (bề mặt trait không thật hoàn toàn).
+/// Resolves dependency graphs. Mutations must be committed only by the CLI's
+/// journaled mutation gateway; adapter-level `add/remove/update` deliberately
+/// fail closed so callers cannot bypass project locking, recovery, and rollback.
+/// Resolve graph dependency. Mutation chỉ được commit qua gateway có journal
+/// của CLI; `add/remove/update` ở adapter cố ý fail-closed để không bypass lock,
+/// recovery và rollback cấp project.
 #[async_trait]
 pub trait DependencyResolver: CoreIdent {
     /// Lightweight gate probe — never touches the network.
@@ -167,7 +165,7 @@ pub trait DependencyResolver: CoreIdent {
         Err(unsupported_capability(
             self.core_id(),
             "resolve",
-            "this core does not resolve a registry dependency graph; dependencies are managed by the core's own toolchain",
+            "this core has no native registry graph for this project; package-manager fallback is disabled",
         ))
     }
 
@@ -175,7 +173,7 @@ pub trait DependencyResolver: CoreIdent {
         Err(unsupported_capability(
             self.core_id(),
             "resolve",
-            "this core does not resolve a registry dependency graph; dependencies are managed by the core's own toolchain",
+            "this core has no native registry graph for this project; package-manager fallback is disabled",
         ))
     }
 
@@ -198,7 +196,7 @@ pub trait DependencyResolver: CoreIdent {
         Err(unsupported_capability(
             self.core_id(),
             "add",
-            "this core does not manage dependencies through mgc; use the core's own toolchain workflow",
+            "direct adapter mutation is disabled; use the MagiCore CLI mutation gateway when this ecosystem has native support",
         ))
     }
 
@@ -206,7 +204,7 @@ pub trait DependencyResolver: CoreIdent {
         Err(unsupported_capability(
             self.core_id(),
             "remove",
-            "this core does not manage dependencies through mgc; use the core's own toolchain workflow",
+            "direct adapter mutation is disabled; use the MagiCore CLI mutation gateway when this ecosystem has native support",
         ))
     }
 
@@ -218,7 +216,7 @@ pub trait DependencyResolver: CoreIdent {
         Err(unsupported_capability(
             self.core_id(),
             "update",
-            "this core has no mgc-managed update channel; use the core's own toolchain",
+            "direct adapter mutation is disabled; use the MagiCore CLI mutation gateway when this ecosystem has native support",
         ))
     }
 }

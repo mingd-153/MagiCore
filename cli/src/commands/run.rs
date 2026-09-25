@@ -14,11 +14,11 @@ const RUN_SCRIPT_TIMEOUT_ENV: &str = "MGC_RUN_SCRIPT_TIMEOUT_SECS";
 /// Native-engine ruling 2026-09-10: a script whose PROGRAM is a rival
 /// JS runtime (bun/deno) or an external package manager (npm/npx/pnpm/
 /// yarn/bunx) is REJECTED on the native path — no silent forwarding.
-/// `--compat-runtime bun|deno` opts into the temporary compatibility
-/// lane explicitly, with a loud warning on the spawn.
+/// Historical `--compat-runtime bun|deno` flags are rejected; they never
+/// delegate execution to a rival runtime.
 /// Script có PROGRAM là runtime đối thủ (bun/deno) hoặc PM ngoài bị TỪ
-/// CHỐI trên đường native — không chuyển tiếp âm thầm. Cờ
-/// --compat-runtime chọn lane compat tường minh kèm cảnh báo.
+/// CHỐI trên mọi đường — không chuyển tiếp âm thầm. Cờ tương thích cũ
+/// không mở đường chạy runtime ngoài.
 pub async fn run(
     script: String,
     args: Vec<String>,

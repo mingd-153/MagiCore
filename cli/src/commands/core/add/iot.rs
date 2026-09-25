@@ -1,10 +1,7 @@
 //! `mgc add iot` — tách từ core/iot.rs (Phase 7 v5).
 
 use anyhow::Result;
-use mgc_types::Ecosystem;
-use mgc_types::adapter::PackageAdapter;
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use crate::commands::core::shared;
 
@@ -13,11 +10,6 @@ fn project_root() -> Result<PathBuf> {
     let root = shared::find_project_root(&cwd)?
         .ok_or_else(|| crate::error::no_mgc_project_found("iot"))?;
     Ok(root)
-}
-
-fn iot_adapter() -> Arc<dyn PackageAdapter> {
-    crate::factory::create_adapter(&Ecosystem::Iot, None, None)
-        .expect("iot adapter always available in iot core build")
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -75,16 +67,19 @@ pub async fn add(
             )
             .await;
         }
+        if framework == Some("esp32-rust") {
+            anyhow::bail!(
+                "native ESP32-Rust dependency addition requires Cargo.toml at the project root"
+            );
+        }
     }
     let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
     // Full gate context (P0#2): detected framework id + board target.
     let iot = mgc_iot_adapter::adapter_for(&root);
     let framework = iot.as_ref().map(|a| a.framework());
     let target_owned = iot.as_ref().and_then(|a| a.target(&root));
-    // C0 ownership firewall (T0.3): the IoT add lane routes to the
-    // adapter, whose frameworks delegate (cargo/pio/west).
-    // (Tường lửa C0: lane add IoT gọi adapter, framework trong đó
-    // delegate.)
+    // Non-native IoT package operations fail closed; compatibility is not
+    // silently delegated through the adapter contract.
     crate::commands::dep_gate::gate(
         &crate::commands::dep_gate::DepContext::new(
             "iot",
@@ -93,15 +88,12 @@ pub async fn add(
             target_owned.as_deref(),
             crate::commands::dep_gate::DepOp::Add,
         ),
-        // Exact tool for the detected framework (never None on a
-        // spawning lane).
-        framework.and_then(shared::iot_framework_tool),
+        None,
         &compat,
         Some(&root.join(".magicore").join("exec.log")),
     )?;
-    let adapter = iot_adapter();
-    shared::add(
-        &*adapter, &root, packages, version, dev, exact, optional, peer, no_save, true, global,
-    )
-    .await
+    let _ = (
+        packages, version, dev, exact, optional, peer, no_save, global,
+    );
+    anyhow::bail!("MagiCore does not yet own dependency addition for this IoT framework")
 }

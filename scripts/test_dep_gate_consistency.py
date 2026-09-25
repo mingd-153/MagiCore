@@ -56,11 +56,11 @@ BINARY = {
             "dotnet": "mgc-native",
         },
     ),
-    "ai": ownership("unsupported", {"python": "delegated"}),
+    "ai": ownership("unsupported", {"python": "mgc-native"}),
     "app": ownership(
         "unsupported",
         {
-            "flutter": "delegated",
+            "flutter": "mgc-native",
             "kotlin": "delegated",
             "swift": "delegated",
             "objc": "delegated",
@@ -86,7 +86,7 @@ class ConsistencyDirections(unittest.TestCase):
     def test_agreement_passes(self):
         rows = [
             ("web", "javascript", "mgc-native"),
-            ("ai", "python", "delegated"),
+            ("ai", "python", "mgc-native"),
             ("hardware", "benchmark", "scaffold-only"),
             ("cicd", "github-actions", "unsupported"),
         ]
@@ -94,10 +94,10 @@ class ConsistencyDirections(unittest.TestCase):
 
     def test_laundering_fails(self):
         # A lane claiming native the binary denies is laundering.
-        rows = [("app", "flutter", "mgc-native")]
+        rows = [("app", "kotlin", "mgc-native")]
         violations = check_dep_gate_consistency(BINARY, lanes(rows))
         self.assertEqual(len(violations), 1)
-        self.assertIn("app/flutter", violations[0])
+        self.assertIn("app/kotlin", violations[0])
 
     def test_stale_downgrade_fails(self):
         # A lane denying native the binary proves is stale.

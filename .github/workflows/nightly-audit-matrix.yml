@@ -21,7 +21,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  MGC_E2E_AUDIT_TOOLS: required
+  MGC_E2E_AUDIT_NETWORK: required
 
 jobs:
   full-matrix:

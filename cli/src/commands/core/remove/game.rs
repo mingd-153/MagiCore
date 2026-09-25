@@ -3,7 +3,6 @@
 use anyhow::Result;
 
 use super::super::shared;
-use mgc_types::Ecosystem;
 
 pub async fn remove(packages: Vec<String>, compat_runtime: Option<String>) -> Result<()> {
     let root = super::super::shared::core_project_root("game")?;
@@ -32,10 +31,10 @@ pub async fn remove(packages: Vec<String>, compat_runtime: Option<String>) -> Re
             .map_err(|e| anyhow::anyhow!("game native remove needs the lib Cargo engine: {e}"))?;
         return shared::remove(&*lib_adapter, &root, packages, true).await;
     }
-    // C0 ownership firewall (T0.3): the game remove lane routes to the
-    // adapter, whose engines delegate (Bevy → cargo).
-    // (Tường lửa C0: lane remove game gọi adapter, engine trong đó
-    // delegate.)
+    if engine == Some("bevy") {
+        anyhow::bail!("native Bevy dependency removal requires Cargo.toml at the project root");
+    }
+    // Non-native engines are rejected by the ownership gate.
     crate::commands::dep_gate::gate(
         &crate::commands::dep_gate::DepContext::new(
             "game",
@@ -44,11 +43,10 @@ pub async fn remove(packages: Vec<String>, compat_runtime: Option<String>) -> Re
             None,
             crate::commands::dep_gate::DepOp::Remove,
         ),
-        // Exact tool the bevy lane spawns (never None on a spawning lane).
-        Some("cargo"),
+        None,
         &compat,
         Some(&root.join(".magicore").join("exec.log")),
     )?;
-    let adapter = super::super::shared::core_adapter(&Ecosystem::Game);
-    shared::remove(&*adapter, &root, packages, true).await
+    let _ = packages;
+    anyhow::bail!("MagiCore does not yet own dependency removal for this game engine")
 }

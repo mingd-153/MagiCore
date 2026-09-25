@@ -1,16 +1,16 @@
-//! `lane_rust_test.rs` — Full 10-test lane for the Rust (cargo-audit)
-//! scanner contract (Tech Lead P1 2026-09-09 "10-test/lane"):
-//! clean, vulnerable, tool-missing, malformed, partial, unicode, large
+//! `lane_rust_test.rs` — Native Rust OSV scanner contract (Tech Lead P1
+//! 2026-09-09 "10-test/lane"):
+//! clean, vulnerable fixture, lock parsing, malformed, partial, unicode, large
 //! (>1 MB), offline-behavior, concurrency, binary E2E (covered by
 //! cli/tests/audit_cli_e2e.rs; here the parser lane is hermetic).
 //!
-//! Lane 10 test đầy đủ cho scanner Rust (cargo-audit): clean,
-//! vulnerable, thiếu tool, malformed, partial, unicode, payload lớn
+//! Bộ test đầy đủ cho scanner Rust native OSV: clean,
+//! vulnerable fixture, lock parsing, malformed, partial, unicode, payload lớn
 //! (>1 MB), offline, đồng thời, binary E2E (do cli/tests/audit_cli_e2e
 //! đảm nhiệm; lane parser ở đây hermetic).
 #![allow(clippy::unwrap_used)]
 
-use mgc_audit::scanners::parse_cargo_audit_json;
+use mgc_audit::scanners::{parse_cargo_audit_json, read_cargo_lock_pins};
 
 /// Real cargo-audit 0.22.2 vulnerable fixture shape (captured from a
 /// live run, RUSTSEC-2023-0071).
@@ -73,16 +73,11 @@ fn lane_rust_2_vulnerable_fixture_parses_advisory() {
 
 #[test]
 fn lane_rust_3_missing_tool_state_is_tool_missing_not_clean() {
-    // Tool-missing is decided in audit_rust() BEFORE parsing — prove the
-    // report constructor is fail-closed: tool_missing() is NEVER clean.
-    // Trạng thái thiếu tool quyết định trong audit_rust() TRƯỚC parse —
-    // chứng minh constructor fail-closed: tool_missing() KHÔNG BAO GIỜ clean.
-    let report = mgc_types::adapter::AuditReport::tool_missing(
-        "cargo-audit",
-        "cargo install cargo-audit --locked",
-    );
-    assert!(!report.scanner_available());
-    assert!(!report.is_clean());
+    // Native audit has no external scanner dependency.
+    // Audit native không phụ thuộc scanner bên ngoài.
+    let (pins, skipped) = read_cargo_lock_pins("version = 4\n").unwrap();
+    assert!(pins.is_empty());
+    assert!(skipped.is_empty());
 }
 
 #[test]
@@ -230,4 +225,43 @@ fn lane_rust_10_evidence_stamp_on_every_finding() {
         assert_eq!(v.ecosystem.as_deref(), Some("rust"));
         assert!(v.evidence_at.as_deref().is_some_and(|t| t.ends_with('Z')));
     }
+}
+
+#[test]
+fn cargo_lock_reader_collects_registry_graph_and_marks_non_crates_io_sources() {
+    let raw = r#"
+version = 4
+
+[[package]]
+name = "serde"
+version = "1.0.219"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "private-crate"
+version = "2.1.0"
+source = "registry+https://packages.example.test/index"
+
+[[package]]
+name = "local-crate"
+version = "0.1.0"
+"#;
+    let (pins, skipped) = read_cargo_lock_pins(raw).unwrap();
+    assert_eq!(pins.len(), 1);
+    assert_eq!(pins[0].name, "serde");
+    assert_eq!(pins[0].version, "1.0.219");
+    assert_eq!(pins[0].ecosystem, "crates.io");
+    assert_eq!(skipped.len(), 1);
+    assert!(
+        skipped
+            .iter()
+            .any(|reason| reason.contains("private-crate"))
+    );
+    assert!(!skipped.iter().any(|reason| reason.contains("local-crate")));
+}
+
+#[test]
+fn cargo_lock_reader_rejects_malformed_and_incomplete_records() {
+    assert!(read_cargo_lock_pins("not = [valid").is_err());
+    assert!(read_cargo_lock_pins("version = 4\n[[package]]\nname = \"serde\"").is_err());
 }

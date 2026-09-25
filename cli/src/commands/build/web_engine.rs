@@ -559,7 +559,7 @@ fn build_native_engine(project_root: &Path, crate_dir: &Path, release: bool) -> 
     let rustflags = optimizer_envs.get("RUSTFLAGS").cloned();
     let env_opt = rustflags.map(|flags| vec![("RUSTFLAGS".to_string(), flags)]);
 
-    let mut args = vec!["build"];
+    let mut args = vec!["build", "--locked", "--offline"];
     if release {
         args.push("--release");
     }
@@ -660,7 +660,15 @@ pub(crate) fn build_rust_with_env(
         clean_env: false, // Preserve existing env
         ..Default::default()
     };
-    mgc_exec::prelude::run("cargo", &["build".to_string()], &opts)?;
+    mgc_exec::prelude::run(
+        "cargo",
+        &[
+            "build".to_string(),
+            "--locked".to_string(),
+            "--offline".to_string(),
+        ],
+        &opts,
+    )?;
 
     let elapsed = start.elapsed();
     mgc_ui::success(&format!("Rust build completed in {:?}", elapsed));

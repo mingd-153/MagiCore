@@ -8,7 +8,14 @@ fn game_dev_command(root: &std::path::Path) -> anyhow::Result<(String, Vec<Strin
     let adapter = mgc_game_adapter::adapter_for(root)
         .ok_or_else(|| crate::error::no_framework_detected("game engine", root))?;
     match adapter.engine() {
-        "bevy" => Ok(("cargo".to_string(), vec!["run".to_string()])),
+        "bevy" => Ok((
+            "cargo".to_string(),
+            vec![
+                "run".to_string(),
+                "--locked".to_string(),
+                "--offline".to_string(),
+            ],
+        )),
         "godot" => {
             let path = root.to_str().ok_or_else(crate::error::path_not_utf8)?;
             Ok((

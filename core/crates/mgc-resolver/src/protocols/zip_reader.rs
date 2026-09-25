@@ -89,21 +89,17 @@ pub fn read_zip_entries(bytes: &[u8]) -> MgResult<Vec<ZipEntry>> {
 /// không link, ghim kích thước). Phản chiếu hợp đồng giải nén của `archive.rs`.
 pub fn extract_zip(bytes: &[u8], dest: &Path) -> MgResult<()> {
     let entries = read_zip_entries(bytes)?;
-    std::fs::create_dir_all(dest)?;
-    let dest_root = dest.canonicalize()?;
+    let dest_root = super::archive::ensure_extract_root(dest)?;
     for entry in &entries {
         let rel = sanitize_zip_path(&entry.name)?;
-        let target = dest_root.join(&rel);
+        let target = super::archive::ensure_extract_file_target(&dest_root, &rel)?;
         if !target.starts_with(&dest_root) {
             return Err(MgError::Other(format!(
                 "zip entry escapes destination: {}",
                 target.display()
             )));
         }
-        if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(&target, &entry.data)?;
+        super::archive::write_extracted_file(&target, &entry.data)?;
     }
     Ok(())
 }
@@ -419,6 +415,47 @@ mod tests {
         let evil = build_zip(&[("../escape.txt", b"x".to_vec(), 0)]);
         let err = extract_zip(&evil, dir.path()).unwrap_err();
         assert!(err.to_string().contains("unsafe zip entry path"), "{err}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn zip_extract_rejects_preexisting_symlink_parent() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        symlink(outside.path(), root.path().join("nested")).unwrap();
+        let archive = build_zip(&[("nested/pwned.txt", b"outside".to_vec(), 0)]);
+
+        let result = extract_zip(&archive, root.path());
+
+        assert!(result.is_err(), "extractor must refuse a linked parent");
+        assert!(
+            !outside.path().join("pwned.txt").exists(),
+            "archive data must never be written through a pre-existing symlink"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn zip_extract_rejects_symlink_destination_and_file_target() {
+        use std::os::unix::fs::symlink;
+
+        let parent = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let linked_root = parent.path().join("linked-root");
+        symlink(outside.path(), &linked_root).unwrap();
+        let root_archive = build_zip(&[("pwned.txt", b"root escape".to_vec(), 0)]);
+        assert!(extract_zip(&root_archive, &linked_root).is_err());
+        assert!(!outside.path().join("pwned.txt").exists());
+
+        let root = tempfile::tempdir().unwrap();
+        let linked_file = outside.path().join("existing.txt");
+        std::fs::write(&linked_file, b"original").unwrap();
+        symlink(&linked_file, root.path().join("target.txt")).unwrap();
+        let target_archive = build_zip(&[("target.txt", b"overwrite".to_vec(), 0)]);
+        assert!(extract_zip(&target_archive, root.path()).is_err());
+        assert_eq!(std::fs::read(&linked_file).unwrap(), b"original");
     }
 
     #[test]

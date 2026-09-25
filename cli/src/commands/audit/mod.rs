@@ -102,11 +102,11 @@ async fn run_adapter_audit(ctx: &ProjectContext) -> Result<AuditReport> {
 }
 
 /// Finisher contract (shared by every core — no per-core copy-paste):
-/// - Available + 0 findings  → exit 0, "clean" printed.
-/// - Available + findings    → exit 1 with the vulnerability list.
-/// - Partial / ToolMissing / UnsupportedEcosystem / Failed → UNVERIFIED:
-///   exit 0 only outside strict mode (local escape hatch with loud warning),
-///   exit 2 in strict mode (CI must never pass on an unverified audit).
+/// - Any confirmed finding → exit 1, even when coverage is Partial/Failed;
+///   the report still carries UNVERIFIED so incomplete coverage is visible.
+/// - Available + 0 findings → exit 0, "clean" printed.
+/// - Other incomplete states without findings → UNVERIFIED: exit 0 locally,
+///   exit 2 in strict mode.
 /// - Machine formats (json/sarif/cyclonedx) print ONLY the payload —
 ///   the state travels INSIDE the payload (schema_version / UNVERIFIED
 ///   markers), never as extra terminal chatter.
@@ -235,6 +235,12 @@ pub(crate) fn enforce_audit_exit(
     report: &AuditReport,
     strict: StrictMode,
 ) -> Result<()> {
+    if report.vulnerability_count > 0 {
+        return Err(crate::error::audit_found_vulnerabilities(
+            report.vulnerability_count,
+            report.packages_audited,
+        ));
+    }
     if !report.scanner_available() {
         if strict.enabled() {
             return Err(crate::error::audit_scanner_unavailable_strict(&format!(
@@ -242,12 +248,6 @@ pub(crate) fn enforce_audit_exit(
             )));
         }
         return Ok(());
-    }
-    if report.vulnerability_count > 0 {
-        return Err(crate::error::audit_found_vulnerabilities(
-            report.vulnerability_count,
-            report.packages_audited,
-        ));
     }
     Ok(())
 }

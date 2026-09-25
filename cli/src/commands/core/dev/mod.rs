@@ -3,8 +3,6 @@
 
 #[cfg(feature = "ai")]
 pub mod ai;
-#[cfg(feature = "ai")]
-pub mod ai_docker;
 #[cfg(feature = "app")]
 pub mod app;
 #[cfg(feature = "cicd")]

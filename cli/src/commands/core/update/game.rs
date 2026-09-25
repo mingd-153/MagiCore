@@ -2,9 +2,6 @@
 
 use anyhow::Result;
 
-use super::super::shared;
-use mgc_types::Ecosystem;
-
 pub async fn update(
     packages: Vec<String>,
     install: bool,
@@ -42,10 +39,10 @@ pub async fn update(
         )
         .await;
     }
-    // C0 ownership firewall (T0.3): the game update lane routes to the
-    // adapter, whose engines delegate (Bevy → cargo).
-    // (Tường lửa C0: lane update game gọi adapter, engine trong đó
-    // delegate.)
+    if engine == Some("bevy") {
+        anyhow::bail!("native Bevy dependency updates require Cargo.toml at the project root");
+    }
+    // Non-native engines are rejected by the ownership gate.
     crate::commands::dep_gate::gate(
         &crate::commands::dep_gate::DepContext::new(
             "game",
@@ -54,11 +51,10 @@ pub async fn update(
             None,
             crate::commands::dep_gate::DepOp::Update,
         ),
-        // Exact tool the bevy lane spawns (never None on a spawning lane).
-        Some("cargo"),
+        None,
         &compat,
         Some(&root.join(".magicore").join("exec.log")),
     )?;
-    let adapter = super::super::shared::core_adapter(&Ecosystem::Game);
-    shared::update(&*adapter, &root, packages, install).await
+    let _ = (packages, install);
+    anyhow::bail!("MagiCore does not yet own dependency updates for this game engine")
 }

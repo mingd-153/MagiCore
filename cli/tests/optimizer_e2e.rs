@@ -35,6 +35,12 @@ path = "src/lib.rs"
     )
     .unwrap();
 
+    std::fs::write(
+        project.join("Cargo.lock"),
+        "version = 4\n\n[[package]]\nname = \"test-rustflags-proof\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+
     std::fs::create_dir(project.join("src")).unwrap();
     std::fs::write(
         project.join("src/lib.rs"),
@@ -121,6 +127,12 @@ edition = "2021"
 name = "test_optimizer_bin"
 path = "src/main.rs"
 "#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        project.join("Cargo.lock"),
+        "version = 4\n\n[[package]]\nname = \"test-optimizer-bin\"\nversion = \"0.1.0\"\n",
     )
     .unwrap();
 

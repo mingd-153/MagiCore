@@ -209,7 +209,7 @@ pub fn atomic_write_locked(
 
     lock_failpoint("lock-after-temp-fsync");
     lock_failpoint("lock-before-rename");
-    replace_file(&tmp_path, dest).map_err(|e| {
+    atomic_replace_file(&tmp_path, dest).map_err(|e| {
         let _ = std::fs::remove_file(&tmp_path);
         LockfileError::WriteFailed(format!(
             "cannot replace '{}': {e} (old lock untouched)",
@@ -236,7 +236,11 @@ pub fn atomic_write_locked(
 /// REPLACE_EXISTING), never bare remove+rename.
 /// (Thay atomic: rename POSIX; Windows ReplaceFileW, không bao giờ
 /// remove+rename trần.)
-fn replace_file(tmp_path: &Path, dest: &Path) -> std::io::Result<()> {
+/// Atomically replace `dest` with a same-filesystem staging file.
+/// The caller is responsible for serialization/ownership of the destination.
+/// (Thay `dest` nguyên tử bằng staging file cùng filesystem; caller chịu
+/// trách nhiệm khóa và sở hữu destination.)
+pub fn atomic_replace_file(tmp_path: &Path, dest: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
         std::fs::rename(tmp_path, dest)

@@ -26,6 +26,8 @@ mgc-adapter-base = { workspace = true }
 mgc-exec = { workspace = true }
 mgc-store = { workspace = true }
 mgc-resolver = { workspace = true }
+libc = { workspace = true }
+chrono = { workspace = true }
 
 # Async
 async-trait.workspace = true
@@ -43,6 +45,7 @@ hex = { workspace = true }
 
 # Utilities
 dirs = { workspace = true }
+url = { workspace = true }
 which = "6.0"
 reqwest = { version = "0.12", features = ["json"] }
 mgc-lib-adapter = { path = "../lib" }
@@ -61,6 +64,9 @@ mockito = { workspace = true }
 # RN iOS-tier wiring test computes the podspec sha1 (pinned workspace dep).
 # (Test wiring tier iOS của RN tính sha1 podspec (workspace dep đã ghim).)
 sha1 = { workspace = true }
+base64 = { workspace = true }
+flate2 = { workspace = true }
+tar = { workspace = true }
 
 [[bench]]
 name = "perf_bench"

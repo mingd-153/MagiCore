@@ -1,5 +1,6 @@
 //! PackageAdapter implementation for library cores.
-//! Điều phối TS/Rust/Python lib mà không nhồi mọi logic vào lib.rs.
+//! Dispatches each supported language to its native resolver/materializer lane.
+//! Điều phối mỗi ngôn ngữ được hỗ trợ tới lane resolver/materializer native.
 
 use crate::language::{LibLanguage, detect_language, manifest_is_lib};
 use crate::manifest::{
@@ -8,10 +9,6 @@ use crate::manifest::{
     write_pom_manifest, write_pyproject_manifest,
 };
 use crate::native::engine::resolve_with_protocol;
-use crate::tooling::{
-    cargo_lock_versions, check_pip_allowed, dist_info_versions, exec_tool, go_module_path,
-    pip_binary, placeholder_id, version_from_manifest,
-};
 use anyhow::Result;
 use async_trait::async_trait;
 use mgc_lockfile::EcosystemTag;
@@ -20,14 +17,14 @@ use mgc_resolver::protocols::{
 };
 use mgc_types::adapter::{
     AddOptions, AuditReport, InstallOptions, InstallSummary, InstalledPackage, PackageAdapter,
-    PreparedAdd, UpdatedPackage,
+    PreparedAdd,
 };
 use mgc_types::capabilities::{
     ArtifactFetcher, AuditProvider, Capability, ContentStoreProvider, CoreIdent,
     DependencyResolver, LockfileProvider, ProjectDetector, ScaffoldProvider,
 };
 use mgc_types::{
-    DependencySpec, Ecosystem, Manifest, MgResult, PackageId, PackageName, ResolvedGraph, Version,
+    DependencySpec, Ecosystem, Manifest, MgResult, PackageId, PackageName, ResolvedGraph,
     VersionRange,
 };
 use std::path::{Path, PathBuf};
@@ -53,6 +50,10 @@ pub struct LibAdapter {
     /// (Chỉ cho Java: project mang build manifest nào (detect lúc dựng, khi
     /// đã biết project root).)
     java_kind: JavaManifestKind,
+    /// Project root is retained so Python ownership can be revalidated at
+    /// each operation; foreign lockfiles may appear after construction.
+    /// (Giữ project root để kiểm tra lại quyền sở hữu Python mỗi thao tác.)
+    project_root: PathBuf,
     /// .NET-only: the project's `<TargetFramework>` (first of
     /// `<TargetFrameworks>`), read at construction for multi-TFM group
     /// selection during native resolve. `None` = unknown → divergent
@@ -67,31 +68,83 @@ pub struct LibAdapter {
     pending_lock: std::sync::Mutex<Vec<mgc_lockfile::Package>>,
 }
 
+/// Native resolve-first lane for one lib language — the protocol engine
+/// that owns version selection (no toolchain spawn). `None` is impossible
+/// here (TS rides the embedded web delegate, not this enum).
+/// (Lane resolve-first native theo ngôn ngữ lib.)
+enum ResolveFirst {
+    Python,
+    Rust,
+    Go,
+    DotNet,
+    JavaPom,
+}
+
 impl LibAdapter {
     /// Capability manifest (Global Gate 1) — code-reality notes:
     /// - ProjectDetector: `detect_language`/`manifest_is_lib` — real.
     /// - ScaffoldProvider: `mgc create-lib <lang>` CLI lane — real.
-    /// - DependencyResolver: add/remove/update are REAL toolchain
-    ///   delegations (cargo add / pip install / go get; TS → web
-    ///   delegate); resolve delegates to the embedded web engine for TS
-    ///   and FAILS CLOSED (unsupported) for toolchain-owned languages —
-    ///   the old empty-graph Ok was a false success (P0-B).
+    /// - DependencyResolver: native CLI lanes resolve through the protocol
+    ///   engine; all manifest mutations commit through the journaled CLI
+    ///   gateway. Direct adapter add/remove/update methods fail closed.
+    ///   TS rides the embedded web engine.
     /// - LockfileProvider: real manifest writers (cargo/pyproject/web).
-    /// - ArtifactFetcher: delegated fetch — TS rides the web engine; the
-    ///   toolchains fetch during their install. Non-TS fetch FAILS
-    ///   CLOSED (P0-B): a bare Ok(()) faked "fetched" without work.
-    /// - ContentStoreProvider: crate::install::run_install with the
-    ///   shared store (install/shared_store.rs) — real.
+    /// - ArtifactFetcher: standalone `fetch(graph)` is supported only by
+    ///   TypeScript's web engine. Other native lanes fetch inside install
+    ///   and do not claim the independent capability.
+    /// - ContentStoreProvider: crate::install::run_install — native
+    ///   download → verify → CAS import → materialize the toolchain layout
+    ///   (cargo/pypi/go/maven/nuget), shared store for TS — real.
     /// - AuditProvider: per-language scanner dispatch — real.
     ///
     /// Bảng capability (Global Gate 1) — ghi chú theo code thật.
+    /// Base: native resolve/manifest/store operations; fetch remains an
+    /// install-internal step outside the standalone ArtifactFetcher trait.
     pub const CAPABILITIES: &'static [Capability] = &[
+        Capability::ProjectDetector,
+        Capability::ScaffoldProvider,
+        Capability::DependencyResolver,
+        Capability::LockfileProvider,
+        Capability::ContentStoreProvider,
+        Capability::AuditProvider,
+    ];
+
+    /// Java Gradle is a build program, not an MGC-owned dependency
+    /// manifest. It may be detected and audited, but registry mutation
+    /// capabilities stay unclaimed. (Gradle là chương trình build, không
+    /// phải manifest MGC sở hữu.)
+    pub const CAPABILITIES_JAVA_DELEGATED: &'static [Capability] = &[
+        Capability::ProjectDetector,
+        Capability::ScaffoldProvider,
+        Capability::AuditProvider,
+    ];
+
+    /// Python projects owned by another manager retain detection/scanning,
+    /// but do not claim native dependency mutation or installation.
+    /// (Project Python do manager khác sở hữu chỉ claim detect/audit.)
+    pub const CAPABILITIES_PYTHON_UNOWNED: &'static [Capability] = &[
+        Capability::ProjectDetector,
+        Capability::ScaffoldProvider,
+        Capability::AuditProvider,
+    ];
+
+    /// TS lane đi trên web engine nhúng — materializer (node_modules
+    /// layout) + lifecycle (scripts) THẬT qua engine đó, nên instance
+    /// TS claim thêm 2 capability này; ngôn ngữ toolchain-owned
+    /// (rust/python/go/...) KHÔNG claim (materialize/toolchain thuộc
+    /// toolchain của chúng — trung thực).
+    /// (The TS lane rides the embedded web engine — materializer +
+    /// lifecycle are real THROUGH that engine, so a TS instance claims
+    /// them; toolchain-owned languages do not.)
+    pub const CAPABILITIES_TS: &'static [Capability] = &[
         Capability::ProjectDetector,
         Capability::ScaffoldProvider,
         Capability::DependencyResolver,
         Capability::LockfileProvider,
         Capability::ArtifactFetcher,
         Capability::ContentStoreProvider,
+        Capability::Materializer,
+        Capability::LifecycleRunner,
         Capability::AuditProvider,
     ];
 
@@ -142,6 +195,7 @@ impl LibAdapter {
         Ok(Self {
             language,
             java_kind,
+            project_root: root.to_path_buf(),
             dotnet_tfm: read_dotnet_target_framework(root),
             web,
             pending_lock: std::sync::Mutex::new(Vec::new()),
@@ -171,6 +225,17 @@ impl CoreIdent for LibAdapter {
 
     fn ecosystem(&self) -> Ecosystem {
         Ecosystem::Lib
+    }
+}
+
+fn lock_ecosystem(language: LibLanguage) -> Option<EcosystemTag> {
+    match language {
+        LibLanguage::Rust => Some(EcosystemTag::Rust),
+        LibLanguage::Python => Some(EcosystemTag::Python),
+        LibLanguage::Go => Some(EcosystemTag::Go),
+        LibLanguage::Java => Some(EcosystemTag::Maven),
+        LibLanguage::DotNet => Some(EcosystemTag::NuGet),
+        LibLanguage::Ts => None,
     }
 }
 
@@ -223,15 +288,182 @@ impl ScaffoldProvider for LibAdapter {
     }
 }
 
+impl LibAdapter {
+    fn python_native_owned(&self) -> bool {
+        self.language != LibLanguage::Python
+            || crate::manifest::supports_native_python_project(&self.project_root)
+    }
+
+    fn require_python_native(&self, capability: &'static str) -> MgResult<()> {
+        self.require_python_native_at(&self.project_root, capability)
+    }
+
+    fn require_python_native_at(
+        &self,
+        project_root: &Path,
+        capability: &'static str,
+    ) -> MgResult<()> {
+        if self.language == LibLanguage::Python
+            && !crate::manifest::supports_native_python_project(project_root)
+        {
+            return Err(mgc_types::capabilities::unsupported_capability(
+                "lib",
+                capability,
+                "this Python project uses dependency sources or lockfiles not owned by the MGC native PEP 621 lane; migrate explicitly or use a separately selected compatibility manager",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Which native resolve-first lane owns this project (`Ok(None)` = the
+    /// embedded web delegate owns resolution, i.e. TS). Java-gradle fails
+    /// closed: build scripts are programs, not parseable manifests.
+    /// (Lane native resolve-first; TS do web delegate; gradle fail-closed.)
+    fn resolve_first_lane(&self) -> MgResult<Option<ResolveFirst>> {
+        self.require_python_native("resolve")?;
+        if self.web.is_some() {
+            return Ok(None);
+        }
+        Ok(match self.language {
+            LibLanguage::Python => Some(ResolveFirst::Python),
+            LibLanguage::Rust => Some(ResolveFirst::Rust),
+            LibLanguage::Go => Some(ResolveFirst::Go),
+            LibLanguage::DotNet => Some(ResolveFirst::DotNet),
+            LibLanguage::Java => match self.java_kind {
+                JavaManifestKind::Pom => Some(ResolveFirst::JavaPom),
+                // pom.xml is natively owned; gradle scripts are programs —
+                // fail closed instead of booking a mutation the disk never
+                // sees (write_manifest is a no-op there by design).
+                JavaManifestKind::Gradle | JavaManifestKind::None => {
+                    return Err(mgc_types::MgError::Other(
+                        "java add needs a pom.xml — gradle build scripts are programs, not parseable manifests (declare dependencies in a pom.xml for native add)"
+                            .to_string(),
+                    ));
+                }
+            },
+            LibLanguage::Ts => None,
+        })
+    }
+
+    /// Prepare ONE dependency natively — the protocol engine selects the
+    /// real version and stages lock entries for the install tail. No file is
+    /// written here; the CLI mutation gateway commits it under journal/lock.
+    /// (Resolve native một dependency — không bao giờ spawn toolchain.)
+    async fn resolve_first_add(
+        &self,
+        name: &PackageName,
+        range: Option<&VersionRange>,
+        opts: &AddOptions,
+    ) -> MgResult<Option<PreparedAdd>> {
+        let Some(kind) = self.resolve_first_lane()? else {
+            return Ok(None);
+        };
+        // Scratch carries the REQUESTED range (star when the user gave
+        // none) — the engine selects within it; the saved range stays
+        // pinned only when the request was unpinned.
+        let wanted: VersionRange = range.cloned().unwrap_or_else(VersionRange::star);
+        let mut scratch = Manifest::new("scratch", Ecosystem::Lib);
+        scratch.add_dep(
+            DependencySpec::new(name.clone(), wanted.clone()),
+            opts.dev,
+            opts.optional,
+            opts.peer,
+        );
+        let (protocol, tag, registry): (
+            Box<dyn mgc_resolver::protocols::RegistryProtocol>,
+            EcosystemTag,
+            &str,
+        ) = match kind {
+            ResolveFirst::Python => (
+                Box::new(PypiProtocol::from_env()),
+                EcosystemTag::Python,
+                "pypi://pypi.org",
+            ),
+            ResolveFirst::Rust => (
+                Box::new(CratesProtocol::from_env()),
+                EcosystemTag::Rust,
+                "crates://crates.io",
+            ),
+            ResolveFirst::Go => (
+                Box::new(GoModProtocol::from_env()),
+                EcosystemTag::Go,
+                "go://proxy.golang.org",
+            ),
+            ResolveFirst::DotNet => {
+                // Async constructor (service-index probe) — build
+                // before boxing.
+                let mut proto = NuGetProtocol::from_env().await;
+                if let Some(tfm) = self.dotnet_tfm.as_deref() {
+                    proto = proto.with_consumer_tfm(tfm);
+                }
+                (
+                    Box::new(proto),
+                    EcosystemTag::NuGet,
+                    "nuget://api.nuget.org",
+                )
+            }
+            ResolveFirst::JavaPom => (
+                Box::new(MavenProtocol::from_env()),
+                EcosystemTag::Maven,
+                "maven://repo.maven.apache.org",
+            ),
+        };
+        let resolution = resolve_with_protocol(protocol.as_ref(), tag, registry, &scratch).await?;
+        let resolved = resolution
+            .graph
+            .packages
+            .iter()
+            .find(|p| p.id.name_str() == name.as_str())
+            .ok_or_else(|| {
+                mgc_types::MgError::Other(format!(
+                    "native resolve returned no entry for '{}' — refusing to book an unresolved dep",
+                    name.as_str()
+                ))
+            })?;
+        // Python: `==` form (the pyproject writer trims it to a bare
+        // version and saves `name>=version`, which round-trips).
+        // Rust: bare version (the Cargo writer saves it verbatim —
+        // `serde_json = "1.0.140"`, caret-implied like `cargo add`).
+        // Go: bare version (the go.mod writer v-prefixes it —
+        // `require module v1.6.0`, like `go get`).
+        // (Python dạng `==`, Rust/Go version trần.)
+        let unpinned = wanted.is_star();
+        let pinned = match kind {
+            ResolveFirst::Python if unpinned => {
+                VersionRange::parse(&format!("=={}", resolved.id.version()))?
+            }
+            ResolveFirst::Rust
+            | ResolveFirst::Go
+            | ResolveFirst::DotNet
+            | ResolveFirst::JavaPom
+                if unpinned =>
+            {
+                VersionRange::parse(&resolved.id.version().to_string())?
+            }
+            _ => wanted,
+        };
+        *self.pending_lock.lock().expect("lib pending lock poisoned") = resolution.lock_packages;
+        Ok(Some(PreparedAdd {
+            id: PackageId::new(name.clone(), resolved.id.version().clone()),
+            range: pinned,
+        }))
+    }
+}
+
 #[async_trait]
 impl PackageAdapter for LibAdapter {
     fn capabilities(&self) -> &'static [Capability] {
-        Self::CAPABILITIES
+        match self.language {
+            LibLanguage::Ts => Self::CAPABILITIES_TS,
+            LibLanguage::Python if !self.python_native_owned() => Self::CAPABILITIES_PYTHON_UNOWNED,
+            LibLanguage::Java if self.java_kind != JavaManifestKind::Pom => {
+                Self::CAPABILITIES_JAVA_DELEGATED
+            }
+            _ => Self::CAPABILITIES,
+        }
     }
 
     fn manifest_identity(&self) -> Option<mgc_types::ManifestIdentity> {
-        // Source-verified manifest per language (parse_* entry points).
-        // (Manifest theo language — đúng file parser đọc.)
         let (language, format, relpath) = match self.language {
             LibLanguage::Ts => ("ts", "package.json", "package.json"),
             LibLanguage::Rust => ("rust", "Cargo.toml", "Cargo.toml"),
@@ -252,9 +484,6 @@ impl PackageAdapter for LibAdapter {
         })
     }
 
-    /// P0/F6: forward to the embedded web engine (TS delegate resolves
-    /// through it — its gate must arm from the same project).
-    /// (Chuyển cho web engine nhúng.)
     fn arm_age_gate_for(&self, project_root: &std::path::Path) -> MgResult<()> {
         if let Some(web) = &self.web {
             web.arm_age_gate_for(project_root)?;
@@ -263,18 +492,11 @@ impl PackageAdapter for LibAdapter {
     }
 
     fn manifest_owned(&self) -> bool {
-        // Every lib manifest is mgc-written — including go.mod (native add
-        // owns the require set; replace/exclude directives are preserved).
-        // (Mọi manifest lib do mgc viết — gồm go.mod.)
-        true
+        self.python_native_owned()
     }
 
     fn supports_native_update(&self) -> bool {
-        // prepare_add resolves every range natively for py/rs/go/dotnet/
-        // java-pom (gradle fails closed inside), and every writer
-        // round-trips pins (add + prune covered by manifest tests).
-        // (Mọi lane lib update native được.)
-        true
+        self.resolve_first_lane().is_ok()
     }
 
     async fn prepare_add(
@@ -284,164 +506,28 @@ impl PackageAdapter for LibAdapter {
         range: Option<&VersionRange>,
         opts: AddOptions,
     ) -> MgResult<PreparedAdd> {
+        self.require_python_native_at(project_root, "add")?;
         // Resolve-first (C0 FIX2 + native-add): the pyproject/Cargo writers
         // cannot persist star ranges (every saved dep needs a bound), so
         // booking an unpinned dep in memory faked a mutation the disk never
         // saw. Resolve the real version natively FIRST for EVERY range —
-        // star or explicit — so no path reaches the toolchain-spawning
-        // `add()` below on native-owned lanes; a resolve failure errors
-        // honestly instead of fake-adding or silently spawning.
-        // (Resolve-trước mọi range: không path nào chạm toolchain.)
-        enum ResolveFirst {
-            Python,
-            Rust,
-            Go,
-            DotNet,
-            JavaPom,
+        // star or explicit — through the shared native lane below (no
+        // toolchain is spawned on any path); a resolve failure errors
+        // honestly instead of fake-adding.
+        // (Resolve-trước mọi range qua lane native dùng chung — không
+        // spawn toolchain; fail trung thực thay vì add giả.)
+        if let Some(prepared) = self.resolve_first_add(name, range, &opts).await? {
+            return Ok(prepared);
         }
-        let resolve_first = if self.web.is_none() {
-            match self.language {
-                LibLanguage::Python => Some(ResolveFirst::Python),
-                LibLanguage::Rust => Some(ResolveFirst::Rust),
-                LibLanguage::Go => Some(ResolveFirst::Go),
-                LibLanguage::DotNet => Some(ResolveFirst::DotNet),
-                // pom.xml is natively owned; gradle scripts are programs —
-                // fail closed instead of booking a mutation the disk never
-                // sees (write_manifest is a no-op there by design).
-                LibLanguage::Java => match self.java_kind {
-                    JavaManifestKind::Pom => Some(ResolveFirst::JavaPom),
-                    JavaManifestKind::Gradle | JavaManifestKind::None => {
-                        return Err(mgc_types::MgError::Other(
-                            "java add needs a pom.xml — gradle build scripts are programs, not parseable manifests (declare dependencies in a pom.xml for native add)"
-                                .to_string(),
-                        ));
-                    }
-                },
-                _ => None,
-            }
-        } else {
-            None
-        };
-        if let Some(kind) = resolve_first {
-            // Scratch carries the REQUESTED range (star when the user gave
-            // none) — the engine selects within it; the saved range stays
-            // pinned only when the request was unpinned.
-            let wanted: VersionRange = range.cloned().unwrap_or_else(VersionRange::star);
-            let mut scratch = Manifest::new("scratch", Ecosystem::Lib);
-            scratch.add_dep(
-                DependencySpec::new(name.clone(), wanted.clone()),
-                opts.dev,
-                opts.optional,
-                opts.peer,
-            );
-            let (protocol, tag, registry): (
-                Box<dyn mgc_resolver::protocols::RegistryProtocol>,
-                EcosystemTag,
-                &str,
-            ) = match kind {
-                ResolveFirst::Python => (
-                    Box::new(PypiProtocol::from_env()),
-                    EcosystemTag::Python,
-                    "pypi://pypi.org",
-                ),
-                ResolveFirst::Rust => (
-                    Box::new(CratesProtocol::from_env()),
-                    EcosystemTag::Rust,
-                    "crates://crates.io",
-                ),
-                ResolveFirst::Go => (
-                    Box::new(GoModProtocol::from_env()),
-                    EcosystemTag::Go,
-                    "go://proxy.golang.org",
-                ),
-                ResolveFirst::DotNet => {
-                    // Async constructor (service-index probe) — build
-                    // before boxing.
-                    let mut proto = NuGetProtocol::from_env().await;
-                    if let Some(tfm) = self.dotnet_tfm.as_deref() {
-                        proto = proto.with_consumer_tfm(tfm);
-                    }
-                    (
-                        Box::new(proto),
-                        EcosystemTag::NuGet,
-                        "nuget://api.nuget.org",
-                    )
-                }
-                ResolveFirst::JavaPom => (
-                    Box::new(MavenProtocol::from_env()),
-                    EcosystemTag::Maven,
-                    "maven://repo.maven.apache.org",
-                ),
-            };
-            let resolution =
-                resolve_with_protocol(protocol.as_ref(), tag, registry, &scratch).await?;
-            let resolved = resolution
-                .graph
-                .packages
-                .iter()
-                .find(|p| p.id.name_str() == name.as_str())
-                .ok_or_else(|| {
-                    mgc_types::MgError::Other(format!(
-                        "native resolve returned no entry for '{}' — refusing to book an unresolved dep",
-                        name.as_str()
-                    ))
-                })?;
-            // Python: `==` form (the pyproject writer trims it to a bare
-            // version and saves `name>=version`, which round-trips).
-            // Rust: bare version (the Cargo writer saves it verbatim —
-            // `serde_json = "1.0.140"`, caret-implied like `cargo add`).
-            // Go: bare version (the go.mod writer v-prefixes it —
-            // `require module v1.6.0`, like `go get`).
-            // (Python dạng `==`, Rust/Go version trần.)
-            // Star requests save the resolved pin (writers cannot persist
-            // `*`); explicit requests keep the user's range — the resolved
-            // version still flows into the id + pending lock below.
-            let unpinned = wanted.is_star();
-            let pinned = match kind {
-                ResolveFirst::Python if unpinned => {
-                    VersionRange::parse(&format!("=={}", resolved.id.version()))?
-                }
-                ResolveFirst::Rust
-                | ResolveFirst::Go
-                | ResolveFirst::DotNet
-                | ResolveFirst::JavaPom
-                    if unpinned =>
-                {
-                    VersionRange::parse(&resolved.id.version().to_string())?
-                }
-                _ => wanted,
-            };
-            *self.pending_lock.lock().expect("lib pending lock poisoned") =
-                resolution.lock_packages;
-            return Ok(PreparedAdd {
-                id: PackageId::new(name.clone(), resolved.id.version().clone()),
-                range: pinned,
-            });
-        }
-        // Every other lane keeps the default dry-run placeholder path.
-        // (Lane khác giữ path placeholder dry-run mặc định.)
-        let exact = opts.exact;
-        let mut dry_opts = opts;
-        dry_opts.no_save = true;
-        let id = self.add(project_root, name, range, dry_opts).await?;
-        let saved_range = match range {
-            Some(range) if exact => {
-                let raw = range
-                    .as_str()
-                    .trim_start_matches('^')
-                    .trim_start_matches('~');
-                VersionRange::parse(raw)?
-            }
-            Some(range) => range.clone(),
-            None => VersionRange::star(),
-        };
-        Ok(PreparedAdd {
-            id,
-            range: saved_range,
-        })
+        Err(mgc_types::capabilities::unsupported_capability(
+            "lib",
+            "prepare add",
+            "this language has no native resolve-first add lane; no placeholder package version is returned",
+        ))
     }
 
     async fn parse_manifest(&self, project_root: &Path) -> MgResult<Manifest> {
+        self.require_python_native_at(project_root, "parse_manifest")?;
         if let Some(web) = &self.web {
             return web.parse_manifest(project_root).await;
         }
@@ -471,77 +557,19 @@ impl PackageAdapter for LibAdapter {
     }
 
     async fn list(&self, project_root: &Path) -> MgResult<Vec<InstalledPackage>> {
+        self.require_python_native_at(project_root, "list")?;
         if let Some(web) = &self.web {
             return web.list(project_root).await;
         }
+        if self.language != LibLanguage::Python {
+            return Err(mgc_types::capabilities::unsupported_capability(
+                "lib",
+                "list installed packages",
+                "this language lane does not yet maintain a verified installed-artifact inventory; manifest declarations and lock pins are not proof that packages are installed",
+            ));
+        }
         let manifest = self.parse_manifest(project_root).await?;
-        let installed: std::collections::HashMap<String, String> = match self.language {
-            LibLanguage::Rust => cargo_lock_versions(project_root).into_iter().collect(),
-            LibLanguage::Python => dist_info_versions(project_root).into_iter().collect(),
-            // go.mod already holds pinned versions — manifest versions ARE
-            // the installed set (no separate lock for Go).
-            // go.mod giữ version đã ghim — version trong manifest chính là
-            // tập đã cài (Go không có lock tách riêng).
-            LibLanguage::Go => manifest
-                .all_dependencies()
-                .map(|dep| {
-                    (
-                        dep.name.as_str().to_string(),
-                        dep.range
-                            .satisfying_version()
-                            .map(|v| v.to_string())
-                            .unwrap_or_default(),
-                    )
-                })
-                .collect(),
-            // Java/.NET installed-set truth lives in the lockfiles —
-            // read the pins straight from the scanner's readers.
-            // Tập đã cài Java/.NET nằm trong lockfile — đọc ghim thẳng
-            // từ reader của scanner.
-            LibLanguage::Java => {
-                let raw = std::fs::read_to_string(
-                    project_root
-                        .join("gradle")
-                        .join("verification-metadata.xml"),
-                )
-                .unwrap_or_default();
-                mgc_audit::scanners::read_gradle_verification_metadata(&raw)
-                    .0
-                    .into_iter()
-                    .map(|pin| (pin.name, pin.version))
-                    .collect()
-            }
-            LibLanguage::DotNet => {
-                let raw = std::fs::read_to_string(project_root.join("packages.lock.json"))
-                    .unwrap_or_default();
-                let pins = mgc_audit::scanners::read_packages_lock(&raw)
-                    .map(|(pins, _)| pins)
-                    .unwrap_or_default();
-                pins.into_iter()
-                    .map(|pin| (pin.name, pin.version))
-                    .collect()
-            }
-            LibLanguage::Ts => unreachable!("ts handled by web delegate"),
-        };
-        Ok(manifest
-            .all_dependencies()
-            .map(|dep| {
-                let version = installed
-                    .get(dep.name.as_str())
-                    .and_then(|v| Version::parse(v).ok())
-                    .or_else(|| dep.range.satisfying_version());
-                InstalledPackage {
-                    id: PackageId::new(
-                        dep.name.clone(),
-                        version.unwrap_or_else(|| Version::new(0, 1, 0)),
-                    ),
-                    path: PathBuf::new(),
-                    integrity: None,
-                    is_direct: true,
-                    is_dev: dep.dev,
-                }
-            })
-            .collect())
+        crate::install::native_python_installed_packages(project_root, &manifest)
     }
 
     fn set_dedupe_pref(&self, enabled: bool) {
@@ -563,10 +591,19 @@ impl LockfileProvider for LibAdapter {
     /// and the web delegate for TS. Dẫn chứng: bộ viết manifest thật —
     /// cargo/pyproject (crate::manifest) và web delegate cho TS.
     fn probe_lockfile_provider(&self) -> MgResult<()> {
+        self.require_python_native("write_manifest")?;
+        if self.language == LibLanguage::Java && self.java_kind != JavaManifestKind::Pom {
+            return Err(mgc_types::capabilities::unsupported_capability(
+                "lib",
+                "write_manifest",
+                "Java Gradle build scripts are not an MGC-owned manifest",
+            ));
+        }
         Ok(())
     }
 
     async fn write_manifest(&self, project_root: &Path, manifest: &Manifest) -> MgResult<()> {
+        self.require_python_native_at(project_root, "write_manifest")?;
         if let Some(web) = &self.web {
             return web.write_manifest(project_root, manifest).await;
         }
@@ -599,19 +636,25 @@ impl LockfileProvider for LibAdapter {
 
 #[async_trait]
 impl DependencyResolver for LibAdapter {
-    /// Evidence: add/remove/update really delegate (cargo/pip/go; TS →
-    /// web delegate); resolve rides the web engine for TS and FAILS
-    /// CLOSED for toolchain-owned languages (P0-B — no empty-graph
-    /// false success).
-    /// Dẫn chứng: add/remove/update ủy quyền thật (cargo/pip/go; TS qua
-    /// web delegate); resolve đi trên web engine cho TS và FAIL-CLOSED
-    /// cho ngôn ngữ do toolchain sở hữu (P0-B — cấm thành công giả
-    /// graph rỗng).
+    /// Direct adapter mutations inherit the fail-closed defaults; the CLI
+    /// mutation gateway owns all dependency writes. Registry resolution is
+    /// supported only by explicitly implemented native lanes.
+    /// Mutation trực tiếp qua adapter fail-closed; gateway CLI sở hữu mọi
+    /// lần ghi dependency. Chỉ lane native có implementation mới resolve.
     fn probe_dependency_resolver(&self) -> MgResult<()> {
+        self.require_python_native("resolve")?;
+        if self.language == LibLanguage::Java && self.java_kind != JavaManifestKind::Pom {
+            return Err(mgc_types::capabilities::unsupported_capability(
+                "lib",
+                "resolve",
+                "Java Gradle build scripts are not an MGC-native dependency manifest",
+            ));
+        }
         Ok(())
     }
 
     async fn resolve(&self, manifest: &Manifest) -> MgResult<ResolvedGraph> {
+        self.require_python_native("resolve")?;
         if let Some(web) = &self.web {
             return web.resolve(manifest).await;
         }
@@ -734,210 +777,6 @@ impl DependencyResolver for LibAdapter {
             LibLanguage::Ts => unreachable!("ts handled by web delegate"),
         }
     }
-
-    async fn add(
-        &self,
-        project_root: &Path,
-        name: &PackageName,
-        range: Option<&VersionRange>,
-        opts: AddOptions,
-    ) -> MgResult<PackageId> {
-        // DELEGATED: add runs the native toolchain for real (cargo add /
-        // pip install / go get) — mgc orchestrates only, it does not own
-        // this dependency lifecycle.
-        // (DELEGATED: add chạy toolchain gốc thật (cargo add / pip
-        // install / go get) — mgc chỉ điều phối, không sở hữu lifecycle
-        // dependency này.)
-        if let Some(web) = &self.web {
-            return web.add(project_root, name, range, opts).await;
-        }
-        if opts.no_save {
-            return Ok(placeholder_id(name, range));
-        }
-        match self.language {
-            LibLanguage::Rust => {
-                let mut args = vec!["add".to_string()];
-                if let Some(r) = range.filter(|r| !r.is_star()) {
-                    args.push(format!("{}@{}", name.as_str(), r.as_str()));
-                } else {
-                    args.push(name.as_str().to_string());
-                }
-                exec_tool(project_root, "cargo", &args)?;
-                exec_tool(project_root, "cargo", &["fetch".to_string()])?;
-                Ok(version_from_manifest(project_root, name, LibLanguage::Rust)
-                    .map(|v| PackageId::new(name.clone(), v))
-                    .unwrap_or_else(|| placeholder_id(name, range)))
-            }
-            LibLanguage::Python => {
-                check_pip_allowed(project_root, name.as_str())?;
-                exec_tool(
-                    project_root,
-                    pip_binary(),
-                    &["install".to_string(), name.as_str().to_string()],
-                )?;
-                Ok(
-                    version_from_manifest(project_root, name, LibLanguage::Python)
-                        .map(|v| PackageId::new(name.clone(), v))
-                        .unwrap_or_else(|| placeholder_id(name, range)),
-                )
-            }
-            // Go: `go get module@version` — the go toolchain rewrites
-            // go.mod; mgc only delegates (never edits go.mod itself).
-            // Go: `go get module@version` — go toolchain viết lại go.mod;
-            // mgc chỉ ủy quyền (không tự sửa go.mod).
-            LibLanguage::Go => {
-                let target = match range.filter(|r| !r.is_star()) {
-                    Some(r) => format!(
-                        "{}@v{}",
-                        go_module_path(project_root, name),
-                        r.satisfying_version()
-                            .unwrap_or_else(|| Version::new(0, 0, 0))
-                    ),
-                    None => go_module_path(project_root, name),
-                };
-                exec_tool(project_root, "go", &["get".to_string(), target])?;
-                Ok(version_from_manifest(project_root, name, LibLanguage::Go)
-                    .map(|v| PackageId::new(name.clone(), v))
-                    .unwrap_or_else(|| placeholder_id(name, range)))
-            }
-            // Java/.NET lifecycle add is not wired (P2 audit parity
-            // scope) — the honest manual step, never a silent no-op.
-            // Add lifecycle Java/.NET chưa nối (scope parity audit P2)
-            // — bước thủ công trung thực, không no-op âm thầm.
-            LibLanguage::Java | LibLanguage::DotNet => {
-                return Err(mgc_types::MgError::Other(
-                    "java/.NET dependency add runs through gradle/dotnet directly (mgc audit reads the lockfile; lifecycle add lands with the java/.NET install lanes)"
-                        .to_string(),
-                ));
-            }
-            LibLanguage::Ts => unreachable!("ts handled by web delegate"),
-        }
-    }
-
-    async fn remove(&self, project_root: &Path, name: &PackageName) -> MgResult<()> {
-        // DELEGATED: remove runs the native toolchain for real (cargo
-        // remove / pip uninstall) — mgc orchestrates only, it does not
-        // own this dependency lifecycle.
-        // (DELEGATED: remove chạy toolchain gốc thật (cargo remove / pip
-        // uninstall) — mgc chỉ điều phối, không sở hữu lifecycle
-        // dependency này.)
-        if let Some(web) = &self.web {
-            return web.remove(project_root, name).await;
-        }
-        match self.language {
-            LibLanguage::Rust => {
-                exec_tool(
-                    project_root,
-                    "cargo",
-                    &["remove".to_string(), name.as_str().to_string()],
-                )?;
-            }
-            LibLanguage::Python => {
-                check_pip_allowed(project_root, name.as_str())?;
-                exec_tool(
-                    project_root,
-                    pip_binary(),
-                    &[
-                        "uninstall".to_string(),
-                        "-y".to_string(),
-                        name.as_str().to_string(),
-                    ],
-                )?;
-            }
-            // Go: drop from go.mod via `go mod tidy` after removing the
-            // import — mgc cannot know the full module path from the
-            // display name, so surface the honest manual step.
-            // Go: rút khỏi go.mod bằng `go mod tidy` sau khi bỏ import —
-            // mgc không biết path module đầy đủ từ tên hiển thị, nên nêu
-            // bước thủ công trung thực.
-            LibLanguage::Go => {
-                return Err(mgc_types::MgError::Other(
-                    "go module removal requires the full module path — remove the import then run `go mod tidy`".to_string(),
-                ));
-            }
-            // Java/.NET lifecycle remove is not wired — honest manual
-            // step (gradle/dotnet own dependency edits).
-            // Remove lifecycle Java/.NET chưa nối — bước thủ công trung
-            // thực (gradle/dotnet sở hữu việc sửa dependency).
-            LibLanguage::Java | LibLanguage::DotNet => {
-                return Err(mgc_types::MgError::Other(
-                    "java/.NET dependency removal runs through gradle/dotnet directly (mgc audit reads the lockfile; lifecycle remove lands with the java/.NET install lanes)"
-                        .to_string(),
-                ));
-            }
-            LibLanguage::Ts => unreachable!("ts handled by web delegate"),
-        }
-        Ok(())
-    }
-
-    async fn update(
-        &self,
-        project_root: &Path,
-        name: Option<&PackageName>,
-    ) -> MgResult<Vec<UpdatedPackage>> {
-        // DELEGATED: update runs the native toolchain for real (cargo
-        // update / pip install --upgrade / go get -u) — mgc orchestrates
-        // only, it does not own this dependency lifecycle.
-        // (DELEGATED: update chạy toolchain gốc thật (cargo update / pip
-        // install --upgrade / go get -u) — mgc chỉ điều phối, không sở
-        // hữu lifecycle dependency này.)
-        if let Some(web) = &self.web {
-            return web.update(project_root, name).await;
-        }
-        match self.language {
-            LibLanguage::Rust => {
-                let mut args = vec!["update".to_string()];
-                if let Some(n) = name {
-                    args.push(n.as_str().to_string());
-                }
-                exec_tool(project_root, "cargo", &args)?;
-            }
-            LibLanguage::Python => {
-                if let Some(n) = name {
-                    check_pip_allowed(project_root, n.as_str())?;
-                } else {
-                    return Err(mgc_types::MgError::Other(
-                        "pip update-all is not allowed — name a package (Q9 allowlist)".to_string(),
-                    ));
-                }
-                let mut args = vec!["install".to_string(), "--upgrade".to_string()];
-                if let Some(n) = name {
-                    args.push(n.as_str().to_string());
-                }
-                exec_tool(project_root, pip_binary(), &args)?;
-            }
-            // Go: `go get -u` upgrades the named module (update-all is
-            // refused — same honest constraint as pip).
-            // Go: `go get -u` nâng module được nêu (update-all bị từ
-            // chối — ràng buộc trung thực như pip).
-            LibLanguage::Go => {
-                let Some(n) = name else {
-                    return Err(mgc_types::MgError::Other(
-                        "go update-all is not allowed — name a module (go toolchain policy)"
-                            .to_string(),
-                    ));
-                };
-                let target = go_module_path(project_root, n);
-                exec_tool(
-                    project_root,
-                    "go",
-                    &["get".to_string(), "-u".to_string(), target],
-                )?;
-            }
-            // Java/.NET lifecycle update is not wired — honest manual
-            // step, same constraint as go/pip update-all.
-            // Update lifecycle Java/.NET chưa nối — bước thủ công trung
-            // thực, ràng buộc như update-all go/pip.
-            LibLanguage::Java | LibLanguage::DotNet => {
-                return Err(mgc_types::MgError::Other(
-                    "java/.NET dependency updates run through gradle/dotnet directly (mgc audit reads the lockfile; lifecycle update lands with the java/.NET install lanes)"
-                        .to_string(),
-                ));
-            }
-            LibLanguage::Ts => unreachable!("ts handled by web delegate"),
-        }
-        Ok(vec![])
-    }
 }
 
 #[async_trait]
@@ -949,7 +788,14 @@ impl ArtifactFetcher for LibAdapter {
     /// CAS); lane non-TS FAIL-CLOSED (P0-B): Ok(()) trần tuyên bố "đã
     /// fetch" trong khi không tải gì cả.
     fn probe_artifact_fetcher(&self) -> MgResult<()> {
-        Ok(())
+        if let Some(web) = &self.web {
+            return web.probe_artifact_fetcher();
+        }
+        Err(mgc_types::capabilities::unsupported_capability(
+            "lib",
+            "fetch",
+            "this native language downloads and verifies artifacts inside install; standalone fetch is not exposed",
+        ))
     }
 
     async fn fetch(&self, graph: &ResolvedGraph) -> MgResult<()> {
@@ -984,6 +830,14 @@ impl ContentStoreProvider for LibAdapter {
     /// Dẫn chứng: crate::install::run_install với shared store
     /// (install/shared_store.rs — cache do mgc quản theo toolchain).
     fn probe_content_store(&self) -> MgResult<()> {
+        self.require_python_native("install")?;
+        if self.language == LibLanguage::Java && self.java_kind != JavaManifestKind::Pom {
+            return Err(mgc_types::capabilities::unsupported_capability(
+                "lib",
+                "install",
+                "this Java build lane has no MGC-native dependency graph",
+            ));
+        }
         Ok(())
     }
 
@@ -993,22 +847,34 @@ impl ContentStoreProvider for LibAdapter {
         project_root: &Path,
         opts: InstallOptions,
     ) -> MgResult<InstallSummary> {
+        self.require_python_native_at(project_root, "install")?;
+        if self.language == LibLanguage::Java && self.java_kind != JavaManifestKind::Pom {
+            return Err(mgc_types::capabilities::unsupported_capability(
+                "lib",
+                "install",
+                "Java Gradle build scripts are not an MGC-native dependency manifest",
+            ));
+        }
         // Use new install pipeline (install/mod.rs)
         // Dùng install pipeline mới (install/mod.rs)
         let mut lock_packages =
             std::mem::take(&mut *self.pending_lock.lock().expect("lib pending lock poisoned"));
-        if lock_packages.is_empty() && !graph.packages.is_empty() {
-            // Lock-short-circuit installs never resolved in this process,
-            // so no markers were staged — read them from the project
-            // lockfile (it satisfied the manifest, else the graph would
-            // not come from it). Without this, hash-backed verifiers
-            // (go sumdb, nuget sha512, maven sha1) see no integrity
-            // source on every reinstall-from-lock.
-            // (Install từ lock không resolve: đọc marker từ lockfile.)
-            if let Ok(content) = std::fs::read_to_string(project_root.join("mgc.lock"))
-                && let Ok(locked) = mgc_lockfile::parser::parse_lockfile(&content)
-            {
-                lock_packages = locked.packages;
+        if !graph.packages.is_empty() {
+            // Delta operations (add after an existing lock) stage markers
+            // only for their newly resolved subgraph. Fill the rest from
+            // the existing exact lock pins; lock-short-circuit installs use
+            // the same path. Never install a graph entry without its own
+            // matching lock/integrity record.
+            // (Delta resolve chỉ stage subgraph mới; bổ sung entry còn lại
+            // từ lock hiện hữu đúng version.)
+            if let Some(ecosystem) = lock_ecosystem(self.language) {
+                let existing = crate::install::read_existing_lock(project_root)?;
+                crate::install::complete_lock_packages_from_existing(
+                    graph,
+                    ecosystem,
+                    &mut lock_packages,
+                    &existing,
+                );
             }
         }
         crate::install::run_install(
@@ -1051,12 +917,47 @@ impl AuditProvider for LibAdapter {
 // Unsupported probes/defaults from mgc_types::capabilities.
 // Capability chưa claim — impl rỗng kế thừa probe/default fail-closed
 // từ mgc_types::capabilities.
-impl mgc_types::capabilities::LifecycleRunner for LibAdapter {}
 impl mgc_types::capabilities::OptimizerProvider for LibAdapter {}
-impl mgc_types::capabilities::Materializer for LibAdapter {}
 impl mgc_types::capabilities::SimulatorProvider for LibAdapter {}
 impl mgc_types::capabilities::DeviceProvider for LibAdapter {}
 impl mgc_types::capabilities::DeployProvider for LibAdapter {}
+/// Materializer claim — TS-only: the embedded web engine materializes
+/// the node_modules layout for real; toolchain-owned languages keep
+/// their own materialization (cargo target / venv) — unclaimed there.
+/// (Claim materializer — chỉ TS: web engine nhúng materialize layout
+/// node_modules thật; ngôn ngữ toolchain-owned giữ materialize của
+/// toolchain mình — không claim.)
+impl mgc_types::capabilities::Materializer for LibAdapter {
+    fn probe_materializer(&self) -> MgResult<()> {
+        match &self.web {
+            Some(web) => web.probe_materializer(),
+            None => Err(mgc_types::capabilities::unsupported_capability(
+                "lib",
+                "materialize",
+                "toolchain-owned lib languages materialize through their own toolchain; mgc owns resolve→lock→fetch→store",
+            )),
+        }
+    }
+}
+
+/// LifecycleRunner claim — TS-only: scripts lifecycle (run/build/test)
+/// executes through the embedded web engine for TS; other languages run
+/// the language toolchain via the mgc-exec allowlist instead — unclaimed.
+/// (Claim lifecycle — chỉ TS: scripts lifecycle chạy qua web engine nhúng;
+/// ngôn ngữ khác chạy toolchain qua allowlist mgc-exec — không claim.)
+impl mgc_types::capabilities::LifecycleRunner for LibAdapter {
+    fn probe_lifecycle_runner(&self) -> MgResult<()> {
+        match &self.web {
+            Some(web) => web.probe_lifecycle_runner(),
+            None => Err(mgc_types::capabilities::unsupported_capability(
+                "lib",
+                "lifecycle",
+                "toolchain-owned lib languages run build/test through the language toolchain (mgc-exec allowlist), not a web-style scripts lifecycle",
+            )),
+        }
+    }
+}
+
 impl mgc_types::capabilities::ModelRuntimeProvider for LibAdapter {}
 
 // P0-4 (2026-09-15): Result<Option<_>> — Ok(None) means "not a lib
@@ -1096,4 +997,18 @@ pub fn adapter_for_with_chain(
         token,
         fallbacks,
     )?))
+}
+
+/// Construct a LibAdapter for an EXPLICIT language — the ai core's PyPI
+/// lane needs the lib python engine regardless of root-detect heuristics
+/// (an ai project's pyproject.toml must route to Python, never guess).
+/// (Dựng LibAdapter theo ngôn ngữ TƯỜNG MINH — lane PyPI của core ai cần
+/// engine python của lib bất chấp heuristic detect theo root.)
+pub fn adapter_for_language(
+    language: LibLanguage,
+    root: &Path,
+    registry_url: Option<String>,
+    token: Option<String>,
+) -> Result<LibAdapter> {
+    LibAdapter::for_language(language, root, registry_url, token)
 }

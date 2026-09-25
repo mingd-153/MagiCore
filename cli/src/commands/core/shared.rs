@@ -7,7 +7,7 @@ use mgc_lockfile::project_lock::ProjectWriteLock;
 use mgc_types::adapter::{AddOptions, InstallOptions, PackageAdapter};
 use mgc_types::{
     DependencySpec, Ecosystem, Manifest, PackageId, PackageName, ResolvedGraph, ResolvedPackage,
-    Version, VersionRange, adapter::PreparedAdd,
+    Version, adapter::PreparedAdd,
 };
 use mgc_ui::{
     add_multi_bar, create_multi_progress, create_progress_bar, create_spinner, info, style_cmd,
@@ -27,6 +27,27 @@ fn install_command_for_adapter(adapter: &dyn PackageAdapter) -> &'static str {
     }
 
     "mgc install"
+}
+
+/// Dependency mutations may only proceed when MagiCore owns the manifest
+/// and its native update engine. Never fall back to a provider PM here.
+/// (Chỉ cho phép mutation khi MGC sở hữu manifest/engine; không gọi PM ngoài.)
+fn ensure_native_manifest_owner(manifest_owned: bool, operation: &str) -> Result<()> {
+    if manifest_owned {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "native MagiCore manifest owner is required for '{operation}'; provider-tool mutations are disabled"
+    )
+}
+
+/// Reject legacy update paths that may spawn a provider package manager.
+/// (Từ chối update legacy có thể spawn package manager của provider.)
+fn ensure_native_update_owner(native_update: bool) -> Result<()> {
+    if native_update {
+        return Ok(());
+    }
+    anyhow::bail!("native MagiCore update engine is unavailable; provider-tool update is disabled")
 }
 
 /// Writer-lock acquire timeout: mgc.toml [lock].acquire_timeout_ms,
@@ -68,6 +89,15 @@ pub(crate) async fn begin_dependency_mutation(
     })?;
     adopt_legacy_journal(root, &write_lock)?;
     recover_interrupted_remove(adapter, root, &write_lock).await?;
+    if matches!(
+        op,
+        MutationOperation::Add
+            | MutationOperation::Remove
+            | MutationOperation::Update
+            | MutationOperation::AuditFix
+    ) {
+        mgc_lockfile::ensure_lockfile_mutation_allowed(&root.join("mgc.lock"))?;
+    }
     Ok(write_lock)
 }
 
@@ -99,77 +129,6 @@ pub(crate) fn ensure_no_pending_remove_journal(root: &Path, lock: &ProjectWriteL
     ))
 }
 
-/// Run the REAL toolchain add for a toolchain-owned manifest (go.mod,
-/// platformio.ini — the tool is the sole writer), then re-read the file.
-/// Fail closed when the tool reports success but the dep is absent from
-/// the re-read file — never report a phantom add.
-/// (Chạy add thật của toolchain rồi đọc lại file; tool báo xong mà file
-/// không có dep thì lỗi, không báo thêm giả.)
-#[allow(clippy::too_many_arguments)]
-async fn tool_add_real(
-    adapter: &dyn PackageAdapter,
-    root: &Path,
-    name: &PackageName,
-    range: Option<&VersionRange>,
-    opts: AddOptions,
-    before: Option<&Manifest>,
-    after: &mut Option<Manifest>,
-    added_ids: &mut Vec<PackageId>,
-    added_packages: &mut Vec<AddedPackage>,
-    changed_any: &mut bool,
-    dev: bool,
-    optional: bool,
-    peer: bool,
-    group: &str,
-) -> Result<()> {
-    let mut real_opts = opts;
-    real_opts.no_save = false;
-    let pkg_id = adapter.add(root, name, range, real_opts).await?;
-    let fresh = adapter.parse_manifest(root).await?;
-    if !fresh
-        .all_dependencies()
-        .any(|d| d.name.as_str() == name.as_str())
-    {
-        return Err(crate::error::tool_manifest_mismatch(
-            name.as_str(),
-            adapter.name(),
-            "recorded",
-        ));
-    }
-    let was_present = before
-        .map(|m| {
-            m.all_dependencies()
-                .any(|d| d.name.as_str() == name.as_str())
-        })
-        .unwrap_or(false);
-    *after = Some(fresh);
-    if was_present {
-        info(&format!(
-            "  {} already present in {}, skipping",
-            name.as_str(),
-            group
-        ));
-        return Ok(());
-    }
-    *changed_any = true;
-    added_ids.push(pkg_id.clone());
-    added_packages.push(AddedPackage {
-        id: pkg_id.clone(),
-        dev,
-        optional,
-        peer,
-    });
-    info(&format!(
-        "  {}@{} added to {} (by {})",
-        pkg_id.name_str(),
-        pkg_id.version(),
-        group,
-        adapter.name()
-    ));
-    success(&format!("Added {}", name.as_str()));
-    Ok(())
-}
-
 #[allow(dead_code)]
 #[allow(clippy::too_many_arguments)]
 pub async fn add(
@@ -189,6 +148,7 @@ pub async fn add(
     if packages.len() > MAX_PACKAGES {
         return Err(crate::error::too_many_packages(packages.len(), "add"));
     }
+    ensure_native_manifest_owner(adapter.manifest_owned(), "add")?;
     // Mutation gateway (P0): the manifest write below and the install
     // tail must not interleave with a concurrent remove/update/install
     // on the same project — hold the writer lock for the whole op
@@ -207,16 +167,9 @@ pub async fn add(
         "dependencies"
     };
     mgc_ui::info(&format!("Adding {} package(s) to {}...", total, group));
-    // Toolchain-owned manifest (go.mod, platformio.ini — manifest_owned
-    // false): the provider tool is the SOLE writer, so booking the add in
-    // memory would fake a mutation the tool never sees. Run the REAL
-    // toolchain add and re-read the file instead.
-    // (Manifest do toolchain sở hữu: chạy add thật rồi đọc lại file.)
-    let toolchain_owned = !adapter.manifest_owned();
-
     let manifest_before_add = if !no_save {
         let started_at = std::time::Instant::now();
-        let manifest = adapter.parse_manifest(root).await.ok();
+        let manifest = Some(adapter.parse_manifest(root).await?);
         profile_install_mark("add_parse_manifest_before", started_at);
         manifest
     } else {
@@ -228,7 +181,7 @@ pub async fn add(
     // rewrites an owned manifest (toolchain-owned files are the tool's
     // transactional domain — mgc must not roll them back).
     // (Snapshot pre-image cho journal add — chỉ stage khi mgc tự viết.)
-    let add_snapshot = if !no_save && !toolchain_owned {
+    let add_snapshot = if !no_save {
         manifest_before_add
             .as_ref()
             .map(|manifest| {
@@ -262,27 +215,6 @@ pub async fn add(
             no_save,
             global,
         };
-        if toolchain_owned && !no_save {
-            tool_add_real(
-                adapter,
-                root,
-                &name,
-                range.as_ref(),
-                opts,
-                manifest_before_add.as_ref(),
-                &mut manifest_after_add,
-                &mut added_ids,
-                &mut added_packages,
-                &mut changed_any,
-                dev,
-                optional,
-                peer,
-                group,
-            )
-            .await?;
-            spinner.finish_and_clear();
-            continue;
-        }
         let add_started_at = std::time::Instant::now();
         let PreparedAdd {
             id: pkg_id,
@@ -348,7 +280,7 @@ pub async fn add(
     }
 
     if !no_save {
-        if changed_any && !toolchain_owned {
+        if changed_any {
             if let Some(manifest) = manifest_after_add.as_ref() {
                 if let Some(snapshot) = add_snapshot.as_ref() {
                     stage_mutation_journal(
@@ -396,12 +328,6 @@ pub async fn add(
                     .await?;
                 }
             }
-        } else if changed_any {
-            // Toolchain-owned: the tool already rewrote its own file —
-            // mgc must NOT rewrite it (formatting/ownership belongs to
-            // the tool; the lib/go writer is a no-op by design).
-            // (Tool đã tự viết file của nó — mgc không viết lại.)
-            info("Manifest updated by the toolchain (mgc does not rewrite it).");
         } else {
             info("Manifest unchanged.");
         }
@@ -413,19 +339,6 @@ pub async fn add(
     }
 
     if !no_save && install {
-        // Toolchain-owned manifests (go.mod, platformio.ini, …) whose
-        // adapter has NO mgc resolver (probe fails: iot/game delegated
-        // lanes): the provider tool already installed during
-        // tool_add_real above — routing through the mgc-native install
-        // tail would die in resolve ("does not support 'resolve'").
-        // Lanes WITH a native resolver (lib Go) keep the normal tail so
-        // mgc.lock still gets written. Probe is network-free by contract.
-        // (Manifest do toolchain sở hữu mà adapter không có resolver:
-        // bỏ qua tail install của mgc — tool đã cài.)
-        if toolchain_owned && adapter.probe_dependency_resolver().is_err() {
-            info("Installed by the toolchain (mgc does not own this lifecycle).");
-            return Ok(());
-        }
         info("Installing added packages...");
         let tail: Result<()> = async {
             if !try_install_added_packages_from_lock(
@@ -485,34 +398,6 @@ pub async fn add(
     Ok(())
 }
 
-/// Run the REAL toolchain remove for a toolchain-owned manifest, then
-/// re-read and verify each dep is GONE. Fail closed on a phantom
-/// removal (tool ok, dep still present).
-/// (Chạy remove thật của toolchain rồi đọc lại verify đã mất.)
-async fn tool_remove_real(
-    adapter: &dyn PackageAdapter,
-    root: &Path,
-    packages: Vec<String>,
-) -> Result<()> {
-    for package in &packages {
-        let name = PackageName::new(package)?;
-        adapter.remove(root, &name).await?;
-        let fresh = adapter.parse_manifest(root).await?;
-        if fresh
-            .all_dependencies()
-            .any(|d| d.name.as_str() == name.as_str())
-        {
-            return Err(crate::error::tool_manifest_mismatch(
-                name.as_str(),
-                adapter.name(),
-                "removed but still present",
-            ));
-        }
-        success(&format!("Removed {}", name.as_str()));
-    }
-    Ok(())
-}
-
 #[allow(dead_code)]
 pub async fn remove(
     adapter: &dyn PackageAdapter,
@@ -524,6 +409,7 @@ pub async fn remove(
     if packages.len() > MAX_PACKAGES {
         return Err(crate::error::too_many_packages(packages.len(), "remove"));
     }
+    ensure_native_manifest_owner(adapter.manifest_owned(), "remove")?;
     info(&format!("Removing {} package(s)...", packages.len()));
     // Single mutation gateway: lock + stale-journal recovery. Direct
     // lock acquisition that forgets recovery is a bug (P0).
@@ -542,15 +428,6 @@ pub async fn remove(
     // manifest lẫn lock; store/cache chỉ thêm, không xóa.)
     let snapshot =
         MutationSnapshot::capture(&manifest, root, &write_lock, MutationOperation::Remove)?;
-    // Toolchain-owned manifest (go.mod, platformio.ini): the provider
-    // tool is the SOLE writer — run the REAL toolchain remove per dep,
-    // re-read, and verify absence (fail closed on a phantom removal).
-    // Bookkeeping-only removal here would either fake success or die on
-    // the (correctly failing) mgc writer.
-    // (Manifest do toolchain sở hữu: chạy remove thật rồi đọc lại.)
-    if !adapter.manifest_owned() {
-        return tool_remove_real(adapter, root, packages).await;
-    }
     let mut removed_any = false;
     for package in &packages {
         let _ = PackageName::new(package)?;
@@ -1655,6 +1532,7 @@ pub(crate) async fn native_update(
     packages: Vec<String>,
     install: bool,
 ) -> Result<()> {
+    ensure_native_manifest_owner(adapter.manifest_owned(), "update")?;
     let write_lock = begin_dependency_mutation(adapter, root, MutationOperation::Update).await?;
     native_update_locked(adapter, root, packages, install, &write_lock).await
 }
@@ -1666,6 +1544,7 @@ pub(crate) async fn native_update_locked(
     install: bool,
     write_lock: &ProjectWriteLock,
 ) -> Result<()> {
+    ensure_native_manifest_owner(adapter.manifest_owned(), "update")?;
     let mut manifest = adapter.parse_manifest(root).await?;
     // Pre-image for the update journal (P0-3): staged only when mgc
     // owns the manifest rewrite (toolchain-owned files stay in the
@@ -1754,36 +1633,27 @@ pub(crate) async fn native_update_locked(
         info("All packages are up to date");
         return Ok(());
     }
-    let update_journaled = if adapter.manifest_owned() {
-        stage_mutation_journal(root, adapter, &packages, &update_snapshot, write_lock)?;
-        true
-    } else {
-        false
-    };
-    if update_journaled {
-        journaled_step(
-            adapter,
-            root,
-            &update_snapshot,
-            write_lock,
-            "before-manifest-write",
-            adapter.write_manifest(root, &manifest),
-            "after-manifest-write",
-        )
-        .await?;
-        journaled_step(
-            adapter,
-            root,
-            &update_snapshot,
-            write_lock,
-            "before-post-image",
-            async { record_post_image(root, &manifest, write_lock) },
-            "after-post-image",
-        )
-        .await?;
-    } else {
-        adapter.write_manifest(root, &manifest).await?;
-    }
+    stage_mutation_journal(root, adapter, &packages, &update_snapshot, write_lock)?;
+    journaled_step(
+        adapter,
+        root,
+        &update_snapshot,
+        write_lock,
+        "before-manifest-write",
+        adapter.write_manifest(root, &manifest),
+        "after-manifest-write",
+    )
+    .await?;
+    journaled_step(
+        adapter,
+        root,
+        &update_snapshot,
+        write_lock,
+        "before-post-image",
+        async { record_post_image(root, &manifest, write_lock) },
+        "after-post-image",
+    )
+    .await?;
     for pkg in &updated {
         info(&format!(
             "  {}: {} → {}",
@@ -1807,19 +1677,16 @@ pub(crate) async fn native_update_locked(
         .await
         {
             Ok(()) => {
-                if update_journaled && let Err(e) = finish_mutation_journal(root, write_lock) {
+                if let Err(e) = finish_mutation_journal(root, write_lock) {
                     return rollback_mutation(adapter, root, &update_snapshot, e, write_lock).await;
                 }
             }
             Err(e) => {
-                if update_journaled {
-                    return rollback_mutation(adapter, root, &update_snapshot, e, write_lock).await;
-                }
-                return Err(e);
+                return rollback_mutation(adapter, root, &update_snapshot, e, write_lock).await;
             }
         }
     } else {
-        if update_journaled && let Err(e) = finish_mutation_journal(root, write_lock) {
+        if let Err(e) = finish_mutation_journal(root, write_lock) {
             return rollback_mutation(adapter, root, &update_snapshot, e, write_lock).await;
         }
         info(&format!(
@@ -1836,6 +1703,7 @@ pub async fn update(
     packages: Vec<String>,
     install: bool,
 ) -> Result<()> {
+    ensure_native_update_owner(adapter.supports_native_update())?;
     // Mutation gateway (P0): same contract as add/remove — the manifest
     // writes below (native or toolchain-spawned) and the install tails
     // run under one writer lock, AFTER stale-journal recovery.
@@ -1843,82 +1711,9 @@ pub async fn update(
     let write_lock = begin_dependency_mutation(adapter, root, MutationOperation::Update).await?;
     // Native update (resolve-latest + mgc-side manifest edit + native
     // install tail, zero spawn) for adapters that own the whole lane.
-    // Legacy adapter.update (toolchain spawn) below stays for the rest.
+    // Legacy adapter.update may spawn a provider PM and is forbidden.
     // (Update native cho adapter sở hữu lane.)
-    if adapter.supports_native_update() {
-        return native_update_locked(adapter, root, packages, install, &write_lock).await;
-    }
-    if packages.is_empty() {
-        let spinner = create_spinner("  Resolving latest versions...");
-        let updated = adapter.update(root, None).await?;
-        spinner.finish_and_clear();
-        if updated.is_empty() {
-            info("All packages are up to date");
-        } else {
-            for pkg in &updated {
-                info(&format!(
-                    "  {}: {} → {}",
-                    pkg.name, pkg.from_version, pkg.to_version
-                ));
-            }
-            success(&format!("Updated {} package(s)", updated.len()));
-            if install {
-                info("Installing updated packages...");
-                install_with_adapter_locked(
-                    adapter,
-                    root,
-                    install_command_for_adapter(adapter),
-                    false,
-                    mgc_types::adapter::InstallOptions {
-                        incremental: true,
-                        ..Default::default()
-                    },
-                    &write_lock,
-                )
-                .await?;
-            } else {
-                info(&format!(
-                    "Run '{}' to install updates",
-                    style_cmd(install_command_for_adapter(adapter))
-                ));
-            }
-        }
-    } else {
-        for name in &packages {
-            let pn = PackageName::new(name)?;
-            let spinner = create_spinner(&format!("  Updating {}...", name));
-            let updated = adapter.update(root, Some(&pn)).await?;
-            spinner.finish_and_clear();
-            for pkg in &updated {
-                info(&format!(
-                    "  {}: {} → {}",
-                    pkg.name, pkg.from_version, pkg.to_version
-                ));
-            }
-        }
-        success("Update complete");
-        if install {
-            info("Installing updated packages...");
-            install_with_adapter_locked(
-                adapter,
-                root,
-                install_command_for_adapter(adapter),
-                false,
-                mgc_types::adapter::InstallOptions {
-                    incremental: true,
-                    ..Default::default()
-                },
-                &write_lock,
-            )
-            .await?;
-        } else {
-            info(&format!(
-                "Run '{}' to install updates",
-                style_cmd(install_command_for_adapter(adapter))
-            ));
-        }
-    }
-    Ok(())
+    native_update_locked(adapter, root, packages, install, &write_lock).await
 }
 
 #[allow(dead_code)]
@@ -2339,16 +2134,33 @@ fn profile_install_mark(label: &str, started_at: std::time::Instant) {
 #[allow(dead_code)]
 fn load_locked_graph(
     project_root: &Path,
-    _adapter_name: &str,
+    adapter_name: &str,
     manifest: &Manifest,
 ) -> Result<Option<ResolvedGraph>> {
     // P0-3 (2026-09-10 audit): silent seeding từ legacy lockfile ĐÃ GỠ —
     // mgc.lock là nguồn chân lý duy nhất; migration phải tường minh qua
     // `mgc import`. Thiếu mgc.lock → resolver tự resolve (không có rival
     // lockfile nào được đọc trên đường vận hành).
-    let Some(lock) = read_checked_lockfile(project_root)? else {
+    let Some(mut lock) = read_checked_lockfile(project_root)? else {
         return Ok(None);
     };
+    let owner_core = lock_owner_core(project_root, adapter_name)?;
+    let has_sibling_owner = lock.packages.iter().any(|package| {
+        package
+            .owner_core
+            .as_deref()
+            .is_some_and(|owner| owner != owner_core)
+    });
+    // A lock with explicit ownership is scoped to the active core before
+    // matching or materialization. Legacy ownerless locks remain usable only
+    // while the document is genuinely single-owner; once sibling ownership
+    // exists, ambiguous entries fail closed rather than leaking across cores.
+    // (Scope lock theo core trước khi match/install; lock hỗn hợp không đoán
+    // owner cho entry cũ thiếu nhãn.)
+    lock.packages.retain(|package| {
+        package.owner_core.as_deref() == Some(owner_core.as_str())
+            || (package.owner_core.is_none() && !has_sibling_owner)
+    });
     // Issue #4: Re-enable lock.core, lock.version, lock.resolution checks after lockfile v2 migration
     // let state_ok = matches!(lock.resolution.state.as_str(), "locked" | "installing");
     // if lock.core != adapter_name || !state_ok || lock.version != 1 || lock.packages.is_empty() {
@@ -2362,6 +2174,27 @@ fn load_locked_graph(
         return Ok(None);
     }
     Ok(Some(graph_from_lockfile(&lock)?))
+}
+
+fn lock_owner_core(project_root: &Path, adapter_name: &str) -> Result<String> {
+    let marker = mgc_config::project::ProjectConfig::read_core_marker(project_root)
+        .map_err(|error| anyhow::anyhow!("cannot determine lock owner core: {error}"))?;
+    let core = match marker {
+        Some(core) => core,
+        None => match mgc_config::project::ProjectConfig::load(project_root)
+            .map_err(|error| anyhow::anyhow!("cannot read project core owner: {error}"))?
+        {
+            Some(config) => config.ecosystem.trim().to_ascii_lowercase(),
+            None => match adapter_name {
+                "cloud" => "clo".to_string(),
+                other => other.trim().to_ascii_lowercase(),
+            },
+        },
+    };
+    if !mgc_config::project::ProjectConfig::KNOWN_CORES.contains(&core.as_str()) {
+        anyhow::bail!("refusing to read mgc.lock for unknown core owner '{core}'");
+    }
+    Ok(core)
 }
 
 fn read_checked_lockfile(project_root: &Path) -> Result<Option<Lockfile>> {
@@ -2888,141 +2721,19 @@ pub fn ai_project_root() -> Result<PathBuf> {
         .ok_or_else(crate::error::ai_project_not_detected)
 }
 
-/// ai: chọn tool theo lock file DUY NHẤT — uv.lock/pyproject → uv,
-/// requirements → pip. KHÔNG scan PATH, KHÔNG spawn probe (`--version`,
-/// `which`): tool probing trước gate là bypass C0 (P0 fix) — gate chạy
-/// trước, spawn thật (hoặc lỗi tool-missing rõ ràng) xảy ra sau gate.
-/// (ai: pick tool by lock file ONLY — no PATH scan, no spawn probe.)
+/// Refuse legacy Python manifests until MagiCore owns their complete
+/// dependency lifecycle. There is deliberately no compatibility runner.
+/// Từ chối manifest Python legacy khi MGC chưa sở hữu lifecycle;
+/// không có compatibility runner.
 #[cfg(feature = "ai")]
-pub fn ai_pick_tool(root: &std::path::Path) -> &'static str {
-    if root.join("uv.lock").exists() || root.join("pyproject.toml").exists() {
-        "uv"
+pub fn require_native_ai_python(root: &std::path::Path, operation: &str) -> Result<()> {
+    if mgc_ai_adapter::uses_native_python_lane(root) {
+        Ok(())
     } else {
-        "pip"
+        Err(crate::error::native_dependency_engine_unavailable(
+            "ai", "python", operation,
+        ))
     }
-}
-
-/// Actual provider tool a lib mutating verb (add/remove/update) will
-/// spawn for this language — MUST match adapters/lib/src/adapter.rs
-/// arm-for-arm: Rust→cargo, Python→pip (the adapter hardcodes pip — uv
-/// NEVER spawns here, so the gate set excludes uv), Go→go, Ts→None
-/// (native web engine, no spawn), Java/DotNet→None (no runner; the gate
-/// fails Unsupported before any spawn).
-/// (Tool thật lane lib sẽ spawn theo ngôn ngữ — khớp từng arm adapter.)
-#[cfg(feature = "lib")]
-pub fn lib_edit_tool(lang: mgc_lib_adapter::LibLanguage) -> Option<&'static str> {
-    match lang {
-        mgc_lib_adapter::LibLanguage::Ts => None,
-        mgc_lib_adapter::LibLanguage::Rust => Some("cargo"),
-        mgc_lib_adapter::LibLanguage::Python => Some("pip"),
-        mgc_lib_adapter::LibLanguage::Go => Some("go"),
-        mgc_lib_adapter::LibLanguage::Java | mgc_lib_adapter::LibLanguage::DotNet => None,
-    }
-}
-
-/// Actual provider tool an iot lane will spawn for the detected
-/// framework: esp32-rust→cargo, platformio→pio, zephyr→west.
-/// (Tool thật lane iot sẽ spawn theo framework.)
-#[cfg(feature = "iot")]
-pub fn iot_framework_tool(framework: &str) -> Option<&'static str> {
-    match framework {
-        "esp32-rust" => Some("cargo"),
-        "platformio" => Some("pio"),
-        "zephyr" => Some("west"),
-        _ => None,
-    }
-}
-
-/// Post-gate pip binary resolution: the gate already approved the pip
-/// owner (`pip` ~ `pip3` alias); this picks the binary that EXISTS for
-/// the real spawn — `pip` preferred, `pip3` fallback, else `pip` so a
-/// missing tool surfaces a clear spawn error. Filesystem lookup ONLY
-/// (no `--version` probe spawn), `split_paths` for Windows correctness,
-/// and called strictly AFTER the gate.
-/// (Resolve binary pip SAU gate: chỉ lookup filesystem, không spawn probe.)
-#[cfg(feature = "ai")]
-fn resolve_ai_tool(tool: &str) -> &str {
-    if tool != "pip" {
-        return tool;
-    }
-    fn on_path(bin: &str) -> bool {
-        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
-            .map(|dir| dir.join(bin))
-            .any(|p| p.is_file())
-    }
-    if on_path("pip") || !on_path("pip3") {
-        "pip"
-    } else {
-        "pip3"
-    }
-}
-
-#[cfg(feature = "ai")]
-pub fn ai_run_tool(root: &std::path::Path, tool: &str, args: &[String]) -> Result<()> {
-    let tool = resolve_ai_tool(tool);
-    let opts = mgc_exec::prelude::ExecOptions {
-        cwd: Some(root.to_path_buf()),
-        log_path: Some(root.join(".magicore").join("exec.log")),
-        clean_env: true,
-        ..Default::default()
-    };
-    mgc_exec::prelude::run_inherited(tool, args, &opts)
-        .map_err(|e| crate::error::tool_failed(tool, &e))?;
-    Ok(())
-}
-
-#[cfg(feature = "ai")]
-pub fn ai_run_tool_with_env(
-    root: &std::path::Path,
-    tool: &str,
-    args: &[String],
-    env: Vec<(String, String)>,
-) -> Result<()> {
-    let tool = resolve_ai_tool(tool);
-    let opts = mgc_exec::prelude::ExecOptions {
-        cwd: Some(root.to_path_buf()),
-        log_path: Some(root.join(".magicore").join("exec.log")),
-        env,
-        clean_env: true,
-        ..Default::default()
-    };
-    mgc_exec::prelude::run_inherited(tool, args, &opts)
-        .map_err(|e| crate::error::tool_failed(tool, &e))?;
-    Ok(())
-}
-
-/// Shared pypi store env (B-series, 2026-09-12): PIP_CACHE_DIR and
-/// UV_CACHE_DIR point inside the mgc store so ai + lib python lanes
-/// share the same wheel/sdist bytes machine-wide.
-/// Env store pypi chia sẻ (B-series): PIP_CACHE_DIR và UV_CACHE_DIR trỏ
-/// vào store mgc để lane ai + lib python chia sẻ cùng byte wheel/sdist
-/// trên toàn máy.
-#[cfg(feature = "ai")]
-pub fn shared_pypi_store_env() -> Result<Vec<(String, String)>> {
-    let home = dirs::home_dir()
-        .ok_or_else(|| anyhow::anyhow!("cannot resolve home dir for the shared store"))?;
-    let pypi_root = home.join(".magicore").join("store").join("pypi");
-    std::fs::create_dir_all(&pypi_root)
-        .map_err(|e| anyhow::anyhow!("cannot create shared pypi store: {e}"))?;
-    let root = pypi_root.display().to_string();
-    Ok(vec![
-        ("PIP_CACHE_DIR".to_string(), root.clone()),
-        ("UV_CACHE_DIR".to_string(), root),
-    ])
-}
-
-#[cfg(feature = "ai")]
-pub fn ai_run_tool_capture(root: &std::path::Path, tool: &str, args: &[String]) -> Result<String> {
-    let tool = resolve_ai_tool(tool);
-    let opts = mgc_exec::prelude::ExecOptions {
-        cwd: Some(root.to_path_buf()),
-        log_path: Some(root.join(".magicore").join("exec.log")),
-        clean_env: true,
-        ..Default::default()
-    };
-    let report = mgc_exec::prelude::run(tool, args, &opts)
-        .map_err(|e| crate::error::tool_failed(tool, &e))?;
-    Ok(report.stdout_tail)
 }
 
 /// ai: entry script qua python3 (Q20, allowlist §5.1) — `mgc dev` ai.

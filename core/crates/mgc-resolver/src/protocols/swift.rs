@@ -1,5 +1,5 @@
-//! Swift Package Manager native engine (SwiftPM registry + git deps).
-//! Engine native Swift Package Manager (SwiftPM registry + dep git).
+//! Swift registry archive resolver. Git-source dependencies are parsed but fail closed.
+//! Resolver archive Swift registry. Dependency nguồn Git được parse nhưng fail-closed.
 //!
 //! Registry spec: version list at `{registry}/{scope}/{name}.json`
 //! (`{"versions":[...]}`), source archive at
@@ -9,11 +9,9 @@
 //! mirrors SwiftPM: the HIGHEST matching version wins. Transitive deps are
 //! read from the `Package.swift` inside the archive (hand-rolled scan of
 //! `.package(...)` declarations — no Swift toolchain needed during
-//! resolve). Git-only deps (`.package(url:)`) resolve through
-//! `git clone --depth 1 --branch {tag}` via mgc-exec (allowlisted), with
-//! the commit SHA recorded as provenance (`git-commit:` marker); tags are
-//! discovered with `git ls-remote --tags` and the highest matching tag is
-//! selected. Materialization is the mgc checkouts layout
+//! resolve). Git-only deps (`.package(url:)`) are rejected until a native
+//! HTTP Git transport exists; MagiCore never spawns `git` for dependency
+//! operations. Materialization is the mgc checkouts layout
 //! `{swift_root}/checkouts/{identity}-{version}` plus a SwiftPM-compatible
 //! `Package.resolved` export.
 //! Spec registry: danh sách version tại `{registry}/{scope}/{name}.json`
@@ -23,10 +21,9 @@
 //! registry thiếu checksum là lỗi integrity fail-closed). Selection theo
 //! SwiftPM: version CAO NHẤT khớp thắng. Dep bắc cầu đọc từ `Package.swift`
 //! bên trong archive (quét thủ công khai báo `.package(...)` — không cần
-//! toolchain Swift khi resolve). Dep chỉ-git (`.package(url:)`) resolve qua
-//! `git clone --depth 1 --branch {tag}` bằng mgc-exec (đã allowlist), SHA
-//! commit được ghi làm provenance (marker `git-commit:`); tag dò bằng
-//! `git ls-remote --tags` và tag cao nhất khớp được chọn. Materialize là
+//! toolchain Swift khi resolve). Dep chỉ-Git bị từ chối cho tới khi có
+//! HTTP Git transport native; MagiCore không spawn `git` trong dependency
+//! operations. Materialize là
 //! layout checkouts của mgc `{swift_root}/checkouts/{identity}-{version}`
 //! cộng export `Package.resolved` tương thích SwiftPM.
 
@@ -265,65 +262,17 @@ impl SwiftRegistryProtocol {
         })
     }
 
-    /// Git-only resolve (name is a scheme-less host path or a file:// URL).
-    /// Resolve chỉ-git (name là host path không scheme hoặc URL file://).
-    async fn resolve_git(&self, name: &str, range: &str) -> MgResult<ResolvedEntry> {
-        let url = git_name_to_url(name);
-        // Default-block (§13.3): external git transport runs ONLY behind
-        // the explicit opt-in + host allowlist — checked BEFORE any
-        // network (even tag listing would leak intent to the remote).
-        // (Chặn mặc định: transport git ngoài chỉ chạy khi opt-in tường
-        // minh + allowlist host — kiểm tra TRƯỚC mọi network.)
-        git_transport_env_allowed(&url)?;
-        // Tag requirement → select the highest matching remote tag; branch /
-        // revision → use as-is (fail-closed on fetch errors).
-        // (Yêu cầu tag → chọn tag remote cao nhất khớp; branch / revision →
-        // dùng nguyên bản (lỗi fetch fail-closed).)
-        let ref_ = match parse_requirement_kind(range) {
-            RequirementKind::Branch(b) => b,
-            RequirementKind::Revision(r) => r,
-            RequirementKind::Version => {
-                // A `tag:` prefix is a version requirement over tags — strip
-                // it before range matching.
-                // (Tiền tố `tag:` là yêu cầu version trên tag — bỏ trước
-                // khi khớp khoảng.)
-                let tag_range = range.trim().strip_prefix("tag:").unwrap_or(range);
-                let tag = highest_matching_tag(&url, tag_range)?;
-                tag.ok_or_else(|| {
-                    MgError::Other(format!(
-                        "no tag of {url} matches range '{range}' (fail-closed)"
-                    ))
-                })?
-            }
-        };
-        let workdir = temp_checkout_dir(name)?;
-        clone_shallow(&url, &ref_, &workdir)?;
-        let commit = run_git_capture(&["rev-parse", "HEAD"], Some(&workdir))?
-            .trim()
-            .to_string();
-        if commit.len() != 40 || !commit.chars().all(|c| c.is_ascii_hexdigit()) {
-            return Err(MgError::Integrity(format!(
-                "git rev-parse returned no commit SHA for {url} @ {ref_} (fail-closed)"
-            )));
-        }
-        let manifest_text = std::fs::read_to_string(workdir.join("Package.swift"))
-            .map_err(|e| MgError::Other(format!("read cloned Package.swift: {e}")))?;
-        let deps = parse_swift_package_deps(&manifest_text)
-            .into_iter()
-            .map(|d| (d.dep_name(), d.requirement_text()))
-            .collect();
-        let _ = std::fs::remove_dir_all(&workdir);
-        Ok(ResolvedEntry {
-            name: name.to_string(),
-            version: ref_.clone(),
-            deps,
-            artifact_url: url.clone(),
-            sha256: String::new(),
-            extra_markers: vec![
-                "swift-git".to_string(),
-                format!("git-commit:{commit}"),
-                format!("git-ref:{ref_}"),
-            ],
+    /// Git URLs are parsed for manifest compatibility but are not fetched via
+    /// an external Git executable. Native HTTP Git transport is not shipped.
+    /// URL Git được parse để tương thích manifest nhưng không fetch bằng Git
+    /// executable bên ngoài; native HTTP Git transport chưa được triển khai.
+    async fn resolve_git(&self, name: &str, _range: &str) -> MgResult<ResolvedEntry> {
+        Err(MgError::Unsupported {
+            core: "app",
+            capability: "native Swift Git dependency transport",
+            guidance: format!(
+                "Swift dependency '{name}' uses a Git source; MagiCore refuses to spawn Git until native Git transport is implemented"
+            ),
         })
     }
 
@@ -351,84 +300,18 @@ impl SwiftRegistryProtocol {
         Ok(dir)
     }
 
-    /// Materialize a GIT entry: `git clone --depth 1 --branch {ref}` into
-    /// `{swift_root}/checkouts/{repo}-{version}`, then verify the checkout's
-    /// HEAD against the resolve-time provenance SHA when one is recorded
-    /// (a moved tag fails closed). Without a recorded SHA the checkout is
-    /// produced but flagged unverified (loud warning — no silent trust).
-    /// Materialize entry GIT: `git clone --depth 1 --branch {ref}` vào
-    /// `{swift_root}/checkouts/{repo}-{version}`, rồi xác minh HEAD của
-    /// checkout theo SHA provenance lúc resolve khi có ghi (tag bị dịch là
-    /// fail-closed). Không có SHA đã ghi thì checkout vẫn tạo nhưng bị đánh
-    /// dấu chưa xác minh (cảnh báo ỒN ÀO — không tin tưởng âm thầm).
+    /// Git materialization is unsupported until native transport exists.
     pub fn materialize_git(
         &self,
-        entry: &ResolvedEntry,
-        expected_sha: Option<&str>,
-        swift_root: &Path,
+        _entry: &ResolvedEntry,
+        _expected_sha: Option<&str>,
+        _swift_root: &Path,
     ) -> MgResult<PathBuf> {
-        let dir = swift_root.join("checkouts").join(format!(
-            "{}-{}",
-            git_repo_name(&entry.name),
-            entry.version
-        ));
-        let url = git_name_to_url(&entry.name);
-        let ref_ = entry
-            .extra_markers
-            .iter()
-            .find_map(|m| m.strip_prefix("git-ref:"))
-            .unwrap_or(&entry.version)
-            .to_string();
-        if dir.exists() {
-            // Idempotent re-run: verify the existing checkout instead of
-            // clobbering it.
-            // (Chạy lại idempotent: xác minh checkout có sẵn thay vì ghi đè.)
-            let head = run_git_capture(&["rev-parse", "HEAD"], Some(&dir))?
-                .trim()
-                .to_string();
-            if let Some(expected) = expected_sha
-                && head != expected
-            {
-                return Err(MgError::Integrity(format!(
-                    "checkout {} moved: expected {expected}, found {head} (fail-closed)",
-                    dir.display()
-                )));
-            }
-            return Ok(dir);
-        }
-        std::fs::create_dir_all(swift_root.join("checkouts"))?;
-        // Same transport gate as resolve, on the CLONE path only: a
-        // hand-edited lockfile must not smuggle a blocked URL into the
-        // clone machinery. Re-verifying an existing checkout above stays
-        // a local read.
-        // (Cùng cổng transport như resolve, chỉ trên đường CLONE.)
-        git_transport_env_allowed(&url)?;
-        match clone_shallow(&url, &ref_, &dir) {
-            Ok(()) => {}
-            Err(e) => {
-                // A partially-created clone must not poison later runs.
-                // (Clone tạo dở không được làm hỏng lần chạy sau.)
-                let _ = std::fs::remove_dir_all(&dir);
-                return Err(e);
-            }
-        }
-        let head = run_git_capture(&["rev-parse", "HEAD"], Some(&dir))?
-            .trim()
-            .to_string();
-        match expected_sha {
-            Some(expected) if head != expected => {
-                return Err(MgError::Integrity(format!(
-                    "{} checkout SHA {head} does not match the resolve-time pin {expected} (fail-closed)",
-                    entry.name
-                )));
-            }
-            Some(_) => {}
-            None => eprintln!(
-                "WARNING: no resolve-time SHA recorded for {} @ {} — checkout pinned at {head} UNVERIFIED",
-                entry.name, entry.version
-            ),
-        }
-        Ok(dir)
+        Err(MgError::Unsupported {
+            core: "app",
+            capability: "native Swift Git dependency materialization",
+            guidance: "this lock entry requires Git transport; MagiCore refuses to invoke the Git executable".to_string(),
+        })
     }
 
     /// Export a SwiftPM-compatible (v2) `Package.resolved` from resolved
@@ -596,10 +479,8 @@ impl RegistryProtocol for SwiftRegistryProtocol {
     }
 }
 
-/// Git-name detection: registry names are `scope/name` (exactly one slash,
-/// dot-less scope); anything with a host-like first segment or a `.git`
-/// suffix is a git-only dependency. `file://` is NOT recognized: local
-/// paths never enter the git transport (default-block, §13.3).
+/// Detect Git-source names only so resolution can reject them without
+/// spawning an external Git process.
 /// Dò tên git: tên registry là `scope/name`; mọi tên có segment đầu kiểu
 /// host hoặc đuôi `.git` là dep chỉ-git. `file://` KHÔNG được nhận diện.
 pub fn is_git_name(name: &str) -> bool {
@@ -618,22 +499,6 @@ pub fn is_git_name(name: &str) -> bool {
             .is_some_and(|first| first.contains('.') && !first.contains(".."))
 }
 
-/// Map a graph-edge name back to a clone URL. Full URLs ride through
-/// UNCHANGED so the transport gate below sees the real scheme (a
-/// rewritten `https://http://…` would dodge the http/file rejection).
-/// Ánh xạ tên cạnh graph về URL clone. URL đầy đủ giữ nguyên để cổng
-/// transport thấy scheme thật.
-fn git_name_to_url(name: &str) -> String {
-    if name.contains("://") {
-        return name.to_string();
-    }
-    if name.ends_with(".git") {
-        format!("https://{name}")
-    } else {
-        format!("https://{name}.git")
-    }
-}
-
 /// Map a `.package(url:)` value to the graph-edge name (https scheme +
 /// `.git` stripped; anything else rides through unchanged and fails
 /// explicitly at resolve time — no silent acceptance).
@@ -650,102 +515,24 @@ pub fn git_url_to_name(url: &str) -> String {
     }
 }
 
-/// Git-transport policy (§13.3, default-block): pure decision function
-/// over an explicit opt-in — unit-testable without environment.
-/// - transport MUST be `https` (file/http/ssh/git rejected);
-/// - the host MUST NOT be loopback/private/link-local/unspecified
-///   (DNS-rebinding guard; residual redirect risk is documented and
-///   in-process transport remains Phase E);
-/// - `allow_git_deps` must be true AND the host must appear in `hosts`
-///   (empty allowlist allows nothing).
-///
-/// Chính sách transport git (chặn mặc định): hàm thuần trên opt-in
-/// tường minh.
+/// Git transport is disabled until a native HTTP implementation exists;
+/// no allowlist or environment variable enables an external Git process.
+/// Transport Git bị tắt cho tới khi có native HTTP implementation.
 pub fn git_transport_allowed(
-    url: &str,
-    allow_git_deps: bool,
-    hosts: &[&str],
+    _url: &str,
+    _allow_git_deps: bool,
+    _hosts: &[&str],
 ) -> Result<(), MgError> {
-    if !allow_git_deps {
-        return Err(MgError::Other(
-            "git dependencies are blocked by default — set MGC_GIT_DEPS=1 and MGC_GIT_HOSTS=<host>,... to opt in explicitly (in-process git transport is Phase E)".to_string(),
-        ));
-    }
-    let parsed =
-        url::Url::parse(url).map_err(|_| MgError::Other(format!("unparseable git URL '{url}'")))?;
-    if parsed.scheme() != "https" {
-        return Err(MgError::Other(format!(
-            "git URL scheme '{}' is blocked — only https:// (no file://, http://, ssh:) (fail-closed)",
-            parsed.scheme()
-        )));
-    }
-    if !parsed.username().is_empty() {
-        return Err(MgError::Other(format!(
-            "git URL '{url}' carries userinfo — blocked (fail-closed)"
-        )));
-    }
-    let Some(host) = parsed.host_str() else {
-        return Err(MgError::Other(format!("git URL '{url}' has no host")));
-    };
-    let host_lower = host.trim_end_matches('.').to_ascii_lowercase();
-    if host_lower == "localhost" {
-        return Err(MgError::Other(format!(
-            "git host '{host}' is loopback — blocked (fail-closed)"
-        )));
-    }
-    if let Ok(ip) = host_lower.parse::<std::net::IpAddr>()
-        && is_blocked_ip(&ip)
-    {
-        return Err(MgError::Other(format!(
-            "git host '{host}' is not a public address — blocked (fail-closed)"
-        )));
-    }
-    let allowed = hosts
-        .iter()
-        .any(|h| h.trim_end_matches('.').eq_ignore_ascii_case(&host_lower));
-    if !allowed {
-        return Err(MgError::Other(format!(
-            "git host '{host}' is not in the allowlist (MGC_GIT_HOSTS) — blocked (fail-closed)"
-        )));
-    }
-    Ok(())
-}
-
-/// Non-public addresses: loopback, unspecified, private, link-local
-/// (either family).
-/// (Địa chỉ không-public: loopback, unspecified, private, link-local.)
-fn is_blocked_ip(ip: &std::net::IpAddr) -> bool {
-    match ip {
-        std::net::IpAddr::V4(v4) => {
-            v4.is_loopback() || v4.is_unspecified() || v4.is_private() || v4.is_link_local()
-        }
-        std::net::IpAddr::V6(v6) => {
-            v6.is_loopback()
-                || v6.is_unspecified()
-                || v6.is_unique_local()
-                || v6.is_unicast_link_local()
-        }
-    }
-}
-
-/// Environment gate for git transport: `MGC_GIT_DEPS=1` master switch +
-/// `MGC_GIT_HOSTS` comma allowlist.
-/// (Cổng env cho transport git.)
-fn git_transport_env_allowed(url: &str) -> Result<(), MgError> {
-    let enabled = std::env::var("MGC_GIT_DEPS")
-        .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
-        .unwrap_or(false);
-    let hosts_raw = std::env::var("MGC_GIT_HOSTS").unwrap_or_default();
-    let hosts: Vec<&str> = hosts_raw
-        .split(',')
-        .map(str::trim)
-        .filter(|h| !h.is_empty())
-        .collect();
-    git_transport_allowed(url, enabled, &hosts)
+    Err(MgError::Unsupported {
+        core: "app",
+        capability: "native Swift Git transport",
+        guidance: "Git transport is disabled; MGC_GIT_DEPS and host allowlists do not enable an external Git executable".to_string(),
+    })
 }
 
 /// Repository display name (last path segment, `.git` stripped).
 /// Tên hiển thị repo (segment cuối, bỏ `.git`).
+#[cfg(test)]
 fn git_repo_name(name: &str) -> String {
     name.trim_end_matches('/')
         .rsplit('/')
@@ -773,161 +560,6 @@ fn identity_to_dep_name(identity: &str) -> String {
         }
         _ => identity.to_string(),
     }
-}
-
-enum RequirementKind {
-    /// A tag-selectable version requirement (from/exact/range/bare pin/*).
-    /// Yêu cầu version chọn được theo tag (from/exact/range/pin trần/*).
-    Version,
-    Branch(String),
-    Revision(String),
-}
-
-fn parse_requirement_kind(range: &str) -> RequirementKind {
-    let range = range.trim();
-    if let Some(b) = range.strip_prefix("branch:") {
-        return RequirementKind::Branch(b.trim().to_string());
-    }
-    if let Some(r) = range.strip_prefix("revision:") {
-        return RequirementKind::Revision(r.trim().to_string());
-    }
-    RequirementKind::Version
-}
-
-/// Highest remote tag matching `range` (SPM accepts tags with or without a
-/// leading `v`). Requires `git ls-remote --tags` via mgc-exec (allowlisted).
-/// Tag remote cao nhất khớp `range` (SPM nhận tag có hoặc không có tiền tố
-/// `v`). Cần `git ls-remote --tags` qua mgc-exec (đã allowlist).
-fn highest_matching_tag(url: &str, range: &str) -> MgResult<Option<String>> {
-    let out = run_git_capture(&["ls-remote", "--tags", url], None)?;
-    let mut best: Option<(Version, String)> = None;
-    for line in out.lines() {
-        let mut parts = line.split_whitespace();
-        let Some(_sha) = parts.next() else {
-            continue;
-        };
-        let Some(ref_name) = parts.next() else {
-            continue;
-        };
-        let Some(tag) = ref_name.rsplit('/').next() else {
-            continue;
-        };
-        // Skip peeled `^{}` duplicate lines — keep the ref tag only.
-        // (Bỏ dòng `^{}` đã bóc — chỉ giữ ref tag.)
-        if tag.contains('^') {
-            continue;
-        }
-        let Ok(v) = Version::parse(tag) else {
-            continue;
-        };
-        if swift_matches(range, &v) && best.as_ref().is_none_or(|(bv, _)| v > *bv) {
-            best = Some((v, tag.to_string()));
-        }
-    }
-    Ok(best.map(|(_, tag)| tag))
-}
-
-/// `git clone --depth 1 --branch {ref}` (mgc-exec allowlisted; `git` is on
-/// the install-scope allowlist). The clone runs with cwd = dest's parent
-/// and a RELATIVE dest name — the exec path-traversal guard canonicalizes
-/// every path-looking arg against the cwd boundary, so absolute paths
-/// outside it are rejected; a relative single-component dest never trips
-/// the guard and the file:// URL arg fails canonicalize (nonexistent) and
-/// carries no `..`, which the guard accepts as a URL.
-/// `git clone --depth 1 --branch {ref}` (mgc-exec allowlist; `git` nằm
-/// trong allowlist scope install). Clone chạy với cwd = cha của dest và
-/// dest TƯƠNG ĐỐI — guard traversal của exec canonicalize mọi arg kiểu path
-/// theo biên cwd, nên path tuyệt đối ngoài biên bị từ chối; dest tương đối
-/// một thành phần không đụng guard và URL file:// không canonicalize được
-/// (không tồn tại) cùng không mang `..` — guard chấp nhận như URL.
-fn clone_shallow(url: &str, ref_: &str, dest: &Path) -> MgResult<()> {
-    let parent = dest
-        .parent()
-        .ok_or_else(|| MgError::Other(format!("clone dest has no parent: {}", dest.display())))?;
-    std::fs::create_dir_all(parent)?;
-    let dest_name = dest
-        .file_name()
-        .and_then(|n| n.to_str())
-        .ok_or_else(|| {
-            MgError::Other(format!(
-                "clone dest is not a plain name: {}",
-                dest.display()
-            ))
-        })?
-        .to_string();
-    let args = [
-        "clone".to_string(),
-        "--depth".to_string(),
-        "1".to_string(),
-        "--branch".to_string(),
-        ref_.to_string(),
-        url.to_string(),
-        dest_name,
-    ];
-    run_git(&args, Some(parent))
-}
-
-fn run_git(args: &[String], cwd: Option<&Path>) -> MgResult<()> {
-    let opts = mgc_exec::run::ExecOptions {
-        cwd: cwd.map(Path::to_path_buf),
-        ..Default::default()
-    };
-    let report = mgc_exec::run::run("git", args, &opts)
-        .map_err(|e| MgError::Other(format!("git {} failed: {e}", args.join(" "))))?;
-    if report.exit_code != 0 {
-        return Err(MgError::Other(format!(
-            "git {} exited {}: {}",
-            args.join(" "),
-            report.exit_code,
-            report.stderr_tail.trim()
-        )));
-    }
-    Ok(())
-}
-
-/// git stdout capture with FULL stdout (ls-remote tag lists exceed the
-/// line-bounded tail).
-/// Bắt stdout git ĐẦY ĐỦ (danh sách tag ls-remote vượt tail giới hạn dòng).
-fn run_git_capture(args: &[&str], cwd: Option<&Path>) -> MgResult<String> {
-    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    let opts = mgc_exec::run::ExecOptions {
-        cwd: cwd.map(Path::to_path_buf),
-        capture_full_stdout: true,
-        ..Default::default()
-    };
-    let report = mgc_exec::run::run("git", &owned, &opts)
-        .map_err(|e| MgError::Other(format!("git {} failed: {e}", owned.join(" "))))?;
-    if report.exit_code != 0 {
-        return Err(MgError::Other(format!(
-            "git {} exited {}: {}",
-            owned.join(" "),
-            report.exit_code,
-            report.stderr_tail.trim()
-        )));
-    }
-    Ok(report.stdout_full)
-}
-
-/// Unique temp work dir for clones (runtime — no tempfile dependency).
-/// Thư mục làm việc temp duy nhất cho clone (runtime — không phụ thuộc
-/// tempfile).
-fn temp_checkout_dir(label: &str) -> MgResult<PathBuf> {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let dir =
-        std::env::temp_dir().join(format!("mgc-swift-{}-{nanos}", sanitize_temp_label(label)));
-    std::fs::create_dir_all(&dir)?;
-    Ok(dir)
-}
-
-fn sanitize_temp_label(label: &str) -> String {
-    label
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
-        .take(48)
-        .collect()
 }
 
 /// Extract the Package.swift text from a registry archive (root entry —
@@ -1485,46 +1117,21 @@ let package = Package(
     }
 
     #[test]
-    fn git_transport_policy_blocks_by_default() {
-        // Default-block: no opt-in → every URL refused before network.
-        let blocked = git_transport_allowed("https://github.com/o/r.git", false, &[]);
-        assert!(blocked.is_err());
-        // Opted in but no allowlist → still blocked.
-        let blocked = git_transport_allowed("https://github.com/o/r.git", true, &[]);
-        assert!(blocked.is_err());
-        // Non-https schemes never pass, even allowlisted.
-        for url in [
-            "file:///tmp/repo",
-            "http://github.com/o/r.git",
-            "ssh://git@github.com/o/r.git",
-            "git://github.com/o/r.git",
+    fn git_transport_is_disabled_even_when_allowlisted() {
+        for (url, enabled, hosts) in [
+            ("https://github.com/o/r.git", false, &[][..]),
+            ("https://github.com/o/r.git", true, &["github.com"][..]),
+            ("file:///tmp/repo", true, &["localhost"][..]),
         ] {
-            assert!(
-                git_transport_allowed(url, true, &["github.com"]).is_err(),
-                "{url} must be blocked"
-            );
+            let error = git_transport_allowed(url, enabled, hosts).unwrap_err();
+            match error {
+                MgError::Unsupported { guidance, .. } => {
+                    assert!(guidance.contains("Git transport is disabled"));
+                    assert!(guidance.contains("external Git executable"));
+                }
+                other => panic!("expected unsupported transport error, got: {other}"),
+            }
         }
-        // Loopback / private / link-local hosts never pass.
-        for url in [
-            "https://localhost/o/r.git",
-            "https://127.0.0.1/o/r.git",
-            "https://10.0.0.9/o/r.git",
-            "https://192.168.1.9/o/r.git",
-            "https://[::1]/o/r.git",
-            "https://[fe80::1]/o/r.git",
-            "https://user@github.com/o/r.git",
-        ] {
-            assert!(
-                git_transport_allowed(url, true, &["localhost", "10.0.0.9", "github.com"]).is_err(),
-                "{url} must be blocked"
-            );
-        }
-        // Allowlisted public host passes (case-insensitive).
-        assert!(git_transport_allowed("https://github.com/o/r.git", true, &["GitHub.COM"]).is_ok());
-        // Wrong allowlist → blocked.
-        assert!(
-            git_transport_allowed("https://github.com/o/r.git", true, &["gitlab.com"]).is_err()
-        );
     }
 
     #[test]

@@ -71,6 +71,7 @@ async fn run_lock(dir: Option<PathBuf>, to: &str) -> Result<()> {
     // (Không migrate đè lên journal chưa phục hồi.)
     crate::commands::core::shared::ensure_no_pending_remove_journal(&root, &guard)?;
     let lock_path = root.join("mgc.lock");
+    mgc_lockfile::ensure_lockfile_mutation_allowed(&lock_path)?;
     if !lock_path.exists() {
         return Err(crate::error::migrate_no_lockfile(&root));
     }

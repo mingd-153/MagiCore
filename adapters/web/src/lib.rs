@@ -18,10 +18,10 @@ use mgc_adapter_base::BaseAdapter;
 use mgc_resolver::Resolver as CoreResolver;
 use mgc_store::ContentStore;
 use mgc_types::{
-    DependencySpec, Manifest, MgResult, PackageId, PackageName, Version, VersionRange,
+    Manifest, MgResult, PackageId, PackageName, Version, VersionRange,
     adapter::{
         AddOptions, AuditReport, InstallOptions, InstallSummary, InstalledPackage, PackageAdapter,
-        ResolvedGraph, ResolvedPackage, UpdatedPackage,
+        ResolvedGraph, ResolvedPackage,
     },
     capabilities::{
         ArtifactFetcher, AuditProvider, Capability, ContentStoreProvider, CoreIdent,
@@ -79,6 +79,25 @@ fn mgc_env_flag(key: &str) -> bool {
         .ok()
         .map(|value| value.trim().to_ascii_lowercase())
         .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
+}
+
+/// Return a package version only when a range denotes one exact version.
+/// A range's satisfying lower bound is not evidence that the registry chose it.
+fn exact_version_from_range(range: &VersionRange) -> Option<Version> {
+    let raw = range.as_str().trim();
+    let exact = raw.strip_prefix('=').unwrap_or(raw).trim();
+    if exact.is_empty()
+        || exact
+            .chars()
+            .next()
+            .is_some_and(|ch| matches!(ch, '^' | '~' | '>' | '<'))
+        || exact.contains("||")
+    {
+        return None;
+    }
+    Version::parse(exact)
+        .ok()
+        .filter(|version| range.matches(version))
 }
 
 use crate::audit::{run_audit, run_audit_fix};
@@ -326,7 +345,7 @@ impl WebAdapter {
         name: &PackageName,
         explicit_range: Option<&VersionRange>,
         exact: bool,
-    ) -> MgResult<VersionRange> {
+    ) -> MgResult<(VersionRange, Option<Version>)> {
         let should_fetch = match explicit_range {
             Some(range) => {
                 let raw = range.as_str();
@@ -338,8 +357,9 @@ impl WebAdapter {
         if should_fetch {
             let registry = native::npm_registry::NpmRegistry::new(&self.registry_url);
             let latest = self.latest_version_string(name, &registry).await?;
+            let selected = Version::parse(&latest).ok();
             let saved = if exact { latest } else { format!("^{latest}") };
-            return VersionRange::parse(&saved);
+            return Ok((VersionRange::parse(&saved)?, selected));
         }
 
         if let Some(range) = explicit_range {
@@ -351,7 +371,11 @@ impl WebAdapter {
             } else {
                 range.as_str()
             };
-            return VersionRange::parse(raw);
+            let parsed_range = VersionRange::parse(raw)?;
+            return Ok((
+                parsed_range.clone(),
+                exact_version_from_range(&parsed_range),
+            ));
         }
 
         unreachable!()
@@ -516,10 +540,8 @@ impl PackageAdapter for WebAdapter {
         range: Option<&VersionRange>,
         opts: AddOptions,
     ) -> MgResult<mgc_types::adapter::PreparedAdd> {
-        let inferred = self.infer_add_range(name, range, opts.exact).await?;
-        let version = inferred
-            .satisfying_version()
-            .unwrap_or_else(|| Version::new(0, 0, 0));
+        let (inferred, selected_version) = self.infer_add_range(name, range, opts.exact).await?;
+        let version = selected_version.unwrap_or_else(|| Version::new(0, 0, 0));
         Ok(mgc_types::adapter::PreparedAdd {
             id: PackageId::new(name.clone(), version),
             range: inferred,
@@ -810,46 +832,6 @@ impl DependencyResolver for WebAdapter {
     /// (Resolve tươi cho bumper — bỏ qua short-circuit lockfile.)
     async fn resolve_fresh(&self, manifest: &Manifest) -> MgResult<ResolvedGraph> {
         self.resolve_inner(manifest, false).await
-    }
-
-    async fn add(
-        &self,
-        project_root: &Path,
-        name: &PackageName,
-        range: Option<&VersionRange>,
-        opts: AddOptions,
-    ) -> MgResult<PackageId> {
-        let mut manifest = self.parse_manifest(project_root).await?;
-        // P0/F6: arm from this operation's project before any resolve.
-        self.arm_age_gate_for(project_root)?;
-        let inferred = self.infer_add_range(name, range, opts.exact).await?;
-
-        let mut spec = DependencySpec::new(name.clone(), inferred.clone());
-        spec.dev = opts.dev;
-        spec.optional = opts.optional;
-        spec.peer = opts.peer;
-        manifest.add_dep(spec, opts.dev, opts.optional, opts.peer);
-
-        if !opts.no_save {
-            self.write_manifest(project_root, &manifest).await?;
-        }
-
-        let version = inferred
-            .satisfying_version()
-            .unwrap_or_else(|| Version::new(0, 0, 0));
-        Ok(PackageId::new(name.clone(), version))
-    }
-
-    async fn remove(&self, project_root: &Path, name: &PackageName) -> MgResult<()> {
-        self.base_remove(project_root, name).await
-    }
-
-    async fn update(
-        &self,
-        project_root: &Path,
-        name: Option<&PackageName>,
-    ) -> MgResult<Vec<UpdatedPackage>> {
-        crate::update::run_update(project_root, name, &self.registry_url, &self.provider).await
     }
 }
 

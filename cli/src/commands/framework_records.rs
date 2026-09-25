@@ -1,8 +1,8 @@
 //! Framework qualification records — every wizard-selectable framework
 //! id gets exactly one record stating what MagiCore may honestly claim
-//! about it. A wizard answer is SCAFFOLD selection, never lifecycle
-//! qualification: no record here may claim `Native` unless the lane runs
-//! the full native pipeline, and `Delegated` names the exact compat tool.
+//! about it. Framework route and dependency-operation ownership are
+//! separate: the latter is derived from `dep_gate::owner_for` for every
+//! operation, never summarized as one framework-wide label.
 //! A coverage test below parses `cli/src/wizard/*.rs` and fails when any
 //! `Answer::new(.., "<id>")` lacks a record — new wizard entries cannot
 //! silently arrive unqualified.
@@ -11,16 +11,15 @@
 //! record nêu điều MagiCore được phép claim trung thực. Test coverage
 //! parse source wizard và fail khi id nào thiếu record.)
 
-/// Honest lifecycle claim for one wizard framework choice.
-/// (Claim lifecycle trung thực cho một lựa chọn framework.)
+/// Scaffold/engine route only; dependency ownership is reported per operation.
+/// Trạng thái scaffold/engine route; quyền dependency được báo theo operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameworkStatus {
     /// Offered by the wizard; lifecycle unqualified beyond scaffolding —
     /// no native/delegated/E2E claim.
     ScaffoldOnly,
-    /// A compat runner implements the lifecycle under explicit opt-in.
-    Delegated { tool: &'static str },
-    /// Rides a native engine pipeline (dep_gate Native cell).
+    /// The framework branch routes through an MGC-owned engine path; this
+    /// alone is not a claim that every dependency operation is supported.
     NativeEngine,
 }
 
@@ -47,19 +46,15 @@ pub const EV_WEB_ENGINE: &str =
 pub const EV_RN_GATE: &str =
     "dep_gate app/rn Unsupported cell + dep_gate_canary rn_* (no runner exists)";
 
-/// E2E-verified evidence (real tool spawns in sandbox, 2026-09-18).
-/// Statuses stay unchanged: E2E proves the spawn path works, it never
-/// promotes a record to `NativeEngine` (reserved for engine branches).
-/// (Căn cứ E2E đã verify bằng chạy thật — chỉ đổi evidence, giữ status.)
-pub const EV_E2E_APP_FLUTTER: &str = "E2E delegated: real `flutter pub add meta` (24 deps, pubspec meta ^1.19.0, package_config.json) + `flutter pub deps` list; gated + exec.log exit 0";
-pub const EV_E2E_APP_SWIFT: &str = "E2E delegated: real `swift package resolve` (swift-argument-parser 1.8.2 checkout); gated, exit 0";
-pub const EV_E2E_CLO_TERRAFORM: &str =
-    "E2E delegated: real `terraform` install spawn via clo lane; gated + audited, exit 0";
+/// Evidence from prior E2E runs. Historical spawn evidence does not prove
+/// current dependency ownership; operation cells below come from dep_gate.
+/// (E2E lịch sử không chứng minh ownership hiện tại; operation lấy từ dep_gate.)
+pub const EV_E2E_APP_FLUTTER: &str = "Current native dependency E2E: `add-app fixture_pkg` resolves, verifies, writes pubspec+mgc.lock and installs the graph with zero Flutter/Dart spawn; Flutter list/dev and dependency-health outdated scan remain toolchain-owned. Historical delegated `flutter pub add` evidence is not current ownership proof.";
+pub const EV_E2E_APP_SWIFT: &str = "Historical SwiftPM spawn is not current ownership evidence; see per-operation owner cells derived from dep_gate";
+pub const EV_E2E_CLO_TERRAFORM: &str = "Terraform dependency operations are currently unsupported; deploy/tool execution is a separate capability and does not imply native package ownership";
 pub const EV_E2E_HARDWARE: &str = "E2E template lane: create/add/install/list all exit 0 (optimizer.json/bench.json materialized); `mgc optimizer` applied profile.json + runtime envs on web+ai projects; `mgc bench` timed install; no package lifecycle by design";
-pub const EV_E2E_IOT_PIO: &str =
-    "E2E delegated: real `pio` add/remove/list spawns via iot lane; gated + audited, exit 0";
-pub const EV_E2E_IOT_WEST: &str =
-    "E2E delegated: real `west` install spawn via iot lane; gated + audited, exit 0";
+pub const EV_E2E_IOT_PIO: &str = "Historical PlatformIO spawn is not current ownership evidence; current dependency operations are unsupported";
+pub const EV_E2E_IOT_WEST: &str = "Historical West spawn is not current ownership evidence; current dependency operations are unsupported";
 pub const EV_E2E_WEB_JS: &str = "scaffold + native install E2E in sandbox sweep (next build OK); status stays ScaffoldOnly (per-framework lifecycle unqualified)";
 pub const EV_E2E_WEB_BACKEND: &str = "scaffold + install E2E: actix 82 pkgs, gin 58, echo 24, fiber 24, django 5, flask 10, axum 30; fastapi scaffold + resolve only (sandbox CDN blocked install — transient)";
 
@@ -70,7 +65,7 @@ pub const RECORDS: &[FrameworkRecord] = &[
     FrameworkRecord {
         core: "ai",
         framework: "python-agent",
-        status: FrameworkStatus::Delegated { tool: "uv/pip" },
+        status: FrameworkStatus::ScaffoldOnly,
         evidence: EV_DEPGATE,
     },
     FrameworkRecord {
@@ -83,19 +78,19 @@ pub const RECORDS: &[FrameworkRecord] = &[
     FrameworkRecord {
         core: "app",
         framework: "flutter",
-        status: FrameworkStatus::Delegated { tool: "flutter" },
+        status: FrameworkStatus::ScaffoldOnly,
         evidence: EV_E2E_APP_FLUTTER,
     },
     FrameworkRecord {
         core: "app",
         framework: "kotlin",
-        status: FrameworkStatus::Delegated { tool: "gradle" },
+        status: FrameworkStatus::ScaffoldOnly,
         evidence: "dep_gate app/kotlin install+list cells + canary (add/remove/update: no runner)",
     },
     FrameworkRecord {
         core: "app",
         framework: "swift",
-        status: FrameworkStatus::Delegated { tool: "swift" },
+        status: FrameworkStatus::ScaffoldOnly,
         evidence: EV_E2E_APP_SWIFT,
     },
     FrameworkRecord {
@@ -157,7 +152,7 @@ pub const RECORDS: &[FrameworkRecord] = &[
     FrameworkRecord {
         core: "clo",
         framework: "terraform",
-        status: FrameworkStatus::Delegated { tool: "terraform" },
+        status: FrameworkStatus::ScaffoldOnly,
         evidence: EV_E2E_CLO_TERRAFORM,
     },
     FrameworkRecord {
@@ -182,7 +177,7 @@ pub const RECORDS: &[FrameworkRecord] = &[
     FrameworkRecord {
         core: "game",
         framework: "bevy",
-        status: FrameworkStatus::Delegated { tool: "cargo" },
+        status: FrameworkStatus::ScaffoldOnly,
         evidence: EV_DEPGATE,
     },
     FrameworkRecord {
@@ -220,19 +215,19 @@ pub const RECORDS: &[FrameworkRecord] = &[
     FrameworkRecord {
         core: "iot",
         framework: "esp32-rust",
-        status: FrameworkStatus::Delegated { tool: "cargo" },
+        status: FrameworkStatus::ScaffoldOnly,
         evidence: EV_DEPGATE,
     },
     FrameworkRecord {
         core: "iot",
         framework: "platformio",
-        status: FrameworkStatus::Delegated { tool: "pio" },
+        status: FrameworkStatus::ScaffoldOnly,
         evidence: EV_E2E_IOT_PIO,
     },
     FrameworkRecord {
         core: "iot",
         framework: "zephyr-arm",
-        status: FrameworkStatus::Delegated { tool: "west" },
+        status: FrameworkStatus::ScaffoldOnly,
         evidence: EV_E2E_IOT_WEST,
     },
     FrameworkRecord {
@@ -277,7 +272,7 @@ pub const RECORDS: &[FrameworkRecord] = &[
         status: FrameworkStatus::ScaffoldOnly,
         evidence: "board variant (framework resolved at detect time from markers)",
     },
-    // ── lib: install pipeline native; edits delegated per language ──
+    // ── lib: operation ownership is emitted from the firewall per language ──
     FrameworkRecord {
         core: "lib",
         framework: "ts",
@@ -288,13 +283,13 @@ pub const RECORDS: &[FrameworkRecord] = &[
         core: "lib",
         framework: "rust",
         status: FrameworkStatus::NativeEngine,
-        evidence: "install pipeline native E2E (rust serde_json 5 pkgs + cargo build true; python six 1.17.0 local index import 42; go uuid go.mod v1.6.0 + GOPROXY=off build true; protocols_* tests + dep_gate table); add/remove/update delegate to cargo (dep_gate)",
+        evidence: "Rust resolver/CAS install path has local E2E; Cargo.lock synchronization for MGC-native add/update is not yet proven, so this record does not claim production-ready parity",
     },
     FrameworkRecord {
         core: "lib",
         framework: "python",
         status: FrameworkStatus::NativeEngine,
-        evidence: "install pipeline native E2E (rust serde_json 5 pkgs + cargo build true; python six 1.17.0 local index import 42; go uuid go.mod v1.6.0 + GOPROXY=off build true; protocols_* tests + dep_gate table); add/remove/update delegate to pip (dep_gate)",
+        evidence: "Python native path is manifest/artifact constrained; unsupported source/wheel/marker cases must fail closed; per-operation claims are emitted from dep_gate",
     },
     // ── web: base engine native; every named framework scaffold-only ──
     FrameworkRecord {
@@ -575,14 +570,63 @@ pub const RECORDS: &[FrameworkRecord] = &[
     },
 ];
 
-/// Machine string for one status (`delegated` carries its exact tool).
-/// (Chuỗi máy-đọc cho status.)
+/// Machine string for the framework route, not dependency ownership.
+/// (Chuỗi máy-đọc cho framework route, không phải quyền dependency.)
 pub fn status_string(status: &FrameworkStatus) -> String {
     match status {
         FrameworkStatus::ScaffoldOnly => "scaffold-only".to_string(),
-        FrameworkStatus::Delegated { tool } => format!("delegated:{tool}"),
-        FrameworkStatus::NativeEngine => "native-engine".to_string(),
+        FrameworkStatus::NativeEngine => "mgc-engine-path".to_string(),
     }
+}
+
+fn dependency_ecosystem(record: &FrameworkRecord) -> Option<&'static str> {
+    use crate::commands::dep_gate::eco;
+    match (record.core, record.framework) {
+        ("ai", "python-agent") | ("lib", "python") => Some(eco::PYTHON),
+        ("app", "flutter") => Some(eco::FLUTTER),
+        ("app", "kotlin") => Some(eco::KOTLIN),
+        ("app", "swift") => Some(eco::SWIFT),
+        ("app", "react-native") => Some(eco::RN),
+        ("app", "objc") => Some(eco::OBJC),
+        ("lib", "ts") => Some(eco::TS),
+        ("lib", "rust") => Some(eco::RUST),
+        ("lib", "go") => Some(eco::GO),
+        ("lib", "java") => Some(eco::JAVA),
+        ("lib", "dotnet") => Some(eco::DOTNET),
+        ("game", "bevy") => Some(eco::BEVY),
+        ("iot", "esp32-rust") => Some("esp32-rust"),
+        ("iot", "platformio") => Some("platformio"),
+        ("iot", "zephyr-arm") => Some("zephyr"),
+        ("clo", "terraform") => Some(eco::TERRAFORM),
+        ("clo", "cdk" | "pulumi") => Some(eco::JS),
+        (
+            "web",
+            "angular" | "astro" | "express" | "fastify" | "hono" | "nestjs" | "nextjs" | "nuxt"
+            | "qwik" | "react-spring" | "react-vite" | "remix" | "solidjs" | "sveltekit" | "trpc"
+            | "vanilla" | "vue-vite" | "node" | "ts",
+        ) => Some(eco::JS),
+        _ => None,
+    }
+}
+
+fn dependency_ownership_json(record: &FrameworkRecord) -> serde_json::Value {
+    use crate::commands::dep_gate::{DepContext, DepOp, DepOwner, owner_for};
+    let ecosystem = dependency_ecosystem(record);
+    let mut operations = serde_json::Map::new();
+    for op in DepOp::ALL {
+        let context = DepContext::new(record.core, ecosystem, Some(record.framework), None, *op);
+        let owner = match owner_for(&context) {
+            DepOwner::Native => "mgc-native",
+            DepOwner::ScaffoldOnly => "scaffold-only",
+            DepOwner::Unsupported => "unsupported",
+        };
+        let mut cell = serde_json::json!({"owner": owner});
+        if matches!((record.core, record.framework), ("clo", "cdk" | "pulumi")) {
+            cell["requires"] = serde_json::json!("package.json; embedded MGC JavaScript engine");
+        }
+        operations.insert(op.as_str().to_string(), cell);
+    }
+    serde_json::Value::Object(operations)
 }
 
 /// All records for one core, as machine-readable JSON values (consumed by
@@ -596,6 +640,7 @@ pub fn qualification_json(core: &str) -> serde_json::Value {
             serde_json::json!({
                 "framework": record.framework,
                 "status": status_string(&record.status),
+                "dependency_ownership": dependency_ownership_json(record),
                 "evidence": record.evidence,
             })
         })
@@ -604,149 +649,5 @@ pub fn qualification_json(core: &str) -> serde_json::Value {
 }
 
 #[cfg(test)]
-mod tests {
-    //! Coverage: every wizard answer id must have exactly one record.
-    //! (Mọi id wizard phải có đúng một record.)
-
-    use super::*;
-    use std::collections::{HashMap, HashSet};
-
-    /// Wizard source file → record core.
-    const WIZARD_CORES: &[(&str, &str)] = &[
-        ("ai.rs", "ai"),
-        ("app.rs", "app"),
-        ("cicd.rs", "cicd"),
-        ("cloud.rs", "clo"),
-        ("game.rs", "game"),
-        ("hardware.rs", "hardware"),
-        ("iot.rs", "iot"),
-        ("lib.rs", "lib"),
-        ("web.rs", "web"),
-    ];
-
-    /// Extract every `Answer::new("<display>", "<id>")` id from one wizard
-    /// source file (plain scanner, no regex dependency).
-    /// (Trích mọi id Answer::new từ một file wizard.)
-    fn wizard_ids(source: &str) -> Vec<String> {
-        let mut ids = Vec::new();
-        let mut rest = source;
-        while let Some(start) = rest.find("Answer::new(") {
-            rest = &rest[start + "Answer::new(".len()..];
-            // Skip the display string "...", then read the id string.
-            let Some(first) = rest.find('"') else { break };
-            let after_first = &rest[first + 1..];
-            let Some(first_end) = after_first.find('"') else {
-                break;
-            };
-            let after_display = &after_first[first_end + 1..];
-            let Some(second) = after_display.find('"') else {
-                break;
-            };
-            let after_second = &after_display[second + 1..];
-            let Some(second_end) = after_second.find('"') else {
-                break;
-            };
-            ids.push(after_second[..second_end].to_string());
-            rest = &after_second[second_end + 1..];
-        }
-        ids
-    }
-
-    #[test]
-    fn every_wizard_answer_has_exactly_one_record() {
-        let wizard_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/wizard");
-        let mut missing = Vec::new();
-        let mut counts: HashMap<(&str, &str), usize> = HashMap::new();
-        for record in RECORDS {
-            *counts.entry((record.core, record.framework)).or_insert(0) += 1;
-        }
-        for (file, core) in WIZARD_CORES {
-            let source = std::fs::read_to_string(wizard_dir.join(file))
-                .unwrap_or_else(|_| panic!("wizard source missing: {file}"));
-            for id in wizard_ids(&source) {
-                match counts.get(&(core, id.as_str())) {
-                    Some(1) => {}
-                    Some(n) => panic!("duplicate records for {core}/{id}: {n}"),
-                    None => missing.push(format!("{core}/{id}")),
-                }
-            }
-        }
-        assert!(
-            missing.is_empty(),
-            "wizard ids without qualification records: {missing:?}"
-        );
-    }
-
-    #[test]
-    fn no_record_claims_native_lifecycle_for_frameworks() {
-        // The Development Preview verdict: named frameworks are
-        // scaffold-only or delegated — `NativeEngine` is reserved for base
-        // engine branches (vanilla/ts/node, lib ts/rust/python, cdk/pulumi).
-        // (Verdict Preview: framework tên tuổi chỉ scaffold-only/delegated.)
-        const ENGINE_BRANCHES: &[(&str, &str)] = &[
-            ("web", "vanilla"),
-            ("web", "ts"),
-            ("web", "node"),
-            ("lib", "ts"),
-            ("lib", "rust"),
-            ("lib", "python"),
-            ("clo", "cdk"),
-            ("clo", "pulumi"),
-        ];
-        for record in RECORDS {
-            if matches!(record.status, FrameworkStatus::NativeEngine) {
-                assert!(
-                    ENGINE_BRANCHES.contains(&(record.core, record.framework)),
-                    "{}:{} claims NativeEngine without an engine branch",
-                    record.core,
-                    record.framework
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn records_resolve_known_frameworks() {
-        // Spot-check the table: named frameworks carry their honest
-        // claim; unknown ids are simply absent (fail-closed consumers
-        // treat absence as ScaffoldOnly-or-worse, never native).
-        fn find(core: &str, framework: &str) -> Option<&'static FrameworkRecord> {
-            RECORDS
-                .iter()
-                .find(|record| record.core == core && record.framework == framework)
-        }
-        let django = find("web", "django").expect("django record");
-        assert!(matches!(django.status, FrameworkStatus::ScaffoldOnly));
-        let flutter = find("app", "flutter").expect("flutter record");
-        assert!(matches!(
-            flutter.status,
-            FrameworkStatus::Delegated { tool: "flutter" }
-        ));
-        let vanilla = find("web", "vanilla").expect("vanilla record");
-        assert!(matches!(vanilla.status, FrameworkStatus::NativeEngine));
-        assert!(find("web", "not-a-framework").is_none());
-        assert!(find("unknown-core", "django").is_none());
-    }
-
-    #[test]
-    fn delegated_records_name_real_tools() {
-        // Every Delegated tool must exist in the dep_gate compat universe
-        // (a record may not promise a tool the gate cannot open).
-        // (Mọi tool delegated phải thuộc universe compat của gate.)
-        let mut seen = HashSet::new();
-        for record in RECORDS {
-            if let FrameworkStatus::Delegated { tool } = record.status {
-                for part in tool.split('/') {
-                    if seen.insert((record.core, part)) {
-                        assert!(
-                            crate::commands::dep_gate::DEPENDENCY_COMPAT_TOOLS.contains(&part),
-                            "{}:{} delegates to '{part}' outside the gate universe",
-                            record.core,
-                            record.framework
-                        );
-                    }
-                }
-            }
-        }
-    }
-}
+#[path = "test/framework_records_test.rs"]
+mod tests;

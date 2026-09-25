@@ -1,26 +1,11 @@
-use super::*;
-
 #[test]
-fn update_args_empty_uv_locks_upgrade() {
-    assert_eq!(update_args(&[], "uv"), vec!["lock", "--upgrade"]);
-}
-
-#[test]
-fn update_args_empty_pip_lists_outdated() {
-    assert_eq!(update_args(&[], "pip"), vec!["list", "--outdated"]);
-}
-
-#[test]
-fn update_args_uv_upgrade_each_package() {
-    let args = update_args(&["a b".to_string()], "uv");
-    assert_eq!(
-        args,
-        vec!["lock", "--upgrade-package", "a", "--upgrade-package", "b"]
+fn ai_update_refuses_foreign_python_lock_without_native_resolver() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("uv.lock"), "version = 1\\n").unwrap();
+    let err =
+        crate::commands::core::shared::require_native_ai_python(root.path(), "update").unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("No external package manager was invoked")
     );
-}
-
-#[test]
-fn update_args_pip_upgrade_packages() {
-    let args = update_args(&["a".to_string(), "b".to_string()], "pip");
-    assert_eq!(args, vec!["install", "--upgrade", "a", "b"]);
 }

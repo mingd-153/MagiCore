@@ -38,31 +38,95 @@ fn parse_flutter_pubspec_empty_deps() {
 }
 
 #[test]
-fn parse_kotlin_gradle_returns_manifest() {
+fn parse_flutter_pubspec_excludes_flutter_sdk_dependencies() {
+    let dir = tmp("flutter-sdk-deps");
+    std::fs::write(
+        dir.join("pubspec.yaml"),
+        "name: sdk_app\ndependencies:\n  flutter:\n    sdk: flutter\ndev_dependencies:\n  flutter_test:\n    sdk: flutter\n  integration_test:\n    sdk: flutter\n",
+    )
+    .unwrap();
+
+    let manifest = parse_manifest(AppLanguage::Flutter, &dir).unwrap();
+    assert!(manifest.all_dependencies().next().is_none());
+}
+
+#[test]
+fn parse_flutter_pubspec_rejects_unowned_path_git_and_hosted_sources() {
+    for (label, dependency) in [
+        ("path", "local_pkg:\n    path: ../local_pkg"),
+        (
+            "git",
+            "git_pkg:\n    git:\n      url: https://example.invalid/pkg.git",
+        ),
+        (
+            "hosted",
+            "hosted_pkg:\n    hosted: https://packages.example.invalid\n    version: ^1.0.0",
+        ),
+    ] {
+        let dir = tmp(&format!("flutter-source-{label}"));
+        std::fs::write(
+            dir.join("pubspec.yaml"),
+            format!("name: source_app\ndependencies:\n  {dependency}\n"),
+        )
+        .unwrap();
+
+        let error = parse_manifest(AppLanguage::Flutter, &dir)
+            .expect_err("non-pub.dev source must not be rewritten as a registry range");
+        assert!(matches!(error, mgc_types::MgError::Unsupported { .. }));
+        assert!(error.to_string().contains(label));
+    }
+}
+
+#[test]
+fn parse_flutter_pubspec_rejects_dependency_overrides_until_native_support_exists() {
+    let dir = tmp("flutter-overrides");
+    std::fs::write(
+        dir.join("pubspec.yaml"),
+        "name: override_app\ndependencies:\n  http: ^1.0.0\ndependency_overrides:\n  http: 2.0.0\n",
+    )
+    .unwrap();
+
+    let error = parse_manifest(AppLanguage::Flutter, &dir)
+        .expect_err("overrides change resolution semantics and must not be ignored");
+    assert!(matches!(error, mgc_types::MgError::Unsupported { .. }));
+    assert!(error.to_string().contains("dependency_overrides"));
+}
+
+#[test]
+fn parse_kotlin_gradle_fails_closed_for_executable_dsl() {
     let dir = tmp("kotlin");
     std::fs::write(dir.join("build.gradle"), "// gradle build\n").unwrap();
 
-    let manifest = parse_manifest(AppLanguage::Kotlin, &dir).unwrap();
-    assert!(!manifest.name.is_empty());
+    let error = parse_manifest(AppLanguage::Kotlin, &dir).unwrap_err();
+    assert!(matches!(error, mgc_types::MgError::Unsupported { .. }));
 }
 
 #[test]
 fn parse_swift_package_fails_closed_on_invalid_manifest() {
     let dir = tmp("swift");
-    // Phase 2 native lane: Package.swift is Swift SOURCE — only the
-    // toolchain can evaluate it. A placeholder/broken manifest fails
-    // closed (with or without a toolchain installed) — never an empty
-    // false-success manifest.
-    // (Lane native Phase 2: Package.swift là MÃ NGUỒN Swift — chỉ toolchain
-    // đánh giá được. Manifest placeholder/hỏng fail-closed (có hoặc không
-    // có toolchain) — không bao giờ manifest rỗng thành công giả.)
+    // Package.swift is executable Swift; only the documented literal
+    // subset is parsed. Missing a Package(...) declaration fails closed.
+    // (Chỉ parse subset literal; thiếu Package(...) thì fail-closed.)
     std::fs::write(dir.join("Package.swift"), "// swift package\n").unwrap();
     let err = parse_manifest(AppLanguage::Swift, &dir).unwrap_err();
     let msg = err.to_string();
     assert!(
-        msg.contains("dump-package") || msg.contains("Swift toolchain"),
-        "fail-closed guidance required: {msg}"
+        msg.contains("literal Package") || msg.contains("unsupported"),
+        "fail-closed guidance for unsupported manifest syntax required: {msg}"
     );
+}
+
+#[test]
+fn parse_swift_package_rejects_computed_dependencies_without_running_swiftpm() {
+    let dir = tmp("swift-dynamic");
+    std::fs::write(
+        dir.join("Package.swift"),
+        "// swift-tools-version:5.9\nlet package = Package(name: \"App\", dependencies: makeDependencies())\n",
+    )
+    .unwrap();
+    let error = parse_manifest(AppLanguage::Swift, &dir).unwrap_err();
+    assert!(matches!(error, mgc_types::MgError::Unsupported { .. }));
+    assert!(error.to_string().contains("computed"));
 }
 
 #[test]
@@ -70,12 +134,45 @@ fn parse_react_native_package_json() {
     let dir = tmp("rn");
     std::fs::write(
         dir.join("package.json"),
-        r#"{"name":"myapp","dependencies":{"react-native":"0.72.0"}}"#,
+        r#"{"name":"myapp","version":"1.0.0","dependencies":{"react-native":"0.72.0"}}"#,
     )
     .unwrap();
 
     let manifest = parse_manifest(AppLanguage::ReactNative, &dir).unwrap();
     assert_eq!(manifest.name, "myapp");
+    assert!(manifest.find_dep("react-native").is_some());
+}
+
+#[test]
+fn react_native_writer_updates_dependencies_through_the_native_web_engine() {
+    use mgc_types::{DependencySpec, PackageName, VersionRange};
+
+    let dir = tmp("rn-write");
+    std::fs::write(
+        dir.join("package.json"),
+        r#"{"name":"myapp","version":"1.0.0","dependencies":{}}"#,
+    )
+    .unwrap();
+    let mut manifest = parse_manifest(AppLanguage::ReactNative, &dir).unwrap();
+    manifest.add_dep(
+        DependencySpec::new(
+            PackageName::new("react-native").unwrap(),
+            VersionRange::parse("0.74.0").unwrap(),
+        ),
+        false,
+        false,
+        false,
+    );
+    mgc_app_adapter::manifest::write_manifest(AppLanguage::ReactNative, &dir, &manifest).unwrap();
+    let reparsed = parse_manifest(AppLanguage::ReactNative, &dir).unwrap();
+    assert!(reparsed.find_dep("react-native").is_some());
+}
+
+#[test]
+fn multi_language_without_a_recognized_manifest_fails_closed() {
+    let dir = tmp("multi-empty");
+    let error = parse_manifest(AppLanguage::Multi, &dir).unwrap_err();
+    assert!(matches!(error, mgc_types::MgError::Unsupported { .. }));
 }
 
 #[test]

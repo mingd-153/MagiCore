@@ -17,6 +17,88 @@ fn tmp(tag: &str) -> PathBuf {
     dir
 }
 
+/// Adapter WITHOUT the native PyPI lane (uv.lock/requirements-only shape).
+/// (Adapter KHÔNG có lane PyPI native — hình dạng project uv.lock/requirements.)
+fn adapter_without_lane() -> AiAdapter {
+    AiAdapter {
+        framework: AiFramework::PythonAgent,
+        python_lane: None,
+    }
+}
+
+#[test]
+fn native_python_lane_does_not_take_over_foreign_lockfiles() {
+    let dir = tmp("native-lane-lock-policy");
+    std::fs::write(dir.join("pyproject.toml"), "[project]\nname='t'\n").unwrap();
+    assert!(mgc_ai_adapter::uses_native_python_lane(&dir));
+    std::fs::write(dir.join("uv.lock"), "version = 1\n").unwrap();
+    assert!(!mgc_ai_adapter::uses_native_python_lane(&dir));
+    std::fs::remove_file(dir.join("uv.lock")).unwrap();
+    std::fs::write(dir.join("requirements.lock"), "six==1.17.0\n").unwrap();
+    assert!(!mgc_ai_adapter::uses_native_python_lane(&dir));
+}
+
+#[test]
+fn native_python_lane_rejects_unowned_lockfiles_and_dependency_sources() {
+    let lockfiles = [
+        "requirements.txt",
+        "requirements-dev.txt",
+        "pylock.toml",
+        "pylock.production.toml",
+        "poetry.lock",
+        "pdm.lock",
+        "Pipfile.lock",
+        "pixi.lock",
+        "conda-lock.yml",
+    ];
+    for (index, lockfile) in lockfiles.iter().enumerate() {
+        let dir = tmp(&format!("foreign-python-lock-{index}"));
+        std::fs::write(
+            dir.join("pyproject.toml"),
+            "[project]\nname='t'\ndependencies=[]\n",
+        )
+        .unwrap();
+        std::fs::write(dir.join(lockfile), "foreign owner\n").unwrap();
+        assert!(
+            !mgc_ai_adapter::uses_native_python_lane(&dir),
+            "must not take ownership when {lockfile} exists"
+        );
+    }
+
+    let poetry = tmp("poetry-project");
+    std::fs::write(
+        poetry.join("pyproject.toml"),
+        "[tool.poetry]\nname='t'\n[tool.poetry.dependencies]\npython='^3.12'\nrequests='*'\n",
+    )
+    .unwrap();
+    assert!(!mgc_ai_adapter::uses_native_python_lane(&poetry));
+
+    let dynamic = tmp("dynamic-python-deps");
+    std::fs::write(
+        dynamic.join("pyproject.toml"),
+        "[project]\nname='t'\ndynamic=['dependencies']\n",
+    )
+    .unwrap();
+    assert!(!mgc_ai_adapter::uses_native_python_lane(&dynamic));
+}
+
+/// Adapter WITH the native PyPI lane (pyproject.toml project shape).
+/// (Adapter CÓ lane PyPI native — hình dạng project pyproject.toml.)
+fn adapter_with_lane(dir: &std::path::Path) -> AiAdapter {
+    AiAdapter {
+        framework: AiFramework::PythonAgent,
+        python_lane: Some(
+            mgc_lib_adapter::adapter_for_language(
+                mgc_lib_adapter::LibLanguage::Python,
+                dir,
+                None,
+                None,
+            )
+            .unwrap(),
+        ),
+    }
+}
+
 // ── detect_framework ───────────────────────────────────────────────────────
 
 #[test]
@@ -106,9 +188,7 @@ fn aiframework_entry_script_matches_scaffold() {
 
 #[test]
 fn adapter_name_and_ecosystem() {
-    let adapter = AiAdapter {
-        framework: AiFramework::PythonAgent,
-    };
+    let adapter = adapter_without_lane();
     assert_eq!(adapter.name(), "ai");
     assert_eq!(format!("{:?}", adapter.ecosystem()), "Ai");
 }
@@ -117,19 +197,57 @@ fn adapter_name_and_ecosystem() {
 fn adapter_can_handle_returns_true_for_marked_project() {
     let dir = tmp("ch-true");
     std::fs::write(dir.join("mgc.toml"), "[ai]\nframework = \"python-agent\"\n").unwrap();
-    let adapter = AiAdapter {
-        framework: AiFramework::PythonAgent,
-    };
+    let adapter = adapter_with_lane(&dir);
     assert!(adapter.can_handle(&dir));
 }
 
 #[test]
 fn adapter_can_handle_returns_false_for_empty_dir() {
     let dir = tmp("ch-false");
-    let adapter = AiAdapter {
-        framework: AiFramework::PythonAgent,
-    };
+    let adapter = adapter_without_lane();
     assert!(!adapter.can_handle(&dir));
+}
+
+// ── PyPI lane (pyproject.toml) — capability claims per truth ───────────────
+
+#[test]
+fn non_lane_projects_do_not_claim_registry_capabilities() {
+    let adapter = adapter_without_lane();
+    let caps = adapter.capabilities();
+    assert!(
+        !caps.contains(&mgc_types::capabilities::Capability::DependencyResolver),
+        "uv.lock/requirements-only projects keep registry caps unclaimed"
+    );
+    assert!(caps.contains(&mgc_types::capabilities::Capability::AuditProvider));
+}
+
+#[tokio::test]
+async fn pypi_lane_claims_registry_capabilities_and_resolves_natively() {
+    let dir = tmp("pypi-lane");
+    std::fs::write(
+        dir.join("pyproject.toml"),
+        "[project]\nname = \"t\"\n\n[tool.magicore]\nframework = \"python-agent\"\n",
+    )
+    .unwrap();
+    let adapter = adapter_for(&dir).unwrap();
+    assert!(
+        adapter.python_lane.is_some(),
+        "pyproject → native PyPI lane"
+    );
+    let caps = adapter.capabilities();
+    assert!(caps.contains(&mgc_types::capabilities::Capability::DependencyResolver));
+    assert!(caps.contains(&mgc_types::capabilities::Capability::LockfileProvider));
+    assert!(caps.contains(&mgc_types::capabilities::Capability::ArtifactFetcher));
+    assert!(caps.contains(&mgc_types::capabilities::Capability::ContentStoreProvider));
+    let identity = mgc_types::adapter::PackageAdapter::manifest_identity(&adapter).unwrap();
+    assert_eq!(identity.core, "ai");
+    assert_eq!(identity.language, "python");
+    // Empty manifest → native resolve returns an empty graph WITHOUT any
+    // network call (no deps to resolve).
+    // (Manifest rỗng → resolve native trả graph rỗng KHÔNG chạm network.)
+    let manifest = adapter.parse_manifest(&dir).await.unwrap();
+    let graph = adapter.resolve(&manifest).await.unwrap();
+    assert!(graph.packages.is_empty());
 }
 
 #[tokio::test]
@@ -142,7 +260,7 @@ async fn parse_manifest_uses_dir_name_as_project_name() {
 }
 
 #[tokio::test]
-async fn resolve_returns_empty_graph_by_design() {
+async fn resolve_fails_closed_without_native_python_lane() {
     let dir = tmp("resolve");
     std::fs::write(dir.join("mgc.toml"), "[ai]\nframework = \"python-agent\"\n").unwrap();
     let adapter = adapter_for(&dir).unwrap();
@@ -208,6 +326,31 @@ async fn update_fails_closed_with_descriptive_error() {
 }
 
 #[tokio::test]
+async fn remove_fails_closed_without_mutating_through_adapter_api() {
+    let dir = tmp("remove-fail");
+    let source =
+        "[project]\nname = \"ai-test\"\nversion = \"0.1.0\"\ndependencies = [\"openai>=1.0\"]\n";
+    std::fs::write(dir.join("pyproject.toml"), source).unwrap();
+    std::fs::write(dir.join("mgc.toml"), "[ai]\nframework = \"python-agent\"\n").unwrap();
+    let adapter = adapter_for(&dir).unwrap();
+    let name = PackageName::new("openai").unwrap();
+
+    let error = adapter
+        .remove(&dir, &name)
+        .await
+        .expect_err("direct adapter remove must fail closed outside CLI gateway");
+    assert!(
+        error
+            .to_string()
+            .contains("direct adapter mutation is disabled")
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("pyproject.toml")).unwrap(),
+        source
+    );
+}
+
+#[tokio::test]
 async fn audit_returns_clean_report_for_empty_project() {
     let dir = tmp("audit");
     std::fs::write(dir.join("mgc.toml"), "[ai]\nframework = \"mcp-server\"\n").unwrap();
@@ -217,12 +360,12 @@ async fn audit_returns_clean_report_for_empty_project() {
 }
 
 #[tokio::test]
-async fn list_returns_empty_for_project_with_no_deps() {
+async fn list_refuses_to_claim_an_mgc_owned_set_for_foreign_lane() {
     let dir = tmp("list");
     std::fs::write(dir.join("mgc.toml"), "[ai]\nframework = \"mcp-server\"\n").unwrap();
     let adapter = adapter_for(&dir).unwrap();
-    let pkgs = adapter.list(&dir).await.unwrap();
-    assert!(pkgs.is_empty());
+    let error = adapter.list(&dir).await.unwrap_err();
+    assert!(error.to_string().contains("foreign Python lock/manifest"));
 }
 
 #[test]

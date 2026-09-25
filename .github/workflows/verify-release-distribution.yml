@@ -33,10 +33,10 @@ permissions:
   contents: write
 
 env:
-  # Required environment: a missing tool in this lane is a FAILURE,
-  # never a skip (MGC_E2E_AUDIT_TOOLS contract).
-  # Môi trường bắt buộc: thiếu tool trong lane này là FAIL, không skip.
-  MGC_E2E_AUDIT_TOOLS: required
+  # Live OSV checks are required here; the active Rust/Python scanners
+  # are MGC-native and do not depend on external audit executables.
+  # Bắt buộc truy cập OSV sống; scanner Rust/Python hoạt động là native MGC.
+  MGC_E2E_AUDIT_NETWORK: required
 
 jobs:
   verify-archive-download:

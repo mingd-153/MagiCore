@@ -56,12 +56,24 @@ impl NoSpawnSandbox {
     }
 
     fn run_mgc(&self, args: &[&str], cwd: &std::path::Path) -> (Option<i32>, String, String) {
+        self.run_mgc_with_env(args, cwd, &[])
+    }
+
+    fn run_mgc_with_env(
+        &self,
+        args: &[&str],
+        cwd: &std::path::Path,
+        envs: &[(&str, &str)],
+    ) -> (Option<i32>, String, String) {
         let mut cmd = Command::new(mgc_binary());
         cmd.args(args)
             .current_dir(cwd)
             .env("PATH", self.path_env())
             .env("HOME", self.home_dir.path())
             .env_remove("MGC_COMPAT_RUNTIME");
+        for (key, value) in envs {
+            cmd.env(key, value);
+        }
         let out = cmd.output().expect("spawn mgc");
         (
             out.status.code(),
@@ -81,6 +93,31 @@ impl NoSpawnSandbox {
     fn marker_text(&self) -> String {
         std::fs::read_to_string(&self.canary_log).unwrap_or_default()
     }
+}
+
+fn fixture_pub_archive(package: &str, version: &str) -> Vec<u8> {
+    use flate2::Compression;
+    use flate2::write::GzEncoder;
+    use std::io::Cursor;
+
+    let mut gzip = GzEncoder::new(Vec::new(), Compression::default());
+    {
+        let mut tar = tar::Builder::new(&mut gzip);
+        let content = format!("name: {package}\nversion: {version}\n");
+        let mut header = tar::Header::new_gnu();
+        header.set_size(content.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        tar.append_data(&mut header, "pubspec.yaml", Cursor::new(content.as_bytes()))
+            .unwrap();
+        tar.finish().unwrap();
+    }
+    gzip.finish().unwrap()
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(bytes))
 }
 
 fn flutter_project(dir: &std::path::Path) {
@@ -118,6 +155,104 @@ fn flutter_install_app_runs_inside_mgc_without_spawning_flutter() {
     assert!(
         lock.contains("meta") && lock.contains("sha256-"),
         "mgc.lock must record meta with registry integrity:\n{lock}"
+    );
+}
+
+#[test]
+fn flutter_add_app_resolves_and_installs_natively_without_spawning_sdk() {
+    let mut server = mockito::Server::new();
+    let base = server.url();
+    let archive = fixture_pub_archive("fixture_pkg", "1.2.3");
+    let digest = sha256_hex(&archive);
+    let archive_url = format!("{base}/archives/fixture_pkg-1.2.3.tar.gz");
+    let package_doc = serde_json::json!({
+        "name": "fixture_pkg",
+        "versions": [{
+            "version": "1.2.3",
+            "pubspec": {
+                "version": "1.2.3",
+                "environment": { "sdk": ">=3.0.0 <4.0.0" },
+                "dependencies": {}
+            },
+            "archive_url": archive_url,
+            "archive_sha256": digest
+        }]
+    });
+    let _package_mock = server
+        .mock("GET", "/api/packages/fixture_pkg")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(serde_json::to_vec(&package_doc).unwrap())
+        .create();
+    let _archive_mock = server
+        .mock("GET", "/archives/fixture_pkg-1.2.3.tar.gz")
+        .with_status(200)
+        .with_body(archive)
+        .create();
+
+    // Native add reinstalls the complete pubspec graph, including the
+    // fixture project's pre-existing dependency.
+    // Add native cài lại toàn graph pubspec, gồm dependency có sẵn.
+    let meta_archive = fixture_pub_archive("meta", "1.16.0");
+    let meta_digest = sha256_hex(&meta_archive);
+    let meta_doc = serde_json::json!({
+        "name": "meta",
+        "versions": [{
+            "version": "1.16.0",
+            "pubspec": {
+                "version": "1.16.0",
+                "environment": { "sdk": ">=3.0.0 <4.0.0" },
+                "dependencies": {}
+            },
+            "archive_url": format!("{base}/archives/meta-1.16.0.tar.gz"),
+            "archive_sha256": meta_digest
+        }]
+    });
+    let _meta_package_mock = server
+        .mock("GET", "/api/packages/meta")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(serde_json::to_vec(&meta_doc).unwrap())
+        .create();
+    let _meta_archive_mock = server
+        .mock("GET", "/archives/meta-1.16.0.tar.gz")
+        .with_status(200)
+        .with_body(meta_archive)
+        .create();
+
+    let project = TempDir::new().unwrap();
+    flutter_project(project.path());
+    let sandbox = NoSpawnSandbox::multi(&["flutter", "dart"]);
+    let (code, stdout, stderr) = sandbox.run_mgc_with_env(
+        &["add-app", "fixture_pkg"],
+        project.path(),
+        &[("MGC_PUB_INDEX_URL", &base)],
+    );
+    let output = format!("{stdout}{stderr}");
+    assert_eq!(code, Some(0), "native Flutter add must succeed:\n{output}");
+    assert!(
+        sandbox.marker_text().is_empty(),
+        "native add must not spawn Flutter or Dart:\n{}",
+        sandbox.marker_text()
+    );
+    let pubspec = std::fs::read_to_string(project.path().join("pubspec.yaml")).unwrap();
+    assert!(pubspec.contains("fixture_pkg: ^1.2.3"), "{pubspec}");
+    let lock = std::fs::read_to_string(project.path().join("mgc.lock")).unwrap();
+    assert!(
+        lock.contains("fixture_pkg") && lock.contains("sha256-"),
+        "{lock}"
+    );
+    let package_config: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(project.path().join(".dart_tool/package_config.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(package_config["configVersion"], 2);
+    assert!(
+        package_config["packages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["name"] == "fixture_pkg")
     );
 }
 

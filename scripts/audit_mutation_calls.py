@@ -126,6 +126,14 @@ ALLOWLIST = {
     ("adapters/app/src/install/mod.rs", "write_canonical_lock"): (
         {"lock-write", "manifest-file-write"}, "engine lock writer",
     ),
+    ("adapters/app/src/install/mod.rs", "atomic_write_canonical_lock"): (
+        {"manifest-file-write"},
+        "private atomic primitive called only by write_canonical_lock under install gateway",
+    ),
+    ("adapters/web/src/lockfile.rs", "atomic_write_web_lockfile"): (
+        {"manifest-file-write"},
+        "private atomic primitive called only by write_web_lockfile_with_state under mutation gateway",
+    ),
     ("adapters/lib/src/install/mod.rs", "run_install"): (
         {"lock-write"}, "engine canonical-lock writer",
     ),
@@ -158,17 +166,20 @@ ALLOWLIST = {
     ("adapters/cloud/src/adapter.rs", "DependencyResolver::update"): (
         {"adapter-mutation"}, "forwards to the embedded web engine",
     ),
-    ("adapters/lib/src/adapter.rs", "CoreIdent::prepare_add"): (
-        {"adapter-mutation"}, "default dry-run probe via own add",
-    ),
     ("adapters/lib/src/adapter.rs", "DependencyResolver::add"): (
-        {"adapter-mutation"}, "forwards to the embedded web engine",
+        {"adapter-mutation", "manifest-write"},
+        "native writer implementation; CLI entry is shared::add under the project mutation gateway",
     ),
     ("adapters/lib/src/adapter.rs", "DependencyResolver::remove"): (
-        {"adapter-mutation"}, "forwards to the embedded web engine",
+        {"adapter-mutation", "manifest-write"},
+        "native writer implementation; CLI entry is shared::remove under the project mutation gateway",
     ),
     ("adapters/lib/src/adapter.rs", "DependencyResolver::update"): (
-        {"adapter-mutation"}, "forwards to the embedded web engine",
+        {"adapter-mutation", "manifest-write"},
+        "native writer implementation; CLI entry is shared::update under the project mutation gateway",
+    ),
+    ("adapters/lib/src/install/mod.rs", "atomic_write_canonical_lock"): (
+        {"manifest-file-write"}, "atomic mgc.lock publication called from native install under CLI gateway",
     ),
     ("core/crates/mgc-types/src/adapter.rs", "prepare_add"): (
         {"adapter-mutation"}, "trait default dry-run probe via own add",
@@ -237,11 +248,23 @@ ALLOWLIST = {
     ("adapters/app/src/adapter.rs", "LockfileProvider::write_manifest"): (
         {"manifest-write"}, "delegating override to the per-language writer",
     ),
+    ("adapters/app/src/manifest/react_native.rs", "write_package_json"): (
+        {"manifest-write"}, "React Native package.json writer delegates to Web engine; CLI mutation entry is gateway-routed",
+    ),
     ("adapters/game/src/adapter.rs", "LockfileProvider::write_manifest"): (
         {"manifest-write"}, "delegating override to the cargo writer",
     ),
     ("adapters/iot/src/adapter.rs", "LockfileProvider::write_manifest"): (
         {"manifest-write"}, "delegating override to the cargo writer",
+    ),
+    ("adapters/ai/src/adapter.rs", "mgc_types::remove"): (
+        {"adapter-mutation"}, "forwards native Python removal; CLI entry is shared::remove under mutation gateway",
+    ),
+    ("adapters/ai/src/adapter.rs", "mgc_types::update"): (
+        {"adapter-mutation"}, "forwards native Python update; CLI entry is shared::update under mutation gateway",
+    ),
+    ("adapters/ai/src/adapter.rs", "mgc_types::write_manifest"): (
+        {"manifest-write"}, "forwards native Python manifest write; CLI mutation entry is gateway-routed",
     ),
     ("adapters/lib/src/manifest.rs", "write_cargo_manifest"): (
         {"manifest-write"}, "engine manifest writer",

@@ -10,6 +10,7 @@ use flate2::write::GzEncoder;
 use mgc_lockfile::Lockfile;
 use mgc_resolver::DependencyProvider;
 use mgc_store::{Layout, PackageCache};
+use mgc_types::DependencySpec;
 use sha2::{Digest, Sha512};
 use std::io::ErrorKind;
 use std::sync::{
@@ -50,6 +51,87 @@ fn test_web_adapter() {
     );
 }
 
+#[test]
+fn web_writer_refuses_signed_lock_and_preserves_signature_pair() {
+    let dir = tempdir_real().unwrap();
+    let path = dir.path().join("mgc.lock");
+    let mut signed = Lockfile::new();
+    let mut package = mgc_lockfile::Package::new(
+        "old-web-dep".to_string(),
+        "1.0.0".to_string(),
+        "https://registry.example/old-web-dep.tgz".to_string(),
+        "sha512-old".to_string(),
+    );
+    package.ecosystem = mgc_lockfile::EcosystemTag::Web;
+    package.owner_core = Some("web".to_string());
+    signed.packages.push(package);
+    let key = mgc_crypto::keyring::KeyPair::generate().unwrap();
+    mgc_lockfile::sign_and_write_lockfile(&mut signed, &path, &key).unwrap();
+    let lock_before = std::fs::read(&path).unwrap();
+    let signature_path = path.with_extension("lock.sig");
+    let signature_before = std::fs::read(&signature_path).unwrap();
+    let graph = ResolvedGraph::empty();
+
+    let result = crate::lockfile::write_web_lockfile_with_state(
+        dir.path(),
+        &graph,
+        "https://registry.example",
+    );
+
+    assert!(result.unwrap_err().to_string().contains("signed mgc.lock"));
+    assert_eq!(std::fs::read(&path).unwrap(), lock_before);
+    assert_eq!(std::fs::read(&signature_path).unwrap(), signature_before);
+    assert_eq!(
+        mgc_lockfile::verify_lockfile(&path).unwrap(),
+        mgc_lockfile::VerificationStatus::Valid
+    );
+}
+
+#[test]
+fn web_writer_leaves_an_unchanged_signed_lock_byte_identical() {
+    let dir = tempdir_real().unwrap();
+    let path = dir.path().join("mgc.lock");
+    let mut existing = Lockfile::new();
+    let mut package = mgc_lockfile::Package::new(
+        "stable-web-dep".to_string(),
+        "1.0.0".to_string(),
+        "https://registry.example/stable-web-dep.tgz".to_string(),
+        "sha512-stable".to_string(),
+    );
+    package.ecosystem = mgc_lockfile::EcosystemTag::Web;
+    package.owner_core = Some("web".to_string());
+    existing.packages.push(package);
+    let key = mgc_crypto::keyring::KeyPair::generate().unwrap();
+    mgc_lockfile::sign_and_write_lockfile(&mut existing, &path, &key).unwrap();
+    let lock_before = std::fs::read(&path).unwrap();
+    let signature_path = path.with_extension("lock.sig");
+    let signature_before = std::fs::read(&signature_path).unwrap();
+    let graph = ResolvedGraph {
+        packages: vec![ResolvedPackage {
+            id: PackageId::new(
+                PackageName::new("stable-web-dep").unwrap(),
+                Version::parse("1.0.0").unwrap(),
+            ),
+            integrity: "sha512-stable".to_string(),
+            tarball_url: "https://registry.example/stable-web-dep.tgz".to_string(),
+            deps: vec![],
+            peer_deps: vec![],
+            direct: true,
+            dev: false,
+        }],
+    };
+
+    crate::lockfile::write_web_lockfile_with_state(dir.path(), &graph, "https://registry.example")
+        .unwrap();
+
+    assert_eq!(std::fs::read(&path).unwrap(), lock_before);
+    assert_eq!(std::fs::read(&signature_path).unwrap(), signature_before);
+    assert_eq!(
+        mgc_lockfile::verify_lockfile(&path).unwrap(),
+        mgc_lockfile::VerificationStatus::Valid
+    );
+}
+
 /// Symlink-free temp dir (P0-A contract, 2026-09-13): the CAS now rejects
 /// any symlinked ancestor, and macOS temp lives under /var — a SYSTEM
 /// symlink. Create the temp dir under the CANONICALIZED temp base so every
@@ -80,7 +162,31 @@ fn test_can_handle() {
 }
 
 #[tokio::test]
-async fn test_add_writes_manifest_and_install_creates_node_modules() {
+async fn direct_web_adapter_mutations_fail_closed_without_touching_manifest() {
+    let dir = tempdir_real().unwrap();
+    let manifest = r#"{"name":"demo","version":"1.0.0","dependencies":{"left-pad":"1.0.0"}}"#;
+    std::fs::write(dir.path().join("package.json"), manifest).unwrap();
+    let adapter = WebAdapter::new().unwrap();
+    let name = PackageName::new("left-pad").unwrap();
+    let range = VersionRange::parse("^1.0.0").unwrap();
+
+    assert!(
+        adapter
+            .add(dir.path(), &name, Some(&range), AddOptions::default())
+            .await
+            .is_err()
+    );
+    assert!(adapter.remove(dir.path(), &name).await.is_err());
+    assert!(adapter.update(dir.path(), Some(&name)).await.is_err());
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("package.json")).unwrap(),
+        manifest
+    );
+    assert!(!dir.path().join(".magicore").exists());
+}
+
+#[tokio::test]
+async fn test_install_materializes_manifest_dependency_into_node_modules() {
     let dir = tempdir_real().unwrap();
     std::fs::write(
         dir.path().join("package.json"),
@@ -89,6 +195,7 @@ async fn test_add_writes_manifest_and_install_creates_node_modules() {
             "version": "0.1.0",
             "private": true,
             "type": "module",
+            "dependencies": { "tailwindcss": "^3.4.0" },
             "scripts": {
                 "dev": "mgc web dev"
             }
@@ -99,18 +206,13 @@ async fn test_add_writes_manifest_and_install_creates_node_modules() {
 
     let adapter = WebAdapter::new().unwrap();
     let name = PackageName::new("tailwindcss").unwrap();
-    let range = VersionRange::parse("^3.4.0").unwrap();
-    adapter
-        .add(dir.path(), &name, Some(&range), AddOptions::default())
-        .await
-        .unwrap();
-
     let manifest = adapter.parse_manifest(dir.path()).await.unwrap();
     assert!(manifest.find_dep("tailwindcss").is_some());
     let package_json = std::fs::read_to_string(dir.path().join("package.json")).unwrap();
-    assert!(package_json.contains("\"private\": true"));
-    assert!(package_json.contains("\"type\": \"module\""));
-    assert!(package_json.contains("\"dev\": \"mgc web dev\""));
+    let package_json: serde_json::Value = serde_json::from_str(&package_json).unwrap();
+    assert_eq!(package_json["private"], true);
+    assert_eq!(package_json["type"], "module");
+    assert_eq!(package_json["scripts"]["dev"], "mgc web dev");
 
     let package_id = PackageId::new(name, Version::parse("3.4.0").unwrap());
     let integrity = seed_cached_tarball(dir.path(), &package_id);
@@ -306,6 +408,145 @@ fn test_write_web_lockfile_with_state_skips_rewrite_when_unchanged() {
     let second_lock_modified = std::fs::metadata(&lock_path).unwrap().modified().unwrap();
 
     assert_eq!(first_lock_modified, second_lock_modified);
+}
+
+#[test]
+fn web_lock_writer_preserves_foreign_ecosystems_and_reads_only_web_pins() {
+    let dir = tempdir_real().unwrap();
+    let path = dir.path().join("mgc.lock");
+    let mut lock = Lockfile::new();
+    lock.packages.push(mgc_lockfile::Package {
+        name: "react".into(),
+        version: "18.2.0".into(),
+        ecosystem: mgc_lockfile::EcosystemTag::Dart,
+        ..Default::default()
+    });
+    lock.packages.push(mgc_lockfile::Package {
+        name: "react".into(),
+        version: "17.0.0".into(),
+        ecosystem: mgc_lockfile::EcosystemTag::Web,
+        ..Default::default()
+    });
+    std::fs::write(
+        &path,
+        mgc_lockfile::writer::serialize_lockfile(&lock).unwrap(),
+    )
+    .unwrap();
+
+    let react = PackageId::new(
+        PackageName::new("react").unwrap(),
+        Version::parse("19.0.0").unwrap(),
+    );
+    let graph = ResolvedGraph {
+        packages: vec![ResolvedPackage {
+            id: react,
+            integrity: "sha512-web".into(),
+            tarball_url: String::new(),
+            deps: vec![],
+            peer_deps: vec![],
+            direct: true,
+            dev: false,
+        }],
+    };
+
+    write_web_lockfile_with_state(dir.path(), &graph, "https://registry.npmjs.org").unwrap();
+    let written = mgc_lockfile::parser::load_lockfile(&path).unwrap();
+    assert!(written.packages.iter().any(|p| {
+        p.name == "react"
+            && p.version == "18.2.0"
+            && p.ecosystem == mgc_lockfile::EcosystemTag::Dart
+    }));
+    assert!(written.packages.iter().any(|p| {
+        p.name == "react" && p.version == "19.0.0" && p.ecosystem == mgc_lockfile::EcosystemTag::Web
+    }));
+    assert!(!written.packages.iter().any(|p| {
+        p.name == "react" && p.version == "17.0.0" && p.ecosystem == mgc_lockfile::EcosystemTag::Web
+    }));
+
+    assert!(web_lockfile_matches_graph(&written, &graph));
+    let mut manifest = Manifest::new("demo", mgc_types::ecosystem::Ecosystem::Web);
+    manifest.add_dep(
+        mgc_types::DependencySpec::new(
+            PackageName::new("react").unwrap(),
+            mgc_types::VersionRange::parse("^18.0.0").unwrap(),
+        ),
+        false,
+        false,
+        false,
+    );
+    assert!(!lockfile_satisfies_manifest(&written, &manifest));
+    let cached_graph = build_graph_from_lockfile(&written, &manifest)
+        .unwrap()
+        .expect("the Web entry is available even when another ecosystem shares its name");
+    assert_eq!(cached_graph.packages[0].id.version().to_string(), "19.0.0");
+}
+
+#[test]
+fn embedded_web_engine_preserves_lock_entries_owned_by_another_core() {
+    let dir = tempdir_real().unwrap();
+    mgc_config::project::ProjectConfig::write_core_marker_at(dir.path(), "clo").unwrap();
+    let path = dir.path().join("mgc.lock");
+    let mut lock = Lockfile::new();
+    lock.packages.push(mgc_lockfile::Package {
+        owner_core: Some("web".to_string()),
+        name: "react".into(),
+        version: "18.2.0".into(),
+        ecosystem: mgc_lockfile::EcosystemTag::Web,
+        ..Default::default()
+    });
+    std::fs::write(
+        &path,
+        mgc_lockfile::writer::serialize_lockfile(&lock).unwrap(),
+    )
+    .unwrap();
+    let graph = ResolvedGraph {
+        packages: vec![ResolvedPackage {
+            id: PackageId::new(
+                PackageName::new("constructs").unwrap(),
+                Version::parse("10.0.0").unwrap(),
+            ),
+            integrity: "sha512-cloud".into(),
+            tarball_url: String::new(),
+            deps: vec![],
+            peer_deps: vec![],
+            direct: true,
+            dev: false,
+        }],
+    };
+
+    write_web_lockfile_with_state(dir.path(), &graph, "https://registry.npmjs.org").unwrap();
+    let written = mgc_lockfile::parser::load_lockfile(&path).unwrap();
+    assert!(written.packages.iter().any(|package| {
+        package.owner_core.as_deref() == Some("web") && package.name == "react"
+    }));
+    assert!(written.packages.iter().any(|package| {
+        package.owner_core.as_deref() == Some("clo") && package.name == "constructs"
+    }));
+}
+
+#[cfg(unix)]
+#[test]
+fn web_lock_writer_refuses_symlink_without_touching_target() {
+    use std::os::unix::fs::symlink;
+
+    let dir = tempdir_real().unwrap();
+    let target = dir.path().join("external.lock");
+    let link = dir.path().join("mgc.lock");
+    let original = b"untrusted target";
+    std::fs::write(&target, original).unwrap();
+    symlink(&target, &link).unwrap();
+    let graph = ResolvedGraph::empty();
+
+    assert!(
+        write_web_lockfile_with_state(dir.path(), &graph, "https://registry.npmjs.org").is_err()
+    );
+    assert_eq!(std::fs::read(&target).unwrap(), original);
+    assert!(
+        std::fs::symlink_metadata(link)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
 }
 
 #[tokio::test]
@@ -1167,8 +1408,8 @@ async fn test_add_uses_shared_metadata_cache_when_registry_is_unavailable() {
         "http://127.0.0.1:9".into(),
         shared.path().to_path_buf(),
     );
-    let package_id = adapter
-        .add(
+    let prepared = adapter
+        .prepare_add(
             dir.path(),
             &PackageName::new("react").unwrap(),
             None,
@@ -1176,10 +1417,11 @@ async fn test_add_uses_shared_metadata_cache_when_registry_is_unavailable() {
         )
         .await
         .unwrap();
+    let package_id = prepared.id;
 
     assert_eq!(package_id.version().to_string(), "18.2.0");
     let package_json = std::fs::read_to_string(dir.path().join("package.json")).unwrap();
-    assert!(package_json.contains("\"react\": \"^18.2.0\""));
+    assert!(!package_json.contains("\"react\": \"^18.2.0\""));
 }
 
 #[tokio::test]
@@ -1206,7 +1448,7 @@ async fn test_parse_manifest_ignores_workspace_protocol_dependencies() {
 }
 
 #[tokio::test]
-async fn test_list_prefers_lockfile_state() {
+async fn test_list_uses_materialized_version_not_lock_pin_as_installed_state() {
     let dir = tempdir_real().unwrap();
     std::fs::write(
         dir.path().join("package.json"),
@@ -1225,7 +1467,7 @@ async fn test_list_prefers_lockfile_state() {
     std::fs::create_dir_all(&package_dir).unwrap();
     std::fs::write(
         package_dir.join("package.json"),
-        "{\"name\":\"tailwindcss\",\"version\":\"4.3.2\"}",
+        "{\"name\":\"tailwindcss\",\"version\":\"4.3.3\"}",
     )
     .unwrap();
     std::fs::write(
@@ -1253,8 +1495,80 @@ async fn test_list_prefers_lockfile_state() {
     let installed = adapter.list(dir.path()).await.unwrap();
     assert_eq!(installed.len(), 1);
     assert_eq!(installed[0].id.name_str(), "tailwindcss");
-    assert_eq!(installed[0].id.version().to_string(), "4.3.2");
-    assert_eq!(installed[0].integrity.as_deref(), Some("sha256-test"));
+    assert_eq!(installed[0].id.version().to_string(), "4.3.3");
+    assert_eq!(installed[0].integrity, None);
+}
+
+#[tokio::test]
+async fn test_list_fails_closed_when_installed_version_is_unknown() {
+    let dir = tempdir_real().unwrap();
+    std::fs::write(
+        dir.path().join("package.json"),
+        serde_json::json!({"name":"demo","version":"0.1.0","dependencies":{"mystery":"^1.0.0"}})
+            .to_string(),
+    )
+    .unwrap();
+    let package_dir = dir.path().join("node_modules/mystery");
+    std::fs::create_dir_all(&package_dir).unwrap();
+    std::fs::write(package_dir.join("package.json"), r#"{"name":"mystery"}"#).unwrap();
+
+    let error = WebAdapter::new()
+        .unwrap()
+        .list(dir.path())
+        .await
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("cannot verify the installed version")
+    );
+}
+
+#[tokio::test]
+async fn test_list_does_not_guess_installed_version_from_lockfile() {
+    let dir = tempdir_real().unwrap();
+    std::fs::write(
+        dir.path().join("package.json"),
+        serde_json::json!({"name":"demo","version":"0.1.0","dependencies":{"mystery":"^1.0.0"}})
+            .to_string(),
+    )
+    .unwrap();
+    let package_dir = dir.path().join("node_modules/mystery");
+    std::fs::create_dir_all(&package_dir).unwrap();
+    std::fs::write(package_dir.join("package.json"), r#"{"name":"mystery"}"#).unwrap();
+    std::fs::write(
+        dir.path().join("mgc.lock"),
+        serde_json::json!({
+            "version": "2",
+            "metadata": {"generated_at":"2024-01-01T00:00:00Z","generator":"mgc/1.0.0","lockfile_hash":""},
+            "package": [{"name":"mystery","version":"1.2.3","resolved":"https://registry.npmjs.org/mystery/-/mystery-1.2.3.tgz","integrity":"sha256-test","dependencies":[]}]
+        }).to_string(),
+    ).unwrap();
+
+    let error = WebAdapter::new()
+        .unwrap()
+        .list(dir.path())
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("a lock pin alone is not proof"));
+}
+
+#[test]
+fn add_range_does_not_masquerade_as_resolved_version() {
+    assert!(
+        super::exact_version_from_range(&mgc_types::VersionRange::parse("^1.2.3").unwrap())
+            .is_none()
+    );
+    assert!(
+        super::exact_version_from_range(&mgc_types::VersionRange::parse(">=1.2.3").unwrap())
+            .is_none()
+    );
+    assert_eq!(
+        super::exact_version_from_range(&mgc_types::VersionRange::parse("1.2.3").unwrap())
+            .unwrap()
+            .to_string(),
+        "1.2.3"
+    );
 }
 
 #[tokio::test]

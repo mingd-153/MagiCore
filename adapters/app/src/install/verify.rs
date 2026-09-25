@@ -12,7 +12,7 @@ pub fn verify_pubspec_lock(project_root: &Path) -> MgResult<()> {
 
     if !lock_path.exists() {
         return Err(MgError::Other(
-            "pubspec.lock not found (run flutter pub get first)".to_string(),
+            "pubspec.lock not found; MagiCore cannot verify this provider lockfile without a native lock import/verification implementation".to_string(),
         ));
     }
 
@@ -43,7 +43,7 @@ pub fn verify_package_resolved(project_root: &Path) -> MgResult<()> {
 
     if !resolved_path.exists() {
         return Err(MgError::Other(
-            "Package.resolved not found (run swift package resolve first)".to_string(),
+            "Package.resolved not found; MagiCore cannot verify this provider lockfile without a native lock import/verification implementation".to_string(),
         ));
     }
 
@@ -59,7 +59,7 @@ pub fn verify_podfile_lock(project_root: &Path) -> MgResult<()> {
 
     if !lock_path.exists() {
         return Err(MgError::Other(
-            "Podfile.lock not found (run pod install first)".to_string(),
+            "Podfile.lock not found; MagiCore cannot verify this provider lockfile without a native lock import/verification implementation".to_string(),
         ));
     }
 

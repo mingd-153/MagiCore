@@ -55,6 +55,7 @@ pub fn detect_language(root: &Path) -> Option<AppLanguage> {
             "flutter" => Some(AppLanguage::Flutter),
             "kotlin" => Some(AppLanguage::Kotlin),
             "swift" => Some(AppLanguage::Swift),
+            "objc" => Some(AppLanguage::ObjC),
             "multi" => Some(AppLanguage::Multi),
             _ => None,
         };

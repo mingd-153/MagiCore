@@ -1,28 +1,22 @@
 #!/usr/bin/env python3
 """P0-A dependency-delegation audit gate (2026-09-16).
 
-V1.2 audit contract: MagiCore must become a NATIVE dependency engine; until
-the native engines land (Phase 2/3), every place where a dependency-lifecycle
-operation still shells out to an external package manager must be
-MEASURABLE and DECLARED. This gate is the measurement — it scans the
-dependency lifecycle code for spawns of the forbidden PM toolchains and
-classifies each one:
+V1.2 audit contract: MagiCore must become a NATIVE dependency engine. Every
+external dependency-lifecycle tool spawn is a blocker; documentation cannot
+waive it. This gate scans dependency lifecycle code and classifies findings:
 
   allowed               the operation is NOT a dependency lifecycle op
                         (mgc build/test/run/dev/flash/doctor lanes — the
                         user's file/operation whitelist), or the file lives
                         under a test/ tree.
-  delegated-documented  the spawn sits in a function (or its doc block)
-                        carrying the `DELEGATED:` marker — an explicitly
-                        declared, honest delegation (Việc 1 / P0-B marker
-                        convention: "mgc does not own this lifecycle").
-  violation             a dependency-lifecycle spawn that is NEITHER
-                        whitelisted NOR documented — the gate FAILS.
+  violation             every dependency-lifecycle spawn, whether or not
+                        it carries a `DELEGATED:` marker — the gate FAILS.
+                        A marker is evidence/ledger metadata, never a waiver.
 
 Output: gitignored JSON ledger at docs/specs/dependencyDelegationAudit.json
 (every finding: file, line, tool, op_class, status) so Phase 2/3 native
 engine work can be driven from an exact list instead of prose. Exit code 1
-when at least one UNdocumented violation exists, 0 otherwise.
+when any dependency-lifecycle delegation exists, 0 otherwise.
 
 Heuristics (documented, deliberately conservative): Rust is scanned
 line/context based — function bodies are delimited by a naive brace walk,
@@ -32,15 +26,10 @@ recognised: exec_tool(), run()/run_inherited()/run_capture(), mgc_run(),
 Command::new(), which()/which::which(), `(tool, args)` tables, `tool: "x"`
 fields, `== "x"` dispatch, and a bare tool literal on its own line.
 
-Cổng audit uỷ quyền dependency P0-A (2026-09-16): mọi chỗ lifecycle
-dependency còn gọi toolchain ngoài phải ĐO ĐƯỢC và ĐÃ KHAI. Script quét code
-lifecycle dependency tìm spawn của toolchain PM bị cấm và phân loại:
-`allowed` (không phải operation dependency — lane build/test/run/dev/flash/
-doctor, hoặc file trong cây test), `delegated-documented` (hàm/chú thích
-mang marker `DELEGATED:` — uỷ quyền khai báo trung thực), `violation`
-(spawn dependency KHÔNG whitelist, KHÔNG khai → gate FAIL). JSON ledger
-gitignored ở docs/specs/dependencyDelegationAudit.json. Exit 1 khi còn
-violation chưa khai, 0 khi sạch.
+Cổng ownership native: mọi spawn package-manager trong dependency operation
+đều là blocker, kể cả khi có marker `DELEGATED:`. Marker chỉ ghi nhận debt,
+không miễn trừ. `allowed` chỉ dành cho operation ngoài dependency scope
+đã khai báo. Exit 1 khi còn spawn delegated trong dependency lifecycle.
 """
 
 import datetime
@@ -64,9 +53,17 @@ SCAN_ROOTS = [
     "cli/src/commands/core/add",
     "cli/src/commands/core/remove",
     "cli/src/commands/core/update",
+    # Read-only dependency inventory can still invoke a package manager
+    # (for example `list` implementations that probe installed state).
+    "cli/src/commands/core/list",
+    "cli/src/commands/core/web.rs",
+    "cli/src/commands/core/shared.rs",
+    # Model quantization is declared core-owned by this gate; include the
+    # actual command tree so python/toolchain subprocesses cannot escape.
+    "cli/src/commands/model",
+    "cli/src/commands/publish.rs",
     "core/crates/mgc-audit/src",
     "core/crates/mgc-config/src",
-    "cli/src/commands/model",
 ]
 
 # The forbidden PM toolchains (V1.2 audit list) — spawning any of these in a
@@ -80,8 +77,8 @@ SCAN_ROOTS = [
 TOOLS = [
     "cargo", "uv", "pip", "pip3", "go", "gradle", "mvn", "dotnet", "flutter",
     "dart", "swift", "pod", "npm", "pnpm", "yarn", "bun", "deno", "pio",
-    "west", "terraform", "python", "python3", "pip-audit", "cargo-audit",
-    "govulncheck",
+    "west", "terraform", "git", "python", "python3", "pip-audit", "cargo-audit",
+    "govulncheck", "composer", "pub",
 ]
 
 # Non-dependency mgc lanes: tool spawns here are the lane's own business
@@ -92,7 +89,7 @@ TOOLS = [
 # (Lane không phải dependency: spawn ở đây là việc của chính lane đó.
 # Segment đường dẫn chấp nhận cả số nhiều/bench (tests/, benches/) — code
 # test và harness đo đạc không phải lifecycle dependency của product.)
-ALLOWED_OPS = ("build", "test", "run", "dev", "flash", "doctor")
+ALLOWED_OPS = ("build", "test", "run", "dev", "flash", "doctor", "deploy")
 
 # Extra PATH-ONLY whitelist segments (never fn-name matches): test trees
 # and bench harnesses.
@@ -171,6 +168,10 @@ MESSAGE_MACROS = (
 # (pattern, khớp_trong_message): chỉ pattern bare-literal yếu bị tắt trong
 # span macro-message (xem MESSAGE_MACROS).)
 SPAWN_PATTERNS = [
+    # A known dynamic process wrapper is forbidden in dependency code even
+    # though the executable is passed indirectly and cannot match a literal.
+    # Wrapper process động đã biết bị cấm trong dependency code dù executable truyền gián tiếp.
+    (re.compile(r"(?<!fn )\b(run_native_install)\s*\("), True),
     (re.compile(rf'\bexec_tool\s*\([^()]*?"({_TOOL_ALT})"'), True),
     (re.compile(rf'(?<![\w_])(?:run_inherited|run_capture|run)\s*\(\s*"({_TOOL_ALT})"'), True),
     (re.compile(rf'\bmgc_run\s*\(\s*"({_TOOL_ALT})"'), True),
@@ -188,8 +189,8 @@ SPAWN_PATTERNS = [
     # "terraform"`. `name == "flutter"` (duyệt tên dependency trong parser
     # manifest) KHÔNG phải spawn nên không được khớp — vế trái phải là tên
     # biến đang chọn tool.)
-    (re.compile(rf'\b(?:tool|kind|cmd|bin)\s*(?:==|!=)\s*"({_TOOL_ALT})"'), True),
-    (re.compile(rf'"({_TOOL_ALT})"\s*==\s*(?:tool|kind|cmd|bin)\b'), True),
+    (re.compile(rf'\b(?:tool|cmd|bin)\s*(?:==|!=)\s*"({_TOOL_ALT})"'), True),
+    (re.compile(rf'"({_TOOL_ALT})"\s*==\s*(?:tool|cmd|bin)\b'), True),
     # A bare tool literal alone on its line (variable assignment / call arg).
     (re.compile(rf'^\s*"({_TOOL_ALT})",?\s*$', re.MULTILINE), False),
 ]
@@ -313,6 +314,9 @@ def _iter_rust_files() -> list:
     files = []
     for root in SCAN_ROOTS:
         base = os.path.join(repo_root, root)
+        if os.path.isfile(base) and base.endswith(".rs"):
+            files.append(base)
+            continue
         for dirpath, _dirnames, filenames in os.walk(base):
             for name in sorted(filenames):
                 if name.endswith(".rs"):
@@ -379,16 +383,13 @@ def _doc_block(lines: list, start_idx: int) -> str:
     return "\n".join(reversed(collected))
 
 
-def _classify(rel_path: str, fn_name: str, fn_lines: list, doc_text: str):
+def _classify(rel_path: str, fn_name: str):
     """(op_class, status) for one finding.
     ((op_class, status) cho một finding.)"""
     parts = rel_path.replace(os.sep, "/").split("/")
     path_parts = [p.lower() for p in parts[:-1]]
     fn_lower = fn_name.lower()
     fn_parts = [p for p in fn_lower.split("_") if p]
-    body = "\n".join(fn_lines)
-    marked = MARKER in body or MARKER in doc_text
-
     # 1) Path-level whitelist wins first: a file under a dev/test/flash
     #    tree is that lane's code, even when a parent segment says
     #    install/add (`cli/.../add/test/ai.rs`). Plural and bench
@@ -407,30 +408,36 @@ def _classify(rel_path: str, fn_name: str, fn_lines: list, doc_text: str):
         if matched is not None:
             return matched, "allowed"
 
-    # 2) Dependency scope wins over fn-name whitelist words: `run_install`
-    #    must never be whitelisted by the `run` keyword in its name.
-    #    (Phạm vi dependency thắng các từ whitelist trong tên hàm:
-    #    `run_install` không được whitelist nhờ từ `run` trong tên.)
+    # 2) Function-level dependency scope wins over function-level whitelist:
+    #    `run_install` is still a dependency operation. File location alone
+    #    must not turn a dev/runtime helper in an install module into an
+    #    install spawn; such helpers are classified by their own function.
+    #    (Tên hàm dependency thắng whitelist; path install không làm helper
+    #    dev/runtime thành install nếu spawn nằm trong hàm riêng.)
     for op in DEPENDENCY_OPS:
-        if op in fn_parts or op in fn_lower or op in path_parts:
-            return op, ("delegated-documented" if marked else "violation")
+        if op in fn_parts or op in fn_lower:
+            # A declaration records debt; it never grants dependency ownership.
+            # Khai báo ghi nhận khoản nợ; không biến spawn ngoài thành native.
+            return op, "violation"
 
     # 3) Whitelisted operation by function name (run_test_step, flash_fw,
     #    doctor_store, build_release, dev_server…).
     #    (Operation whitelist theo tên hàm.)
     for op in ALLOWED_OPS:
         if op in fn_parts or fn_lower.startswith(op):
-            # Declared delegation stays visible even on a whitelisted op —
-            # more information, never less.
-            # (Uỷ quyền đã khai vẫn hiện kể cả trên op whitelist — nhiều
-            # thông tin hơn, không bao giờ ít hơn.)
-            return op, ("delegated-documented" if marked else "allowed")
+            return op, "allowed"
 
-    # 4) Unclassified spawn: the honest default is a violation unless the
-    #    DELEGATED: marker declares it.
-    #    (Spawn chưa phân loại: mặc định trung thực là violation trừ khi
-    #    marker `DELEGATED:` khai rõ.)
-    return "unclassified", ("delegated-documented" if marked else "violation")
+    # A top-level spawn has no function context; use the lane path as the
+    # conservative scope fallback. Function-local spawns without an
+    # operation classification remain unclassified blockers.
+    if fn_name == "<top-level>":
+        for op in DEPENDENCY_OPS:
+            if op in path_parts:
+                return op, "violation"
+
+    # 4) Unclassified spawn is a blocker; a marker never grants an exception.
+    #    (Spawn chưa phân loại luôn bị chặn; marker không tạo ngoại lệ.)
+    return "unclassified", "violation"
 
 
 def _line_excluded(line: str) -> bool:
@@ -481,7 +488,7 @@ def scan_file(rel_path: str, abs_path: str) -> list:
                 fn_name = name
                 fn_lines = lines[start:end + 1]
                 doc_text = _doc_block(lines, start)
-            op_class, status = _classify(rel_path, fn_name, fn_lines, doc_text)
+            op_class, status = _classify(rel_path, fn_name)
             findings.append({
                 "file": rel_path,
                 "line": line_no,
@@ -489,6 +496,7 @@ def scan_file(rel_path: str, abs_path: str) -> list:
                 "op_class": op_class,
                 "function": fn_name,
                 "status": status,
+                "declared_delegation": MARKER in "\n".join(fn_lines) or MARKER in doc_text,
             })
 
     # Deduplicate: one finding per (file, line, tool) — a line matching two
@@ -546,7 +554,7 @@ def main() -> int:
         rel_path = os.path.relpath(abs_path, repo_root)
         findings.extend(scan_file(rel_path, abs_path))
 
-    counts = {"allowed": 0, "delegated-documented": 0, "violation": 0}
+    counts = {"allowed": 0, "violation": 0}
     for finding in findings:
         counts[finding["status"]] = counts.get(finding["status"], 0) + 1
 
@@ -561,7 +569,7 @@ def main() -> int:
         commit = ""
 
     report = {
-        "schema": "dependency-delegation-audit/1",
+        "schema": "dependency-delegation-audit/2",
         "generated_at": datetime.datetime.now(datetime.timezone.utc).strftime(
             "%Y-%m-%dT%H:%M:%SZ"
         ),
@@ -573,8 +581,10 @@ def main() -> int:
         "summary": {
             "total": len(findings),
             "allowed": counts["allowed"],
-            "delegated_documented": counts["delegated-documented"],
             "violation": counts["violation"],
+            "declared_delegations": sum(
+                1 for finding in findings if finding["declared_delegation"]
+            ),
         },
         "lane_gate": {
             "checked": lane_checked,
@@ -592,26 +602,20 @@ def main() -> int:
     print(
         f"dependency-delegation audit: {len(findings)} finding(s) — "
         f"allowed={counts['allowed']} "
-        f"delegated-documented={counts['delegated-documented']} "
         f"violation={counts['violation']}"
     )
-    for finding in findings:
-        if finding["status"] == "delegated-documented":
-            print(
-                f"  [delegated] {finding['file']}:{finding['line']} "
-                f"{finding['tool']} ({finding['function']})"
-            )
     violated = [f for f in findings if f["status"] == "violation"]
     if violated:
         print(
-            "UNDOCUMENTED DEPENDENCY DELEGATION — add a `DELEGATED:` marker "
-            "or make the lane fail closed:",
+            "DEPENDENCY OWNERSHIP BLOCKED — remove the external package-manager "
+            "spawn or implement the operation natively; `DELEGATED:` does not waive it:",
             file=sys.stderr,
         )
         for finding in violated:
+            declaration = " [documented debt]" if finding["declared_delegation"] else ""
             print(
                 f"  [violation] {finding['file']}:{finding['line']} "
-                f"{finding['tool']} ({finding['function']})",
+                f"{finding['tool']} ({finding['function']}){declaration}",
                 file=sys.stderr,
             )
         print(f"ledger: {os.path.relpath(out_path, repo_root)}", file=sys.stderr)

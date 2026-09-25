@@ -15,7 +15,18 @@ pub(crate) async fn audit(
     use super::{enforce_audit_exit, print_audit_report};
     let strict = StrictMode::from_env();
     let report = adapter.audit(project_root).await?;
-    print_audit_report("web", &report, fmt)?;
+
+    // Defer only when a fix will actually run; every no-op/error branch
+    // must still emit exactly one machine document. (Chỉ hoãn khi chắc
+    // chắn có mutate; nhánh không sửa vẫn phải phát đúng một document.)
+    if should_print_initial_report(
+        fix,
+        fmt,
+        report.scanner_available(),
+        report.vulnerability_count,
+    ) {
+        print_audit_report("web", &report, fmt)?;
+    }
     if !fix {
         return enforce_audit_exit("web", &report, strict);
     }
@@ -101,14 +112,25 @@ pub(crate) async fn audit(
         )
         .await;
     }
-    mgc_ui::success(&format!(
-        "audit --fix bumped {} package(s); lockfile rewritten",
-        fixed
-    ));
+    if !fmt.is_machine() {
+        mgc_ui::success(&format!(
+            "audit --fix bumped {} package(s); lockfile rewritten",
+            fixed
+        ));
+    }
     // Re-audit AFTER the fix and exit on the POST report (the pre-fix
     // findings no longer describe the project).
     // (Audit lại sau fix — exit theo report mới.)
     let post = adapter.audit(project_root).await?;
     print_audit_report("web", &post, fmt)?;
     enforce_audit_exit("web", &post, strict)
+}
+
+pub(super) fn should_print_initial_report(
+    fix: bool,
+    fmt: OutputFormat,
+    scanner_available: bool,
+    findings: usize,
+) -> bool {
+    !(fix && fmt.is_machine() && scanner_available && findings > 0)
 }

@@ -6,17 +6,13 @@
 // dưới đây chỉ trong test và mỗi block ghi rõ việc phục hồi.)
 #![allow(unsafe_code)]
 
-//! Native SwiftPM wiring tests for the app adapter — hermetic (mock
-//! registry + a `swift` shim on PATH for dump-package; no real toolchain,
-//! no real network).
-//! Test wiring SwiftPM native cho app adapter — hermetic (mock registry +
-//! shim `swift` trên PATH cho dump-package; không toolchain thật, không
-//! mạng thật).
+//! Native Swift registry tests — manifest parsing is static and must not
+//! spawn SwiftPM; registry traffic is mocked.
+//! Test registry Swift native — parse manifest tĩnh, không spawn SwiftPM;
+//! traffic registry được mock.
 
 use mgc_types::adapter::PackageAdapter;
 use mgc_types::capabilities::{ContentStoreProvider, DependencyResolver, LockfileProvider};
-use std::path::Path;
-
 /// Process-global PATH is mutated by every test here — the lock serializes
 /// the env-sensitive sections (parallel tests would otherwise clobber each
 /// other's PATH and hit the real toolchain).
@@ -94,25 +90,6 @@ fn build_archive(entries: &[(&str, &[u8])]) -> Vec<u8> {
     out
 }
 
-/// `swift` shim emitting canned dump-package JSON (the toolchain is
-/// required for real projects; the shim keeps the test hermetic).
-/// Shim `swift` phát JSON dump-package định sẵn (project thật cần
-/// toolchain; shim giữ test hermetic).
-fn install_swift_shim(dir: &Path, dump_json: &str) -> std::path::PathBuf {
-    let shim = dir.join("swift");
-    std::fs::write(
-        &shim,
-        format!("#!/bin/sh\ncat <<'MGC_EOF'\n{dump_json}\nMGC_EOF\n"),
-    )
-    .unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
-    shim
-}
-
 #[tokio::test]
 async fn app_swift_project_resolves_and_installs_natively() {
     let _path_guard = PATH_LOCK.lock().await;
@@ -148,24 +125,15 @@ async fn app_swift_project_resolves_and_installs_natively() {
     let tmp = tempfile::tempdir().unwrap();
     std::fs::write(
         tmp.path().join("Package.swift"),
-        "// swift-tools-version:5.9\nlet package = Package(name: \"App\")\n",
+        "// swift-tools-version:5.9\nlet package = Package(name: \"App\", dependencies: [.package(id: \"scope.lib\", from: \"1.0.0\")])\n",
     )
     .unwrap();
-    let dump =
-        r#"{"name":"App","dependencies":[{"source":["registry","scope.lib",{"from":"1.0.0"}]}]}"#;
-    let shim_dir = tempfile::tempdir().unwrap();
-    install_swift_shim(shim_dir.path(), dump);
     let store_root = tempfile::tempdir().unwrap();
 
-    let original_path = std::env::var("PATH").unwrap_or_default();
     // SAFETY: test-only env overrides (process-local, restored below).
     // (SAFETY: env override chỉ trong test (cục bộ process, phục hồi bên
     // dưới).)
     unsafe {
-        std::env::set_var(
-            "PATH",
-            format!("{}:{}", shim_dir.path().display(), original_path),
-        );
         std::env::set_var("MGC_SWIFT_REGISTRY_URL", &base);
         std::env::set_var("MGC_SWIFT_STORE_ROOT", store_root.path());
     }
@@ -196,7 +164,6 @@ async fn app_swift_project_resolves_and_installs_natively() {
     }
     .await;
     unsafe {
-        std::env::set_var("PATH", original_path);
         std::env::remove_var("MGC_SWIFT_REGISTRY_URL");
         std::env::remove_var("MGC_SWIFT_STORE_ROOT");
     }
@@ -231,7 +198,7 @@ async fn app_swift_project_resolves_and_installs_natively() {
     // (Manifest project không bao giờ bị viết lại (Package.swift là mã
     // nguồn Swift — mgc chỉ đọc).)
     let manifest_after = std::fs::read_to_string(tmp.path().join("Package.swift")).unwrap();
-    assert!(manifest_after.contains("let package = Package(name: \"App\")"));
+    assert!(manifest_after.contains("let package = Package(name: \"App\", dependencies:"));
 }
 
 #[tokio::test]
@@ -240,7 +207,7 @@ async fn app_swift_package_resolved_pins_win_over_declared_requirement() {
     let tmp = tempfile::tempdir().unwrap();
     std::fs::write(
         tmp.path().join("Package.swift"),
-        "// swift-tools-version:5.9\nlet package = Package(name: \"App\")\n",
+        "// swift-tools-version:5.9\nlet package = Package(name: \"App\", dependencies: [.package(id: \"scope.lib\", from: \"1.0.0\")])\n",
     )
     .unwrap();
     // Declared `from:1.0.0` but the resolved file pins 1.4.2 — the pin is
@@ -251,26 +218,11 @@ async fn app_swift_package_resolved_pins_win_over_declared_requirement() {
         r#"{"version":2,"pins":[{"identity":"scope.lib","kind":"registry","location":"registry+https://reg","state":{"version":"1.4.2"}}]}"#,
     )
     .unwrap();
-    let dump =
-        r#"{"name":"App","dependencies":[{"source":["registry","scope.lib",{"from":"1.0.0"}]}]}"#;
-    let shim_dir = tempfile::tempdir().unwrap();
-    install_swift_shim(shim_dir.path(), dump);
-
-    let original_path = std::env::var("PATH").unwrap_or_default();
-    unsafe {
-        std::env::set_var(
-            "PATH",
-            format!("{}:{}", shim_dir.path().display(), original_path),
-        );
-    }
     let parsed = async {
         let adapter = mgc_app_adapter::adapter_for(tmp.path()).unwrap();
         adapter.parse_manifest(tmp.path()).await
     }
     .await;
-    unsafe {
-        std::env::set_var("PATH", original_path);
-    }
     let manifest = parsed.unwrap();
     assert_eq!(manifest.dependencies.len(), 1);
     assert_eq!(
@@ -281,18 +233,15 @@ async fn app_swift_package_resolved_pins_win_over_declared_requirement() {
 }
 
 #[tokio::test]
-async fn app_swift_manifest_fails_closed_without_toolchain() {
+async fn app_swift_manifest_parses_without_spawning_toolchain() {
     let _path_guard = PATH_LOCK.lock().await;
     let tmp = tempfile::tempdir().unwrap();
     std::fs::write(
         tmp.path().join("Package.swift"),
-        "// swift-tools-version:5.9\nlet package = Package(name: \"App\")\n",
+        "// swift-tools-version:5.9\nlet package = Package(name: \"App\", dependencies: [.package(id: \"scope.lib\", from: \"1.0.0\")])\n",
     )
     .unwrap();
-    // A PATH without any `swift` — the manifest read must fail closed with
-    // guidance instead of returning an empty (false-success) manifest.
-    // (PATH không có `swift` — đọc manifest phải fail-closed kèm hướng dẫn
-    // thay vì trả manifest rỗng (thành công giả).)
+    // An empty PATH proves manifest parsing is in-process, not SwiftPM.
     let empty_dir = tempfile::tempdir().unwrap();
     let original_path = std::env::var("PATH").unwrap_or_default();
     unsafe {
@@ -306,10 +255,7 @@ async fn app_swift_manifest_fails_closed_without_toolchain() {
     unsafe {
         std::env::set_var("PATH", original_path);
     }
-    let err = parsed.unwrap_err();
-    let msg = err.to_string();
-    assert!(
-        msg.contains("Swift toolchain") || msg.contains("dump-package"),
-        "guidance must explain the toolchain requirement: {msg}"
-    );
+    let manifest = parsed.unwrap();
+    assert_eq!(manifest.dependencies.len(), 1);
+    assert_eq!(manifest.dependencies[0].name.as_str(), "scope/lib");
 }

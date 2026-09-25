@@ -1,6 +1,6 @@
 //! Gradle build.gradle / build.gradle.kts manifest parsing.
 
-use mgc_types::{Ecosystem, Manifest, MgError, MgResult};
+use mgc_types::{Manifest, MgError, MgResult};
 use std::path::Path;
 
 /// Parse build.gradle or build.gradle.kts to Manifest.
@@ -15,20 +15,23 @@ pub fn parse_build_gradle(project_root: &Path) -> MgResult<Manifest> {
         return Err(MgError::Other("build.gradle not found".to_string()));
     }
 
-    // Issue #13: Parse Gradle DSL (Groovy/Kotlin)
-    // For now, return empty manifest with project name
-    let name = project_root
-        .file_name()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "app".to_string());
-
-    Ok(Manifest::new(&name, Ecosystem::App))
+    Err(MgError::Unsupported {
+        core: "app",
+        capability: "parse-gradle-manifest",
+        guidance: format!(
+            "{} is executable Gradle DSL; MagiCore does not parse it as a dependency manifest. Use only the version-catalog operations MagiCore explicitly supports; other dependency operations are unsupported",
+            gradle_path.display()
+        ),
+    })
 }
 
-/// Write Manifest back to build.gradle.
+/// Gradle build files are programs; generic manifest rewrites are unsafe.
 pub fn write_build_gradle(_project_root: &Path, _manifest: &Manifest) -> MgResult<()> {
-    // Issue #13: Implement Gradle DSL write
-    Ok(())
+    Err(MgError::Unsupported {
+        core: "app",
+        capability: "write-gradle-manifest",
+        guidance: "MagiCore does not rewrite executable Gradle DSL; only explicitly supported version-catalog operations are available, and other dependency mutations are unsupported".to_string(),
+    })
 }
 
 /// A version-catalog library entry.

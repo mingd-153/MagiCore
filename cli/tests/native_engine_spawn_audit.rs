@@ -1,22 +1,19 @@
 //! `native_engine_spawn_audit.rs` — Process-spawn audit (Tech Lead
 //! 2026-09-10 #7, P0-1 rewrite 2026-09-10): CI-proof that `mgc
 //! dev/test/run/build` NEVER spawn rival runtimes or external PMs
-//! outside compatibility mode.
+//! in every mode, including historical compatibility flags.
 //!
 //! Mechanism: HERMETIC PATH CANARY. A fake `bun`/`deno` executable is
 //! planted at the FRONT of a sandbox PATH — if any code path spawns the
 //! rival runtime, the canary writes a MARKER FILE. Native mode must
-//! leave NO marker; only `--compat-runtime <runtime>` may open the
-//! gate, and then the canary marker MUST exist (proof the gate — not
-//! silence — is what we observed). `--help` greps prove nothing and are
-//! no longer accepted as evidence.
+//! leave NO marker; `--compat-runtime` must not open a delegated runtime
+//! lane. `--help` greps prove nothing and are not accepted as evidence.
 //!
 //! Kiểm toán process-spawn: chứng minh CI rằng mgc dev/test/run/build
-//! KHÔNG BAO GIỜ spawn runtime đối thủ/PM ngoài chế độ compat. Cơ chế:
+//! KHÔNG BAO GIỜ spawn runtime đối thủ/PM, kể cả chế độ compat cũ. Cơ chế:
 //! CANARY PATH HERMETIC — fake bun/deno đứng đầu PATH sandbox; spawn
-//! thật sẽ ghi MARKER FILE. Native không được để marker; chỉ
-//! --compat-runtime mới mở cổng và khi đó marker PHẢI có (chứng minh
-//! quan sát được cổng, không phải im lặng). Grep --help không còn được
+//! thật sẽ ghi MARKER FILE. Mọi mode đều không được để marker; cờ
+//! --compat-runtime không mở cổng. Grep --help không còn được
 //! coi là evidence.
 
 #![allow(clippy::unwrap_used)]
@@ -193,7 +190,7 @@ fn web_project_with_dev_script(dir: &std::path::Path, dev_script: &str) {
 fn mgc_dev_never_spawns_bun_or_deno_by_default_process_canary() {
     // P0-1 evidence: a project whose dev script names bun/deno MUST be
     // refused in native mode AND the canary must stay silent — no rival
-    // process ever resolves from PATH. Refusal must point at migration.
+    // process ever resolves from PATH. Refusal must state native support is absent.
     // Project dev script là bun/deno → native TỪ CHỐI + canary im lặng.
     for tool in ["bun", "deno"] {
         let project = TempDir::new().unwrap();
@@ -218,30 +215,27 @@ fn mgc_dev_never_spawns_bun_or_deno_by_default_process_canary() {
             "{tool} canary must NEVER fire under native 'mgc dev' (marker):\n{marker}\noutput:\n{output}"
         );
         assert!(
-            output.contains("NATIVE") || output.contains("refusing to spawn"),
+            (output.contains("native MagiCore runtime")
+                && output.contains("no external runtime was invoked"))
+                || output.contains("not through another package manager"),
             "refusal must explain the native-engine contract:\n{output}"
         );
     }
 }
 
 #[test]
-fn mgc_dev_compat_flag_gates_rival_runtime_explicitly() {
-    // Explicit compat flag OPENS the gate for the named runtime only —
-    // the canary MUST fire (proof the spawn happened through the gate,
-    // with the loud warning), and the OTHER runtime's canary stays silent.
-    // Cờ compat mở cổng CHO ĐÚNG runtime — canary của runtime đó PHẢI
-    // chạy (spawn qua cổng + cảnh báo), runtime kia im lặng.
-    for (flag, allowed, denied) in [("bun", "bun", "deno"), ("deno", "deno", "bun")] {
+fn mgc_dev_compat_flag_still_refuses_rival_runtime() {
+    // Compatibility flags must not re-enable rival runtimes under the
+    // native-only product policy. Both canaries stay silent.
+    for (flag, candidate, denied) in [("bun", "bun", "deno"), ("deno", "deno", "bun")] {
         let project = TempDir::new().unwrap();
-        let script = if allowed == "bun" {
+        let script = if candidate == "bun" {
             "bun run dev-server"
         } else {
             "deno run dev-server.ts"
         };
         web_project_with_dev_script(project.path(), script);
-        let allowed_canary = CanarySandbox::new(allowed);
-        // Deny-path canary shares the marker file naming but a separate
-        // bin dir: if the gate leaks to the other runtime, this fires.
+        let candidate_canary = CanarySandbox::new(candidate);
         let denied_canary = CanarySandbox::new(denied);
 
         // PATH chứa CẢ HAI canary — chỉ runtime được chọn mới được phép chạy.
@@ -250,7 +244,7 @@ fn mgc_dev_compat_flag_gates_rival_runtime_explicitly() {
             .current_dir(project.path())
             .env("PATH", {
                 let mut paths = vec![
-                    allowed_canary.bin_dir.path().to_path_buf(),
+                    candidate_canary.bin_dir.path().to_path_buf(),
                     denied_canary.bin_dir.path().to_path_buf(),
                 ];
                 if let Some(existing) = std::env::var_os("PATH") {
@@ -265,10 +259,14 @@ fn mgc_dev_compat_flag_gates_rival_runtime_explicitly() {
         let stderr = String::from_utf8_lossy(&out.stderr).to_string();
         let output = format!("{stdout}{stderr}");
 
+        assert_ne!(
+            out.status.code(),
+            Some(0),
+            "compat must stay closed:\n{output}"
+        );
         assert!(
-            allowed_canary.marker_text().contains(allowed),
-            "compat '--compat-runtime {flag}' must actually spawn {allowed} through the gate (marker):\n{}",
-            allowed_canary.marker_text()
+            candidate_canary.marker_text().is_empty(),
+            "compat must not spawn {candidate}"
         );
         assert!(
             denied_canary.marker_text().is_empty(),
@@ -276,19 +274,16 @@ fn mgc_dev_compat_flag_gates_rival_runtime_explicitly() {
             denied_canary.marker_text()
         );
         assert!(
-            output.contains("COMPATIBILITY MODE"),
-            "every compat spawn must print the loud warning:\n{output}"
+            output.contains("native MagiCore runtime") || output.contains("does not yet own"),
+            "refusal must explain policy:\n{output}"
         );
     }
 }
 
 #[test]
-fn mgc_dev_mgc_compat_runtime_env_is_escape_hatch_gated() {
-    // MGC_COMPAT_RUNTIME env là escape hatch tương đương cờ — same gate
-    // semantics: opens ONLY the named runtime, warning printed, other
-    // runtime canary silent.
-    // Env MGC_COMPAT_RUNTIME là escape hatch tương đương cờ — chỉ mở
-    // đúng runtime được chọn, in cảnh báo, runtime kia im lặng.
+fn mgc_dev_compat_env_does_not_enable_rival_runtime() {
+    // The compatibility environment variable must not override the
+    // native-only dependency/runtime boundary.
     let project = TempDir::new().unwrap();
     web_project_with_dev_script(project.path(), "deno run dev-server.ts");
     let deno_canary = CanarySandbox::new("deno");
@@ -316,10 +311,14 @@ fn mgc_dev_mgc_compat_runtime_env_is_escape_hatch_gated() {
         String::from_utf8_lossy(&out.stderr)
     );
 
+    assert_ne!(
+        out.status.code(),
+        Some(0),
+        "environment must not open runtime gate:\n{output}"
+    );
     assert!(
-        deno_canary.marker_text().contains("deno"),
-        "MGC_COMPAT_RUNTIME=deno must open the deno gate (marker):\n{}",
-        deno_canary.marker_text()
+        deno_canary.marker_text().is_empty(),
+        "environment must not spawn deno"
     );
     assert!(
         bun_canary.marker_text().is_empty(),
@@ -327,8 +326,8 @@ fn mgc_dev_mgc_compat_runtime_env_is_escape_hatch_gated() {
         bun_canary.marker_text()
     );
     assert!(
-        output.contains("COMPATIBILITY MODE"),
-        "env escape hatch must warn like the flag:\n{output}"
+        output.contains("native MagiCore runtime") || output.contains("does not yet own"),
+        "refusal must explain policy:\n{output}"
     );
 }
 
@@ -391,12 +390,8 @@ fn mgc_run_never_spawns_rival_runtime_without_compat_flag() {
 }
 
 #[test]
-fn mgc_run_compat_flag_gates_rival_runtime_explicitly() {
-    // With the explicit flag the gate OPENS for the named runtime — the
-    // hermetic canary MUST fire, proving the spawn happened through the
-    // gate (not merely that a refusal is absent).
-    // Có cờ tường minh cổng MỞ — canary hermetic PHẢI chạy, chứng minh
-    // spawn đi qua cổng (không chỉ là "không thấy lỗi từ chối").
+fn mgc_run_compat_flag_still_refuses_rival_runtime() {
+    // An explicit compatibility flag cannot opt into a rival runtime.
     let project = TempDir::new().unwrap();
     std::fs::write(
         project.path().join("package.json"),
@@ -422,10 +417,14 @@ fn mgc_run_compat_flag_gates_rival_runtime_explicitly() {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
+    assert_ne!(
+        out.status.code(),
+        Some(0),
+        "compat must stay closed:\n{text}"
+    );
     assert!(
-        deno_canary.marker_text().contains("deno"),
-        "explicit compat must actually spawn deno via the gate (marker):\n{}",
-        deno_canary.marker_text()
+        deno_canary.marker_text().is_empty(),
+        "compat must not spawn deno"
     );
     assert!(
         !text.contains("refusing to spawn 'deno'"),
@@ -464,19 +463,17 @@ fn mgc_build_never_spawns_rival_runtime_or_pm_from_build_script() {
             "'mgc build' must refuse the {tool}-delegating script:\n{output}"
         );
         assert!(
-            output.contains("NATIVE")
-                || output.contains("package manager")
-                || output.contains("refusing to spawn"),
+            (output.contains("native MagiCore runtime")
+                && output.contains("no external runtime was invoked"))
+                || output.contains("not through another package manager"),
             "the refusal must name the {tool} delegation + native contract:\n{output}"
         );
     }
 }
 
 #[test]
-fn mgc_build_compat_flag_gates_rival_runtime_for_build() {
-    // Compat lane for build: bun build script runs THROUGH the gate with
-    // the warning; native lane stays refused (covered above).
-    // Lane compat cho build: script bun chạy QUA cổng kèm cảnh báo.
+fn mgc_build_compat_flag_still_refuses_rival_runtime() {
+    // A compat flag must not make a rival package/runtime executable.
     let project = TempDir::new().unwrap();
     std::fs::write(
         project.path().join("package.json"),
@@ -502,13 +499,17 @@ fn mgc_build_compat_flag_gates_rival_runtime_for_build() {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    assert!(
-        bun_canary.marker_text().contains("bun"),
-        "compat build must spawn bun through the gate (marker):\n{}",
-        bun_canary.marker_text()
+    assert_ne!(
+        out.status.code(),
+        Some(0),
+        "compat build must stay closed:\n{text}"
     );
     assert!(
-        text.contains("COMPATIBILITY MODE"),
-        "compat build must warn loudly:\n{text}"
+        bun_canary.marker_text().is_empty(),
+        "compat build must not spawn bun"
+    );
+    assert!(
+        text.contains("native MagiCore runtime") || text.contains("does not yet own"),
+        "refusal must explain policy:\n{text}"
     );
 }

@@ -180,37 +180,22 @@ async fn parse_manifest_uses_dir_name_for_terraform() {
 }
 
 #[tokio::test]
-async fn install_delegates_to_terraform_binary() {
-    // Terraform install gọi `terraform init` thực sự qua exec_tool.
-    // Trong môi trường test không có `terraform` binary → expect Err.
-    // Đây là hành vi ĐÚNG: không có terraform → fail sớm, không silent.
+async fn terraform_package_adapter_install_fails_closed_without_spawning_terraform() {
     let dir = tmp("install-tf");
     std::fs::write(dir.join("main.tf"), "provider \"aws\" {}\n").unwrap();
     let a = adapter_for(&dir).unwrap().unwrap();
     let _manifest = a.parse_manifest(&dir).await.unwrap();
-    // Terraform branch has no registry graph — resolve fails closed, so the
-    // test drives install with an empty graph directly (install is the part
-    // that shells out to the real terraform binary).
-    // Nhánh Terraform không có graph registry — resolve fail-closed, test
-    // gọi install với graph rỗng trực tiếp (install là phần chạy terraform).
     let graph = mgc_types::ResolvedGraph::default();
     let result = a.install(&graph, &dir, Default::default()).await;
-    // Hoặc ok (nếu terraform được cài), hoặc err với message liên quan đến exec
-    match &result {
-        Ok(_) => { /* terraform có sẵn — ok */ }
-        Err(e) => {
-            let msg = e.to_string();
-            // Phải fail vì binary không tồn tại, không phải vì logic sai
-            assert!(
-                msg.contains("terraform")
-                    || msg.contains("No such")
-                    || msg.contains("not found")
-                    || msg.contains("exec")
-                    || msg.contains("os error"),
-                "unexpected error: {msg}"
-            );
+    let error = result.expect_err("PackageAdapter must not spawn Terraform");
+    assert!(matches!(
+        error,
+        mgc_types::MgError::Unsupported {
+            core: "cloud",
+            capability: "install",
+            ..
         }
-    }
+    ));
 }
 
 #[tokio::test]
@@ -225,8 +210,8 @@ async fn add_fails_closed_for_terraform() {
         .unwrap_err();
     let msg = err.to_string();
     assert!(
-        msg.contains("terraform") || msg.contains("deploy") || msg.contains("HCL"),
-        "error must mention terraform usage: {msg}"
+        msg.contains("direct adapter mutation is disabled"),
+        "adapter mutation must fail closed and require the CLI gateway: {msg}"
     );
 }
 
@@ -245,6 +230,44 @@ async fn update_fails_closed_for_terraform() {
     std::fs::write(dir.join("main.tf"), "provider \"aws\" {}\n").unwrap();
     let a = adapter_for(&dir).unwrap().unwrap();
     assert!(a.update(&dir, None).await.is_err());
+}
+
+#[tokio::test]
+async fn terraform_list_fails_closed_instead_of_returning_an_empty_native_list() {
+    let dir = tmp("list-tf");
+    std::fs::write(dir.join("main.tf"), "provider \"aws\" {}\n").unwrap();
+    let adapter = adapter_for(&dir).unwrap().unwrap();
+    let error = adapter.list(&dir).await.unwrap_err();
+    assert!(matches!(
+        error,
+        mgc_types::MgError::Unsupported {
+            core: "cloud",
+            capability: "list",
+            ..
+        }
+    ));
+    assert!(
+        !adapter
+            .capabilities()
+            .contains(&mgc_types::capabilities::Capability::ContentStoreProvider)
+    );
+    assert!(adapter.probe_content_store().is_err());
+}
+
+#[tokio::test]
+async fn pulumi_without_package_json_list_fails_closed() {
+    let dir = tmp("list-pulumi-no-package");
+    std::fs::write(dir.join("Pulumi.yaml"), "name: infra\nruntime: python\n").unwrap();
+    let adapter = adapter_for(&dir).unwrap().unwrap();
+    let error = adapter.list(&dir).await.unwrap_err();
+    assert!(matches!(
+        error,
+        mgc_types::MgError::Unsupported {
+            core: "cloud",
+            capability: "list",
+            ..
+        }
+    ));
 }
 
 #[tokio::test]

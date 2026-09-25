@@ -5,10 +5,8 @@
 mod adapter;
 mod cloud_type;
 mod sbom;
-mod tooling;
 
 pub mod deploy;
-pub mod install;
 pub mod scaffold;
 
 pub use adapter::{CloudAdapter, adapter_for};

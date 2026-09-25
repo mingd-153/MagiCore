@@ -1,5 +1,7 @@
-//! `scanners/govulncheck.rs` — Go vulnerability scanner via govulncheck
-//! (Tech Lead P1 2026-09-09 matrix row "Lib/Web Go govulncheck").
+//! `scanners/govulncheck.rs` — Go OSV scanner plus a compatibility parser
+//! for govulncheck streams; the active audit path does not spawn govulncheck.
+//! Scanner OSV Go và parser tương thích stream govulncheck; audit hiện tại
+//! không spawn govulncheck.
 //!
 //! Parser typed theo STREAMING JSON chính thức của govulncheck
 //! (golang.org/x/vuln/internal/govulncheck, protocol v1.0.0): mỗi DÒNG
@@ -19,12 +21,6 @@ use mgc_types::adapter::{
 use mgc_types::{MgError, MgResult, PackageId, PackageName, Version};
 use serde::Deserialize;
 use std::path::Path;
-
-/// `-json` mode always exits 0 (even with findings) per the official
-/// contract — anything else is a genuine tool error.
-/// Chế độ `-json` luôn exit 0 (kể cả có finding) theo hợp đồng chính
-/// thức — khác 0 là lỗi tool thật.
-const GOVULNCHECK_OK_EXIT_CODES: [i32; 1] = [0];
 
 /// One streaming JSON line — exactly one field is set (protocol v1.0.0).
 /// The `err` field exists in the doc'd handler contract for streams that
@@ -336,65 +332,22 @@ fn truncate_chars(text: &str, max_chars: usize) -> String {
     text.chars().take(max_chars).collect()
 }
 
-/// Audit Go dependencies using govulncheck (source mode, `./...`).
-/// Requires: govulncheck on PATH, go.mod in the project root.
-/// Audit dependency Go bằng govulncheck (source mode, `./...`).
+/// Audit Go module pins natively through MGC's OSV client.
+/// Dùng OSV client của MGC để audit pin Go native.
 ///
-/// R6 (native OSV fallback): when the govulncheck binary is MISSING,
-/// go.mod `require` pins ride a real OSV `Go` query instead of
-/// ToolMissing — direct requirements only (go.sum transitives are out
-/// of scope for the line reader), recorded honestly in the reasons.
-/// Symbol-level precision still needs the real tool.
-/// Không có binary govulncheck, ghim require trong go.mod đi query OSV
-/// `Go` thật — chỉ direct require (transitive trong go.sum ngoài tầm bộ
-/// đọc dòng), ghi rõ trong reasons. Muốn chính xác symbol-level vẫn cần
-/// tool thật.
+/// Coverage is direct `go.mod` require pins only. `go.sum` transitive
+/// build-list parsing and symbol reachability are not implemented, so
+/// successful queries remain Partial rather than claiming full coverage.
+/// Chỉ phủ pin require trực tiếp trong go.mod; chưa đọc build list
+/// transitive trong go.sum hoặc reachability symbol nên kết quả Partial.
 pub async fn audit_go(project_root: &Path) -> MgResult<AuditReport> {
-    // DELEGATED: the audit spawns the toolchain-owned govulncheck scanner
-    // for real (source mode); missing binary falls back to native OSV.
     if !project_root.join("go.mod").is_file() {
         return Ok(AuditReport::scanner_failed(
-            "govulncheck",
+            "mgc-go-osv",
             "no go.mod found — the Go scanner only audits Go modules",
         ));
     }
-    if which::which("govulncheck").is_err() {
-        return audit_go_osv_fallback(project_root).await;
-    }
-
-    let args = vec!["-json".to_string(), "./...".to_string()];
-    let exec_opts = mgc_exec::run::ExecOptions {
-        cwd: Some(project_root.to_path_buf()),
-        // Full capture: govulncheck streams findings THROUGHOUT the
-        // payload — a line-capped tail would silently drop them.
-        // Capture đầy đủ: govulncheck phát finding RẢI KHẮP payload —
-        // tail giới hạn dòng sẽ bỏ finding âm thầm.
-        capture_full_stdout: true,
-        ..Default::default()
-    };
-
-    let result = mgc_exec::run::run("govulncheck", &args, &exec_opts)
-        .map_err(|e| MgError::Other(format!("govulncheck failed: {e}")))?;
-
-    // `-json` exits 0 even WITH findings — anything else is a tool error.
-    // `-json` exit 0 kể cả CÓ finding — khác 0 là lỗi tool.
-    if !GOVULNCHECK_OK_EXIT_CODES.contains(&result.exit_code) {
-        return Ok(AuditReport::scanner_failed(
-            "govulncheck",
-            format!(
-                "govulncheck exited with code {}: {}",
-                result.exit_code, result.stderr_tail
-            ),
-        ));
-    }
-
-    let parsed = parse_govulncheck_json(&result.stdout_full)?;
-    Ok(AuditReport {
-        packages_audited: parsed.packages_audited,
-        vulnerability_count: parsed.vulnerabilities.len(),
-        vulnerabilities: parsed.vulnerabilities,
-        scanner_status: ScannerStatus::Available,
-    })
+    audit_go_osv_fallback(project_root).await
 }
 
 /// Read go.mod `require` pins into OSV pins (`Go` ecosystem). Both the
@@ -468,22 +421,27 @@ pub fn read_go_mod_requires(raw: &str) -> (Vec<OsvPin>, Vec<String>) {
     (pins, skipped)
 }
 
-/// OSV fallback when the govulncheck binary is missing: query direct
-/// require pins, mark the direct-only coverage honestly. No parseable
-/// pins → the tool is genuinely needed (ToolMissing stays).
-/// Fallback OSV khi thiếu binary: query ghim require trực tiếp, ghi rõ
-/// giới hạn direct-only. Không có ghim nào → vẫn cần tool (ToolMissing).
+/// Query direct require pins and mark the limited coverage honestly.
+/// Query pin require trực tiếp và ghi nhận rõ giới hạn phạm vi.
 async fn audit_go_osv_fallback(project_root: &Path) -> MgResult<AuditReport> {
-    // DELEGATED: names the toolchain-owned scanner in ToolMissing guidance
-    // only — this fallback never spawns it (native OSV query instead).
     let raw = std::fs::read_to_string(project_root.join("go.mod"))
         .map_err(|e| MgError::Other(format!("read go.mod: {e}")))?;
     let (pins, mut skipped) = read_go_mod_requires(&raw);
     if pins.is_empty() {
-        return Ok(AuditReport::tool_missing(
-            "govulncheck",
-            "go.mod has no versioned require pins for the OSV fallback — go install golang.org/x/vuln/cmd/govulncheck@latest (official Go vulnerability scanner)",
-        ));
+        skipped.push(
+            "go.mod contains no versioned require pins; transitive coverage is not established"
+                .to_string(),
+        );
+        return Ok(AuditReport {
+            packages_audited: 0,
+            vulnerability_count: 0,
+            vulnerabilities: Vec::new(),
+            scanner_status: ScannerStatus::Partial {
+                scanned: 0,
+                skipped: skipped.len(),
+                reasons: skipped,
+            },
+        });
     }
     skipped.push(
         "OSV fallback covers direct require pins only — go.sum transitives need govulncheck for symbol-level precision"

@@ -2516,6 +2516,7 @@ dependencies = [
  "mgc-cache",
  "mgc-config",
  "mgc-crypto",
+ "mgc-lib-adapter",
  "mgc-lockfile",
  "mgc-sbom",
  "mgc-types",
@@ -2533,10 +2534,14 @@ name = "mgc-app-adapter"
 version = "1.1.0-rc.9"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
+ "chrono",
  "criterion",
  "dirs",
+ "flate2",
  "futures-util",
  "hex",
+ "libc",
  "mgc-adapter-base",
  "mgc-audit",
  "mgc-cache",
@@ -2557,9 +2562,11 @@ dependencies = [
  "serde_yaml",
  "sha1 0.10.7",
  "sha2 0.10.9",
+ "tar",
  "tempfile",
  "tokio",
  "toml",
+ "url",
  "which",
 ]
 
@@ -2568,7 +2575,6 @@ name = "mgc-audit"
 version = "1.1.0-rc.9"
 dependencies = [
  "futures-util",
- "mgc-exec",
  "mgc-http",
  "mgc-lockfile",
  "mgc-types",
@@ -2577,7 +2583,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
- "which",
+ "toml",
 ]
 
 [[package]]
@@ -2836,16 +2842,17 @@ dependencies = [
  "anyhow",
  "async-trait",
  "base64 0.22.1",
+ "chrono",
  "criterion",
  "dirs",
  "futures-util",
  "hex",
+ "libc",
  "mgc-adapter-base",
  "mgc-audit",
  "mgc-cache",
  "mgc-config",
  "mgc-crypto",
- "mgc-exec",
  "mgc-lockfile",
  "mgc-platform",
  "mgc-resolver",
@@ -2877,6 +2884,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "fs2",
+ "hex",
  "libc",
  "mgc-crypto",
  "mgc-types",
@@ -3011,7 +3019,6 @@ dependencies = [
  "flate2",
  "futures-util",
  "hex",
- "mgc-exec",
  "mgc-http",
  "mgc-platform",
  "mgc-store",
@@ -3026,6 +3033,7 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "url",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3147,6 +3155,7 @@ dependencies = [
  "flate2",
  "futures-util",
  "hex",
+ "libc",
  "lru",
  "mgc-adapter-base",
  "mgc-audit",

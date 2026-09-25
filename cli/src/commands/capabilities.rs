@@ -56,34 +56,14 @@ fn capabilities_for_core(core: &str) -> Result<&'static [Capability]> {
 /// Quyền sở hữu dependency từng core, suy ra từ bảng tường lửa C0 —
 /// nguồn máy-đọc DUY NHẤT matrix cross-check (T0.4).
 pub fn dependency_ownership(core: &str) -> serde_json::Value {
-    use crate::commands::dep_gate::{DepContext, DepOp, DepOwner, SPLIT_LANGUAGES, owner_for};
+    use crate::commands::dep_gate::{DepContext, DepOwner, SPLIT_LANGUAGES, owner_for};
     fn ops_for(core: &str, ecosystem: Option<&str>) -> serde_json::Value {
-        let ops = [
-            DepOp::Install,
-            DepOp::Add,
-            DepOp::Remove,
-            DepOp::Update,
-            DepOp::List,
-            DepOp::Resolve,
-            DepOp::Lock,
-            DepOp::Fetch,
-            DepOp::Verify,
-            DepOp::Store,
-            DepOp::Materialize,
-            DepOp::FrozenInstall,
-            DepOp::OfflineReinstall,
-            DepOp::Gc,
-        ];
         let mut map = serde_json::Map::new();
-        for op in ops {
-            let ctx = DepContext::new(core, ecosystem, None, None, op);
-            let (owner, tools) = match owner_for(&ctx) {
+        for op in crate::commands::dep_gate::DepOp::ALL {
+            let ctx = DepContext::new(core, ecosystem, None, None, *op);
+            let (owner, tools): (&str, Vec<String>) = match owner_for(&ctx) {
                 DepOwner::Native => ("mgc-native", Vec::new()),
                 DepOwner::ScaffoldOnly => ("scaffold-only", Vec::new()),
-                DepOwner::Delegated { tools } => (
-                    "delegated",
-                    tools.iter().map(|tool| (*tool).to_string()).collect(),
-                ),
                 DepOwner::Unsupported => ("unsupported", Vec::new()),
             };
             map.insert(

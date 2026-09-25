@@ -40,42 +40,48 @@ fn vite_dev_launch_needs_no_vite_binary() {
 }
 
 #[test]
-fn compat_tool_mapping_is_hard_per_member_kind() {
-    // Map cứng member → tool: mỗi loại chỉ mở đúng tool sẽ spawn.
-    // (Hard mapping — each member kind opens exactly its spawn tool.)
-    use super::required_compat_tool;
+fn non_native_monorepo_members_are_classified_without_tool_mapping() {
+    // Detect unsupported member ecosystems for accurate fail-closed errors.
+    // Nhận diện ecosystem member chưa được hỗ trợ để báo lỗi chính xác.
+    use super::non_native_member_ecosystem;
     for (file, tool) in [
         ("go.mod", "go"),
-        ("requirements.txt", "pip"),
-        ("Cargo.toml", "cargo"),
-        ("pom.xml", "mvn"),
-        ("composer.json", "composer"),
-        ("artisan", "composer"),
+        ("requirements.txt", "python"),
+        ("Cargo.toml", "rust"),
+        ("pom.xml", "java"),
+        ("composer.json", "php"),
+        ("artisan", "php"),
     ] {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join(file), "x").unwrap();
-        assert_eq!(required_compat_tool(dir.path()), Some(tool), "file {file}");
+        assert_eq!(
+            non_native_member_ecosystem(dir.path()),
+            Some(tool),
+            "file {file}"
+        );
     }
     let empty = tempfile::tempdir().unwrap();
-    assert_eq!(required_compat_tool(empty.path()), None);
+    assert_eq!(non_native_member_ecosystem(empty.path()), None);
 }
 
 #[test]
-fn compat_gate_opens_only_the_matching_tool() {
-    // Một flag hợp lệ không bao giờ mở mọi nhánh: cargo chỉ mở Cargo,
-    // sai tool hoặc Native đều fail-closed.
-    // (One flag never opens every branch.)
+fn monorepo_install_rejects_external_package_manager_fallbacks() {
+    // No compatibility flag may enable a provider package manager.
+    // Không cờ compatibility nào được bật package manager bên ngoài.
     use super::compat_install_target;
     use crate::commands::compat::CompatMode;
     let cargo_member = tempfile::tempdir().unwrap();
     std::fs::write(cargo_member.path().join("Cargo.toml"), "[package]\n").unwrap();
-    // Wrong tool → denied (would spawn `cargo fetch`, not go).
-    let err = compat_install_target(cargo_member.path(), &CompatMode::Explicit("go".to_string()))
-        .expect_err("cargo member with --compat-runtime=go must fail closed");
+    // Even an exact opt-in is denied and no provider command is run.
+    let err = compat_install_target(
+        cargo_member.path(),
+        &CompatMode::Explicit("cargo".to_string()),
+    )
+    .expect_err("cargo member with exact compat opt-in must fail closed");
     let msg = format!("{err:#}");
     assert!(
-        msg.contains("--compat-runtime=cargo"),
-        "must name the required tool: {msg}"
+        msg.contains("does not yet own the complete native dependency lifecycle"),
+        "must explain native lifecycle is missing: {msg}"
     );
     // Native (no opt-in) → denied.
     compat_install_target(cargo_member.path(), &CompatMode::Native)
@@ -87,25 +93,21 @@ fn compat_gate_opens_only_the_matching_tool() {
 }
 
 #[test]
-fn compat_decision_allows_match_and_pip3_alias() {
-    // Decision thuần (không spawn): đúng tool → Ok; pip3 mở nhánh pip
-    // (alias đã ghi nhận); sai tool/Native → Err.
-    // (Pure decision: match → Ok; pip3 ⇒ pip alias; else Err.)
+fn compat_decision_rejects_every_external_package_manager() {
+    // No opt-in may authorize an external package-manager install.
+    // Không cờ opt-in nào được cấp quyền cài bằng package manager ngoài.
     use super::compat_gate_decision;
-    use crate::commands::compat::CompatMode;
-    let pip_member = tempfile::tempdir().unwrap();
-    std::fs::write(pip_member.path().join("requirements.txt"), "six==1.17.0\n").unwrap();
-    assert_eq!(
-        compat_gate_decision(pip_member.path(), &CompatMode::Explicit("pip".to_string())).unwrap(),
-        "pip"
-    );
-    assert_eq!(
-        compat_gate_decision(pip_member.path(), &CompatMode::Explicit("pip3".to_string())).unwrap(),
-        "pip",
-        "documented pip3 alias must open the pip branch"
-    );
-    compat_gate_decision(pip_member.path(), &CompatMode::Explicit("uv".to_string()))
-        .expect_err("uv must not open the pip branch");
-    compat_gate_decision(pip_member.path(), &CompatMode::Native)
-        .expect_err("native must stay closed");
+    for manifest in [
+        "go.mod",
+        "requirements.txt",
+        "Cargo.toml",
+        "pom.xml",
+        "composer.json",
+    ] {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::write(project.path().join(manifest), "fixture").unwrap();
+        let error = compat_gate_decision(project.path())
+            .expect_err("compat mode must not authorize a provider package manager");
+        assert!(format!("{error:#}").contains("native"));
+    }
 }

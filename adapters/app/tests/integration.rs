@@ -200,38 +200,41 @@ async fn kotlin_resolve_fails_closed_toolchain_owned() {
     let dir = tmp("resolve-kotlin");
     std::fs::write(dir.join("build.gradle.kts"), "").unwrap();
     let a = adapter_for(&dir).unwrap();
-    let manifest = a.parse_manifest(&dir).await.unwrap();
-    // Non-Flutter app languages stay toolchain-owned (gradle) — resolve
-    // fails closed, never an empty-graph false success.
-    // (Ngôn ngữ app không phải Flutter vẫn do toolchain giữ (gradle) —
-    // resolve fail-closed, không thành công giả graph rỗng.)
-    let result = a.resolve(&manifest).await;
-    assert!(result.is_err(), "kotlin resolve must fail closed");
+    // Gradle build files are executable DSL, not a parsed dependency
+    // manifest. Refuse at the parser boundary before any resolver path.
+    // (Gradle DSL có thể thực thi; từ chối ngay ở parser boundary.)
+    let result = a.parse_manifest(&dir).await;
+    assert!(
+        result.is_err(),
+        "Kotlin Gradle DSL must not become an empty manifest"
+    );
     assert!(
         result
             .unwrap_err()
             .to_string()
-            .contains("app core does not support 'resolve'"),
-        "error must be the capability default naming the core"
+            .contains("executable Gradle DSL"),
+        "error must state why the Gradle manifest is not parsed"
     );
 }
 
 #[tokio::test]
-async fn install_is_real_while_resolve_stays_fail_closed() {
+async fn native_flutter_install_does_not_use_provider_resolution() {
     let dir = tmp("install-ok");
     std::fs::write(dir.join("pubspec.yaml"), "name: a\n").unwrap();
     let a = adapter_for(&dir).unwrap();
-    // ContentStoreProvider IS claimed (install delegates to flutter pub
-    // get) while DependencyResolver is NOT — build the graph directly
-    // instead of going through the fail-closed resolve.
-    // (ContentStoreProvider ĐƯỢC claim (install ủy quyền flutter pub get)
-    // trong khi DependencyResolver KHÔNG — dựng graph trực tiếp thay vì
-    // đi qua resolve fail-closed.)
+    // An empty native graph must not trigger Flutter's package resolver.
+    // Graph native rỗng không được kích hoạt Flutter resolve package.
     let graph = ResolvedGraph::default();
     let result = a.install(&graph, &dir, Default::default()).await;
-    // Accepts success or a toolchain error — never a panic.
-    // (Chấp nhận thành công hoặc lỗi toolchain — không bao giờ panic.)
-    let _ = result;
+    assert!(
+        result.is_ok(),
+        "empty native graph should finish without provider tools: {result:?}"
+    );
+    assert!(
+        !dir.join("mgc.lock").exists(),
+        "an empty native graph should not create a meaningless lockfile"
+    );
+    assert!(!dir.join("pubspec.lock").exists());
 }
 
 #[tokio::test]
@@ -289,6 +292,25 @@ async fn list_returns_empty_for_no_deps() {
     let a = adapter_for(&dir).unwrap();
     let pkgs = a.list(&dir).await.unwrap();
     assert!(pkgs.is_empty());
+}
+
+#[tokio::test]
+async fn list_does_not_claim_unresolved_manifest_ranges_are_installed_versions() {
+    let dir = tmp("list-unresolved");
+    std::fs::write(
+        dir.join("pubspec.yaml"),
+        "name: a\ndependencies:\n  http: ^1.0.0\n",
+    )
+    .unwrap();
+    let adapter = adapter_for(&dir).unwrap();
+    let error = adapter.list(&dir).await.unwrap_err();
+    assert!(matches!(
+        error,
+        mgc_types::MgError::Unsupported {
+            capability: "list",
+            ..
+        }
+    ));
 }
 
 #[test]

@@ -1,10 +1,8 @@
 //! `dep_gate_canary.rs` — C0 ownership firewall runtime evidence (T0.3).
 //!
-//! Hermetic PATH canaries prove dependency lanes never spawn toolchains
-//! in native mode and only spawn the opted-in toolchain under an
-//! explicit compat opt-in (flag or `MGC_COMPAT_RUNTIME`), with the loud
-//! warning every time. A refusal message on stderr proves nothing by
-//! itself — the canary marker (or its silence) is the evidence.
+//! Hermetic PATH canaries prove dependency lanes never spawn package managers,
+//! including when a compatibility flag or environment variable is supplied.
+//! Canary PATH chứng minh dependency-op không gọi PM ngoài, kể cả khi truyền cờ/env compat.
 //!
 //! Kiểm toán runtime tường lửa C0: canary PATH hermetic chứng minh lane
 //! dependency không spawn toolchain ở native, chỉ spawn tool đã opt-in
@@ -22,8 +20,8 @@ fn mgc_binary() -> String {
         .expect("CARGO_BIN_EXE_mgc unavailable — run via cargo test")
 }
 
-/// Fake toolchain canary: appends a marker line whenever resolved from
-/// PATH, then exits 0 (so a compat-mode run can proceed through it).
+/// Fake PM canary records any attempted process resolution from PATH.
+/// Canary PM giả ghi nhận mọi lần product cố resolve executable qua PATH.
 struct CanarySandbox {
     #[allow(dead_code)]
     bin_dir: TempDir,
@@ -244,13 +242,13 @@ fn ai_install_native_refuses_without_spawning_uv() {
         "uv canary must NEVER fire under native 'install-ai':\n{marker}"
     );
     assert!(
-        output.contains("--compat-runtime"),
-        "refusal must name the escape hatch:\n{output}"
+        output.contains("does not yet own the complete native dependency lifecycle"),
+        "refusal must state the missing native implementation:\n{output}"
     );
 }
 
 #[test]
-fn ai_install_compat_spawns_uv_through_the_gate() {
+fn ai_install_compat_is_rejected_without_spawning_uv() {
     let project = TempDir::new().unwrap();
     ai_project(project.path());
     let sandbox = CanarySandbox::new("uv");
@@ -262,15 +260,16 @@ fn ai_install_compat_spawns_uv_through_the_gate() {
         Some(("MGC_COMPAT_RUNTIME", "uv")),
     );
     let output = format!("{stdout}{stderr}");
-    assert_eq!(code, Some(0), "compat install-ai must proceed:\n{output}");
-    assert!(
-        marker.contains("uv"),
-        "compat must actually spawn uv through the gate:\n{}",
-        sandbox.marker_text()
+    assert_ne!(
+        code,
+        Some(0),
+        "dependency compat must be refused:\n{output}"
     );
+    assert!(marker.is_empty(), "no package manager may spawn:\n{marker}");
     assert!(
-        output.contains("COMPATIBILITY MODE"),
-        "every compat spawn must warn loudly:\n{output}"
+        output.contains("disabled for dependency operations")
+            || output.contains("does not yet own the complete native dependency lifecycle"),
+        "{output}"
     );
 }
 
@@ -291,10 +290,9 @@ fn ai_add_native_refuses_without_spawning() {
 }
 
 #[test]
-fn ai_install_dry_run_needs_no_compat() {
-    // Dry-run prints without spawning — the gate must not demand compat
-    // for work that never happens.
-    // (Dry-run chỉ in, không spawn — gate không được đòi compat.)
+fn ai_install_dry_run_does_not_fake_unsupported_lane_success() {
+    // A dry-run must not claim that an unsupported dependency lane is
+    // available merely because it will not spawn a tool.
     let project = TempDir::new().unwrap();
     ai_project(project.path());
     let sandbox = CanarySandbox::new("uv");
@@ -302,15 +300,23 @@ fn ai_install_dry_run_needs_no_compat() {
     let (code, stdout, stderr, marker) =
         run_mgc(&["install-ai", "--dry-run"], project.path(), &sandbox, None);
     let output = format!("{stdout}{stderr}");
-    assert_eq!(code, Some(0), "dry-run must succeed natively:\n{output}");
+    assert_ne!(
+        code,
+        Some(0),
+        "dry-run must preserve unsupported status:\n{output}"
+    );
     assert!(marker.is_empty(), "dry-run must never spawn:\n{marker}");
+    assert!(
+        output.contains("does not yet own the complete native dependency lifecycle"),
+        "dry-run must explain missing support:\n{output}"
+    );
 }
 
 #[test]
 fn app_install_native_runs_inside_mgc_without_spawning_flutter() {
-    // Native flutter install (pubspec → pub.dev → mgc.lock) — the
-    // toolchain NEVER spawns; the canary proves it. (Policy flip:
-    // flutter Install is mgc-native; Add/Remove/Update still delegate.)
+    // Native Flutter install (pubspec → pub.dev → mgc.lock) — the
+    // toolchain NEVER spawns; the canary proves it. Add/remove/update are
+    // native too; list/dev remain separate toolchain-owned operations.
     let project = TempDir::new().unwrap();
     flutter_project(project.path());
     let sandbox = CanarySandbox::new("flutter");
@@ -329,9 +335,8 @@ fn app_install_native_runs_inside_mgc_without_spawning_flutter() {
 }
 
 #[test]
-fn app_install_compat_flag_is_ignored_on_the_native_lane() {
-    // Compat opt-in on a native lane is a no-op info (native always
-    // runs) — never a flutter spawn.
+fn app_install_compat_flag_is_rejected_without_spawning_flutter() {
+    // Dependency compatibility is refused before invoking Flutter.
     let project = TempDir::new().unwrap();
     flutter_project(project.path());
     let sandbox = CanarySandbox::new("flutter");
@@ -343,11 +348,20 @@ fn app_install_compat_flag_is_ignored_on_the_native_lane() {
         Some(("MGC_COMPAT_RUNTIME", "flutter")),
     );
     let output = format!("{stdout}{stderr}");
-    assert_eq!(code, Some(0), "native install-app must proceed:\n{output}");
+    assert_ne!(
+        code,
+        Some(0),
+        "dependency compat must be refused:\n{output}"
+    );
     assert!(
         marker.is_empty(),
-        "compat on the native lane must NOT spawn flutter:\n{}",
+        "compat on dependency operations must NOT spawn flutter:\n{}",
         sandbox.marker_text()
+    );
+    assert!(
+        output.contains("disabled for dependency operations")
+            || output.contains("does not yet own the complete native dependency lifecycle"),
+        "{output}"
     );
 }
 #[test]
@@ -427,8 +441,8 @@ fn ai_install_native_with_pip_project_spawns_nothing() {
         "NO pm canary may fire under native 'install-ai' (probes included):\n{marker}"
     );
     assert!(
-        output.contains("--compat-runtime"),
-        "refusal must name the escape hatch:\n{output}"
+        output.contains("does not yet own the complete native dependency lifecycle"),
+        "refusal must state the missing native implementation:\n{output}"
     );
 }
 
@@ -500,9 +514,8 @@ fn ai_list_native_spawns_nothing() {
 }
 
 #[test]
-fn ai_list_compat_flag_spawns_pip_through_the_gate() {
-    // P0#3 end-to-end: the explicit --compat-runtime FLAG (not env)
-    // opens list-ai and the lane actually spawns pip.
+fn ai_list_compat_flag_is_rejected_without_spawning_pip() {
+    // Explicit compatibility never opens a dependency package manager.
     let project = TempDir::new().unwrap();
     pip_project(project.path());
     let sandbox = pm_sandbox();
@@ -514,20 +527,16 @@ fn ai_list_compat_flag_spawns_pip_through_the_gate() {
         None,
     );
     let output = format!("{stdout}{stderr}");
-    assert_eq!(code, Some(0), "compat list-ai must proceed:\n{output}");
-    assert!(
-        marker.contains("pip"),
-        "compat must actually spawn pip through the gate:\n{}",
-        sandbox.marker_text()
+    assert_ne!(
+        code,
+        Some(0),
+        "dependency compat must be refused:\n{output}"
     );
+    assert!(marker.is_empty(), "no package manager may spawn:\n{marker}");
     assert!(
-        !marker.contains("uv"),
-        "only the opted-in tool may spawn:\n{}",
-        sandbox.marker_text()
-    );
-    assert!(
-        output.contains("COMPATIBILITY MODE"),
-        "every compat spawn must warn loudly:\n{output}"
+        output.contains("disabled for dependency operations")
+            || output.contains("does not yet own the complete native dependency lifecycle"),
+        "{output}"
     );
 }
 
@@ -574,8 +583,8 @@ fn app_list_native_refuses_without_spawning_flutter() {
         "flutter canary must NEVER fire under native 'list-app':\n{marker}"
     );
     assert!(
-        output.contains("--compat-runtime"),
-        "refusal must name the escape hatch:\n{output}"
+        output.contains("unsupported for dependency lifecycle"),
+        "refusal must state that native inventory is unsupported:\n{output}"
     );
 }
 
@@ -797,10 +806,8 @@ fn java_gradle_add_fails_closed_with_pom_guidance_without_spawning() {
 }
 
 #[test]
-fn lib_remove_native_ignores_compat_without_spawning() {
-    // Remove runs natively on mgc-written manifests — even explicit
-    // compat spawns nothing (native always runs). The legacy bridge
-    // proof lives on update (still delegated).
+fn lib_remove_rejects_compat_without_spawning() {
+    // Dependency operations reject compat even when the lane is native.
     let project = TempDir::new().unwrap();
     python_lib_project(project.path());
     std::fs::write(
@@ -809,6 +816,7 @@ fn lib_remove_native_ignores_compat_without_spawning() {
     )
     .unwrap();
     let sandbox = CanarySandbox::multi(&["pip", "pip3"]);
+    let before = std::fs::read(project.path().join("pyproject.toml")).unwrap();
 
     let (code, stdout, stderr, marker) = run_mgc(
         &["remove-lib", "six"],
@@ -817,21 +825,32 @@ fn lib_remove_native_ignores_compat_without_spawning() {
         Some(("MGC_COMPAT_RUNTIME", "pip")),
     );
     let output = format!("{stdout}{stderr}");
-    assert_eq!(code, Some(0), "native remove-lib must proceed:\n{output}");
+    assert_ne!(
+        code,
+        Some(0),
+        "compat remove-lib must be rejected:\n{output}"
+    );
     assert!(
         marker.is_empty(),
         "compat on the native lane must NOT spawn pip:\n{}",
         sandbox.marker_text()
     );
+    assert!(
+        output.contains("disabled for dependency operations")
+            || output.contains("does not yet own the complete native dependency lifecycle"),
+        "{output}"
+    );
     let body = std::fs::read_to_string(project.path().join("pyproject.toml")).unwrap();
-    assert!(!body.contains("six"), "manifest must drop six:\n{body}");
+    assert_eq!(
+        body.as_bytes(),
+        before.as_slice(),
+        "rejected operation is mutation-free"
+    );
 }
 
 #[test]
-fn lib_update_native_ignores_compat_without_spawning() {
-    // Update runs natively (resolve-latest + rewrite) — even explicit
-    // compat spawns nothing. The legacy bridge proof lives on the
-    // remaining delegated lanes (ai/game/iot).
+fn lib_update_rejects_compat_without_spawning() {
+    // The compatibility environment cannot turn update into a provider call.
     let project = TempDir::new().unwrap();
     python_lib_project(project.path());
     std::fs::write(
@@ -845,6 +864,7 @@ fn lib_update_native_ignores_compat_without_spawning() {
     )
     .unwrap();
     let sandbox = CanarySandbox::multi(&["pip", "pip3"]);
+    let before = std::fs::read(project.path().join("pyproject.toml")).unwrap();
 
     let (code, stdout, stderr, marker) = run_mgc(
         &["update-lib", "six"],
@@ -853,11 +873,25 @@ fn lib_update_native_ignores_compat_without_spawning() {
         Some(("MGC_COMPAT_RUNTIME", "pip")),
     );
     let output = format!("{stdout}{stderr}");
-    assert_eq!(code, Some(0), "native update-lib must proceed:\n{output}");
+    assert_ne!(
+        code,
+        Some(0),
+        "compat update-lib must be rejected:\n{output}"
+    );
     assert!(
         marker.is_empty(),
         "compat on the native lane must NOT spawn pip:\n{}",
         sandbox.marker_text()
+    );
+    assert!(
+        output.contains("disabled for dependency operations")
+            || output.contains("does not yet own the complete native dependency lifecycle"),
+        "{output}"
+    );
+    assert_eq!(
+        std::fs::read(project.path().join("pyproject.toml")).unwrap(),
+        before,
+        "rejected operation is mutation-free"
     );
 }
 
@@ -898,38 +932,13 @@ fn swift_package_project(dir: &std::path::Path) {
 /// compat opens `swift package resolve`, which must succeed. Skipped
 /// where swift is absent (env-gated, like npm parity).
 #[test]
-fn swift_install_compat_runs_real_toolchain() {
-    let probe = std::process::Command::new("swift")
-        .arg("--version")
-        .output();
-    if probe.is_err() || !probe.map(|o| o.status.success()).unwrap_or(false) {
-        eprintln!("SKIP: swift toolchain absent");
-        return;
-    }
+fn swift_install_compat_is_rejected_without_spawning_toolchain() {
     let project = TempDir::new().unwrap();
     swift_package_project(project.path());
-
-    // No canary shims here on purpose: this test PROVES the delegated
-    // lane runs the real tool (the canary files above prove the
-    // opposite for native lanes).
-    let out = std::process::Command::new(mgc_binary())
-        .args(["install-app", "--compat-runtime", "swift"])
-        .current_dir(project.path())
-        .env_remove("MGC_COMPAT_RUNTIME")
-        .output()
-        .expect("spawn mgc");
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert!(
-        out.status.success(),
-        "compat swift install must succeed:\n{text}"
-    );
-    assert!(
-        project.path().join("Package.resolved").is_file() || project.path().join(".build").exists(),
-        "swift must have resolved (Package.resolved or .build):\n{text}"
+    assert_pm_compat_refused(
+        project.path(),
+        &["install-app", "--compat-runtime", "swift"],
+        &["swift", "xcodebuild", "pod"],
     );
 }
 
@@ -962,70 +971,57 @@ fn objc_pod_project(dir: &std::path::Path) {
         "platform :ios, '17.0'\ntarget 'canary' do\n  pod 'Alamofire', '5.9.1'\nend\n",
     )
     .unwrap();
+    std::fs::write(
+        dir.join("ObjcBridge.h"),
+        "#import <Foundation/Foundation.h>\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("ObjcBridge.m"), "@interface ObjcBridge @end\n").unwrap();
 }
 
-fn tool_present(tool: &str) -> bool {
-    std::process::Command::new(tool)
-        .arg("--version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+fn assert_pm_compat_refused(project: &std::path::Path, args: &[&str], tools: &[&str]) {
+    let sandbox = CanarySandbox::multi(tools);
+    let (code, stdout, stderr, marker) = run_mgc(args, project, &sandbox, None);
+    let output = format!("{stdout}{stderr}");
+    assert_ne!(
+        code,
+        Some(0),
+        "compat dependency operation must fail:\n{output}"
+    );
+    assert!(marker.is_empty(), "no package manager may spawn:\n{marker}");
+    assert!(
+        output.contains("disabled for dependency operations")
+            || output.contains("does not yet own the complete native dependency lifecycle")
+            || output.contains("unsupported for dependency lifecycle"),
+        "{output}"
+    );
 }
 
 /// Honest delegated lane, proven with the REAL toolchain: explicit
 /// compat opens `gradle dependencies`, which must succeed. Skipped
 /// where gradle/JVM is absent (env-gated).
 #[test]
-fn kotlin_install_compat_runs_real_toolchain() {
-    if !tool_present("gradle") {
-        eprintln!("SKIP: gradle/JVM absent");
-        return;
-    }
+fn kotlin_install_compat_is_rejected_without_spawning_toolchain() {
     let project = TempDir::new().unwrap();
     kotlin_gradle_project(project.path());
-
-    let out = std::process::Command::new(mgc_binary())
-        .args(["install-app", "--compat-runtime", "gradle"])
-        .current_dir(project.path())
-        .env_remove("MGC_COMPAT_RUNTIME")
-        .output()
-        .expect("spawn mgc");
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert!(
-        out.status.success(),
-        "compat gradle install must succeed:\n{text}"
+    assert_pm_compat_refused(
+        project.path(),
+        &["install-app", "--compat-runtime", "gradle"],
+        &["gradle", "java"],
     );
 }
 
 /// Same contract for CocoaPods: explicit compat opens `pod install`.
 /// Skipped where pod is absent.
 #[test]
-fn objc_install_compat_runs_real_toolchain() {
-    if !tool_present("pod") {
-        eprintln!("SKIP: cocoapods absent");
-        return;
-    }
+fn objc_install_compat_is_rejected_without_spawning_toolchain() {
     let project = TempDir::new().unwrap();
     objc_pod_project(project.path());
 
-    let out = std::process::Command::new(mgc_binary())
-        .args(["install-app", "--compat-runtime", "pod"])
-        .current_dir(project.path())
-        .env_remove("MGC_COMPAT_RUNTIME")
-        .output()
-        .expect("spawn mgc");
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert!(
-        out.status.success(),
-        "compat pod install must succeed:\n{text}"
+    assert_pm_compat_refused(
+        project.path(),
+        &["install-app", "--compat-runtime", "pod"],
+        &["pod", "xcodebuild", "swift"],
     );
 }
 
@@ -1045,27 +1041,13 @@ fn terraform_project(dir: &std::path::Path) {
 /// Honest delegated lane with the REAL toolchain: explicit compat
 /// opens `terraform init`. Skipped where terraform is absent.
 #[test]
-fn clo_install_compat_runs_real_toolchain() {
-    if !tool_present("terraform") {
-        eprintln!("SKIP: terraform absent");
-        return;
-    }
+fn clo_install_compat_is_rejected_without_spawning_toolchain() {
     let project = TempDir::new().unwrap();
     terraform_project(project.path());
 
-    let out = std::process::Command::new(mgc_binary())
-        .args(["install-clo", "--compat-runtime", "terraform"])
-        .current_dir(project.path())
-        .env_remove("MGC_COMPAT_RUNTIME")
-        .output()
-        .expect("spawn mgc");
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert!(
-        out.status.success(),
-        "compat terraform install must succeed:\n{text}"
+    assert_pm_compat_refused(
+        project.path(),
+        &["install-clo", "--compat-runtime", "terraform"],
+        &["terraform"],
     );
 }

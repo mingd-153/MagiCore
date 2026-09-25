@@ -190,7 +190,8 @@ async fn install_into_root(
         }
 
         // T4.5: Verify lockfile integrity BEFORE using cache
-        let status = mgc_lockfile::verify_lockfile(&lockfile_path)?;
+        crate::commands::trust::policy::enforce_project_policy(&lockfile_path)?;
+        let status = crate::commands::trust::policy::verify_project_lockfile(&lockfile_path)?;
         match status {
             mgc_lockfile::VerificationStatus::Tampered(msg) => {
                 // T4.5: Invalidate cache on tamper detection
@@ -213,6 +214,11 @@ async fn install_into_root(
             }
             mgc_lockfile::VerificationStatus::Valid => {
                 info("✓ Lockfile signature valid");
+            }
+            mgc_lockfile::VerificationStatus::UntrustedKey(key_id) => {
+                info(&format!(
+                    "WARN: Lockfile signer '{key_id}' is not trusted by this project"
+                ));
             }
             mgc_lockfile::VerificationStatus::InvalidSignature(msg) => {
                 anyhow::bail!("Invalid lockfile signature: {}", msg);
@@ -246,6 +252,10 @@ async fn install_into_root(
         crate::commands::core::shared::MutationOperation::Install,
     )
     .await?;
+
+    if !packages.is_empty() {
+        mgc_lockfile::ensure_lockfile_mutation_allowed(&project_root.join("mgc.lock"))?;
+    }
 
     // Ownership preflight FIRST (P0-1): unauthorized ops fail here,
     // before parse/prepare_add (network) or any manifest write.
@@ -840,13 +850,17 @@ fn verify_lockfile_if_signed(project_root: &Path) -> Result<()> {
     }
 
     // T3.6: Enforce policy in CI environment
-    crate::commands::trust::policy::auto_enforce_in_ci(&lockfile_path)?;
-
-    let status = mgc_lockfile::verify_lockfile(&lockfile_path)?;
+    crate::commands::trust::policy::enforce_project_policy(&lockfile_path)?;
+    let status = crate::commands::trust::policy::verify_project_lockfile(&lockfile_path)?;
 
     match status {
         mgc_lockfile::VerificationStatus::Valid => {
             mgc_ui::success("✓ Lockfile signature valid");
+        }
+        mgc_lockfile::VerificationStatus::UntrustedKey(key_id) => {
+            mgc_ui::warning(&format!(
+                "WARN: Lockfile signer '{key_id}' is not trusted by this project"
+            ));
         }
         mgc_lockfile::VerificationStatus::Unsigned => {
             mgc_ui::warning("WARN: Lockfile not signed — run 'mgc trust sign' to sign it");

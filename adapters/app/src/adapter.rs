@@ -1,22 +1,15 @@
 //! PackageAdapter implementation for app cores.
 //! Giữ orchestration app riêng khỏi phần detect language và SBOM.
 //!
-//! Global Gate 1 (2026-09-16): the registry-resolver surface that always
-//! failed (resolve/fetch/add/remove/update) is GONE — the fail-closed
-//! defaults from `mgc_types::capabilities` answer now. App installs run
-//! the provider toolchain (flutter pub get / gradle / swift package
-//! resolve) through the adapter's real install pipeline.
-//! Global Gate 1: mặt registry-resolver vốn luôn lỗi
-//! (resolve/fetch/add/remove/update) đã BỊ XÓA — default fail-closed trả
-//! lời thay. Install app chạy toolchain provider qua pipeline install
-//! thật của adapter.
+//! App dependency operations are implemented only for explicitly supported
+//! native lanes; unsupported ecosystems fail closed without provider PMs.
+//! Chỉ lane native đã hỗ trợ mới chạy; ecosystem khác bị từ chối, không gọi PM ngoài.
 
 use crate::language::{AppLanguage, detect_language, manifest_is_app};
 use async_trait::async_trait;
 use mgc_lib_adapter::native::engine::resolve_with_protocol;
 use mgc_lockfile::EcosystemTag;
 use mgc_resolver::protocols::PubProtocol;
-use mgc_resolver::protocols::RegistryProtocol;
 use mgc_types::adapter::{
     AddOptions, AuditReport, InstallOptions, InstallSummary, InstalledPackage, PackageAdapter,
     PreparedAdd,
@@ -26,7 +19,7 @@ use mgc_types::capabilities::{
     LifecycleRunner, LockfileProvider, ProjectDetector, ScaffoldProvider,
 };
 use mgc_types::{DependencySpec, MgError, PackageName, VersionRange};
-use mgc_types::{Ecosystem, Manifest, MgResult, PackageId, ResolvedGraph, Version};
+use mgc_types::{Ecosystem, Manifest, MgResult, PackageId, ResolvedGraph};
 use std::path::{Path, PathBuf};
 
 pub struct AppAdapter {
@@ -62,241 +55,6 @@ impl AppAdapter {
         }
     }
 
-    /// Native Swift remove: delete the dependency call from
-    /// Package.swift text, verified by re-scan (exactly one fewer
-    /// matching call). Unknown or ambiguous keys fail closed.
-    /// (Xóa dependency Swift, verify bằng quét lại.)
-    pub fn remove_swift_native(
-        &self,
-        project_root: &Path,
-        packages: &[String],
-    ) -> MgResult<Vec<String>> {
-        use mgc_resolver::protocols::remove_swift_requirement;
-        let path = project_root.join("Package.swift");
-        let text = std::fs::read_to_string(&path)
-            .map_err(|e| MgError::Other(format!("read Package.swift: {e}")))?;
-        let mut current = text;
-        let mut removed = Vec::new();
-        for name in packages {
-            match remove_swift_requirement(&current, name) {
-                Some(next) => {
-                    current = next;
-                    removed.push(name.clone());
-                }
-                None => {
-                    return Err(MgError::Other(format!(
-                        "cannot remove '{name}': no single matching dependency call in Package.swift (fail-closed)"
-                    )));
-                }
-            }
-        }
-        if !removed.is_empty() {
-            std::fs::write(&path, &current)
-                .map_err(|e| MgError::Other(format!("write Package.swift: {e}")))?;
-        }
-        Ok(removed)
-    }
-
-    /// Native Kotlin remove: delete the catalog entry, verified by
-    /// re-parse. Unknown aliases fail closed.
-    /// (Xóa entry catalog Kotlin, verify bằng đọc lại.)
-    pub fn remove_kotlin_native(
-        &self,
-        project_root: &Path,
-        packages: &[String],
-    ) -> MgResult<Vec<String>> {
-        use crate::manifest::gradle::parse_version_catalog;
-        let entries = parse_version_catalog(project_root).ok_or_else(|| {
-            MgError::Other(
-                "kotlin remove needs gradle/libs.versions.toml — plain build.gradle scripts are programs, not safely editable manifests"
-                    .to_string(),
-            )
-        })?;
-        // Map requested names (alias or group:artifact) to entries.
-        let mut targets: Vec<(String, String, String)> = Vec::new();
-        for name in packages {
-            let hits: Vec<_> = entries
-                .iter()
-                .filter(|e| e.alias == *name || format!("{}:{}", e.group, e.artifact) == *name)
-                .collect();
-            if hits.len() != 1 {
-                return Err(MgError::Other(format!(
-                    "cannot remove '{name}': {} catalog match(es) — use the alias or group:artifact",
-                    hits.len()
-                )));
-            }
-            targets.push((
-                hits[0].alias.clone(),
-                hits[0].group.clone(),
-                hits[0].artifact.clone(),
-            ));
-        }
-        // Rewrite the catalog without the targets, verify by re-parse.
-        let path = project_root.join("gradle/libs.versions.toml");
-        let content = std::fs::read_to_string(&path)
-            .map_err(|e| MgError::Other(format!("read libs.versions.toml: {e}")))?;
-        let mut doc: toml::Value = toml::from_str(&content)
-            .map_err(|e| MgError::Other(format!("parse libs.versions.toml: {e}")))?;
-        let libraries = doc
-            .get_mut("libraries")
-            .and_then(|v| v.as_table_mut())
-            .ok_or_else(|| MgError::Other("catalog has no [libraries] table".to_string()))?;
-        for (alias, _, _) in &targets {
-            libraries.remove(alias);
-        }
-        let next = toml::to_string_pretty(&doc)
-            .map_err(|e| MgError::Other(format!("serialize libs.versions.toml: {e}")))?;
-        std::fs::write(&path, &next)
-            .map_err(|e| MgError::Other(format!("write libs.versions.toml: {e}")))?;
-        let again = parse_version_catalog(project_root).unwrap_or_default();
-        for (alias, group, artifact) in &targets {
-            if again
-                .iter()
-                .any(|e| &e.alias == alias || (e.group == *group && e.artifact == *artifact))
-            {
-                return Err(MgError::Other(format!(
-                    "catalog removal did not stick for '{alias}' (fail-closed)"
-                )));
-            }
-        }
-        Ok(targets.into_iter().map(|(a, _, _)| a).collect())
-    }
-
-    /// Native Kotlin update through the version catalog
-    /// (`gradle/libs.versions.toml`): resolve each target to latest
-    /// through Maven Central, bump the catalog (ref values or inline
-    /// literals), verify by re-parse. No install tail — install stays
-    /// delegated-gradle (the user builds with the toolchain). Projects
-    /// without a catalog fail closed with guidance (never a silent
-    /// partial pass, never a guessed DSL edit).
-    /// (Update Kotlin native qua version catalog.)
-    pub async fn update_kotlin_native(
-        &self,
-        project_root: &Path,
-        packages: &[String],
-    ) -> MgResult<Vec<(String, String, String)>> {
-        use crate::manifest::gradle::{bump_catalog_pin, parse_version_catalog};
-        use mgc_resolver::protocols::MavenProtocol;
-        let entries = parse_version_catalog(project_root).ok_or_else(|| {
-            MgError::Other(
-                "kotlin update needs gradle/libs.versions.toml — plain build.gradle scripts are programs, not safely editable manifests (declare versions in a catalog for native update, or run gradle with --compat-runtime)"
-                    .to_string(),
-            )
-        })?;
-        let targets: Vec<(String, String)> = if packages.is_empty() {
-            entries
-                .iter()
-                .map(|e| (format!("{}:{}", e.group, e.artifact), e.version.clone()))
-                .collect()
-        } else {
-            let mut out = Vec::new();
-            for name in packages {
-                // Accept `group:artifact` or bare artifact (unambiguous only).
-                let hits: Vec<_> = entries
-                    .iter()
-                    .filter(|e| {
-                        format!("{}:{}", e.group, e.artifact) == *name || e.artifact == *name
-                    })
-                    .collect();
-                if hits.len() != 1 {
-                    return Err(MgError::Other(format!(
-                        "cannot update '{name}': {} catalog match(es) — use group:artifact",
-                        hits.len()
-                    )));
-                }
-                out.push((
-                    format!("{}:{}", hits[0].group, hits[0].artifact),
-                    hits[0].version.clone(),
-                ));
-            }
-            out
-        };
-        let protocol = MavenProtocol::from_env();
-        let mut updated = Vec::new();
-        for (coord, from) in &targets {
-            let entry = protocol.resolve(coord, "*").await.map_err(|e| {
-                MgError::Other(format!("kotlin resolve-latest for '{coord}' failed: {e}"))
-            })?;
-            let latest = entry.version.clone();
-            if *latest == *from {
-                continue;
-            }
-            let (group, artifact) = coord.split_once(':').unwrap_or(("", ""));
-            bump_catalog_pin(project_root, group, artifact, &latest)?;
-            updated.push((coord.clone(), from.clone(), latest));
-        }
-        Ok(updated)
-    }
-
-    /// Native Swift update: resolve each target to latest through the
-    /// SwiftPM registry, bump the `from:`/`exact:` requirement in
-    /// Package.swift text, and verify by re-scan (no toolchain needed
-    /// for the edit itself). Returns `(updated, skipped)` with honest
-    /// skip reasons — git/branch/revision/range pins are not bumpable;
-    /// an unconfigured registry fails the whole op closed (never a
-    /// partial silent pass).
-    /// (Update Swift native: resolve latest + sửa Package.swift +
-    /// verify bằng quét lại.)
-    pub async fn update_swift_native(
-        &self,
-        project_root: &Path,
-        packages: &[String],
-    ) -> MgResult<(Vec<(String, String, String)>, Vec<(String, String)>)> {
-        use mgc_resolver::protocols::bump_swift_requirement;
-        let path = project_root.join("Package.swift");
-        let text = std::fs::read_to_string(&path)
-            .map_err(|e| MgError::Other(format!("read Package.swift: {e}")))?;
-        // Targets: named packages must exist in the manifest; empty
-        // means every registry-bumpable dep.
-        let manifest = self.parse_manifest(project_root).await?;
-        let targets: Vec<String> = if packages.is_empty() {
-            manifest
-                .all_dependencies()
-                .map(|d| d.name.as_str().to_string())
-                .collect()
-        } else {
-            for name in packages {
-                if manifest.find_dep(name).is_none() {
-                    return Err(MgError::Other(format!(
-                        "cannot update '{name}': not in the project manifest — add it first"
-                    )));
-                }
-            }
-            packages.to_vec()
-        };
-        let protocol = mgc_resolver::protocols::SwiftRegistryProtocol::from_env();
-        let mut current = text;
-        let mut updated = Vec::new();
-        let mut skipped = Vec::new();
-        for name in &targets {
-            // Latest through the registry (fail-closed without config).
-            let entry = protocol.resolve(name, "*").await.map_err(|e| {
-                MgError::Other(format!("swift resolve-latest for '{name}' failed: {e}"))
-            })?;
-            let latest = entry.version.clone();
-            match bump_swift_requirement(&current, name, &latest) {
-                Some(next) => {
-                    // from-version for the report: previous pin in text.
-                    let from = manifest
-                        .find_dep(name)
-                        .and_then(|d| d.range.satisfying_version().map(|v| v.to_string()))
-                        .unwrap_or_else(|| "?".to_string());
-                    current = next;
-                    updated.push((name.clone(), from, latest));
-                }
-                None => skipped.push((
-                    name.clone(),
-                    "not a registry from:/exact: pin (branch/revision/range/git or ambiguous) — left untouched".to_string(),
-                )),
-            }
-        }
-        if !updated.is_empty() {
-            std::fs::write(&path, &current)
-                .map_err(|e| MgError::Other(format!("write Package.swift: {e}")))?;
-        }
-        Ok((updated, skipped))
-    }
-
     /// Capability manifest (Global Gate 1) — code-reality notes:
     /// per-language truth, never a core-level blanket (a blanket
     /// DependencyResolver claim overclaims for Kotlin/ObjC, which fail
@@ -309,15 +67,11 @@ impl AppAdapter {
     const CAPABILITIES_BASE: &'static [Capability] = &[
         Capability::ProjectDetector,
         Capability::ScaffoldProvider,
-        Capability::LifecycleRunner,
-        Capability::ContentStoreProvider,
-        Capability::LockfileProvider,
         Capability::AuditProvider,
     ];
     const CAPABILITIES_RESOLVER: &'static [Capability] = &[
         Capability::ProjectDetector,
         Capability::ScaffoldProvider,
-        Capability::LifecycleRunner,
         Capability::ContentStoreProvider,
         Capability::LockfileProvider,
         Capability::AuditProvider,
@@ -363,23 +117,28 @@ impl ScaffoldProvider for AppAdapter {
 }
 
 impl LifecycleRunner for AppAdapter {
-    /// Evidence: install orchestrates the provider toolchain lifecycle
-    /// (flutter pub get / gradle / swift package resolve).
-    /// Dẫn chứng: install điều phối lifecycle toolchain provider
-    /// (flutter pub get / gradle / swift package resolve).
     fn probe_lifecycle_runner(&self) -> MgResult<()> {
-        Ok(())
+        Err(mgc_types::capabilities::unsupported_capability(
+            "app",
+            "lifecycle_runner",
+            "build/test/run are compiler and runtime operations, not AppAdapter package-lifecycle capabilities",
+        ))
     }
 }
 
 #[async_trait]
 impl ContentStoreProvider for AppAdapter {
-    /// Evidence: real install pipeline for all app languages
-    /// (crate::install::run_install — flutter/gradle/swift orchestration).
-    /// Dẫn chứng: pipeline install thật cho mọi ngôn ngữ app
-    /// (crate::install::run_install — điều phối flutter/gradle/swift).
     fn probe_content_store(&self) -> MgResult<()> {
-        Ok(())
+        match self.language {
+            AppLanguage::Flutter | AppLanguage::Swift | AppLanguage::ReactNative => Ok(()),
+            AppLanguage::Kotlin | AppLanguage::ObjC | AppLanguage::Multi => {
+                Err(mgc_types::capabilities::unsupported_capability(
+                    "app",
+                    "content_store",
+                    "this ecosystem has no MagiCore-native install path",
+                ))
+            }
+        }
     }
 
     async fn install(
@@ -388,6 +147,16 @@ impl ContentStoreProvider for AppAdapter {
         project_root: &Path,
         opts: InstallOptions,
     ) -> MgResult<InstallSummary> {
+        if !matches!(
+            self.language,
+            AppLanguage::Flutter | AppLanguage::Swift | AppLanguage::ReactNative
+        ) {
+            return Err(mgc_types::capabilities::unsupported_capability(
+                "app",
+                "install",
+                "Kotlin, Objective-C and multi-platform dependency installation are unsupported until MagiCore owns their complete native lifecycle",
+            ));
+        }
         // Use new install pipeline (pending native-resolve lock entries are
         // consumed here — same-instance flow).
         // (Dùng install pipeline mới (entry lock từ resolve native được
@@ -408,15 +177,30 @@ impl ContentStoreProvider for AppAdapter {
 
 #[async_trait]
 impl LockfileProvider for AppAdapter {
-    /// Evidence: per-language manifest writers
-    /// (crate::manifest::write_manifest — pubspec/gradle/swift).
-    /// Dẫn chứng: bộ viết manifest theo ngôn ngữ
-    /// (crate::manifest::write_manifest — pubspec/gradle/swift).
     fn probe_lockfile_provider(&self) -> MgResult<()> {
-        Ok(())
+        match self.language {
+            AppLanguage::Flutter | AppLanguage::Swift | AppLanguage::ReactNative => Ok(()),
+            AppLanguage::Kotlin | AppLanguage::ObjC | AppLanguage::Multi => {
+                Err(mgc_types::capabilities::unsupported_capability(
+                    "app",
+                    "lockfile_provider",
+                    "this ecosystem has no MagiCore-owned lockfile writer",
+                ))
+            }
+        }
     }
 
     async fn write_manifest(&self, project_root: &Path, manifest: &Manifest) -> MgResult<()> {
+        if !matches!(
+            self.language,
+            AppLanguage::Flutter | AppLanguage::Swift | AppLanguage::ReactNative
+        ) {
+            return Err(mgc_types::capabilities::unsupported_capability(
+                "app",
+                "write_manifest",
+                "this app ecosystem has no safe MagiCore-owned manifest writer",
+            ));
+        }
         crate::manifest::write_manifest(self.language, project_root, manifest)
     }
 }
@@ -534,21 +318,14 @@ impl PackageAdapter for AppAdapter {
 
     async fn list(&self, project_root: &Path) -> MgResult<Vec<InstalledPackage>> {
         let manifest = self.parse_manifest(project_root).await?;
-        Ok(manifest
-            .all_dependencies()
-            .map(|dep| InstalledPackage {
-                id: PackageId::new(
-                    dep.name.clone(),
-                    dep.range
-                        .satisfying_version()
-                        .unwrap_or_else(|| Version::new(0, 1, 0)),
-                ),
-                path: PathBuf::new(),
-                integrity: None,
-                is_direct: true,
-                is_dev: dep.dev,
-            })
-            .collect())
+        if manifest.all_dependencies().next().is_none() {
+            return Ok(Vec::new());
+        }
+        Err(mgc_types::MgError::Unsupported {
+            core: "app",
+            capability: "list",
+            guidance: "the app adapter does not yet reconcile resolved locks with installed files; refusing to label declared/ranged dependencies as installed versions".to_string(),
+        })
     }
 }
 
@@ -592,16 +369,10 @@ impl DependencyResolver for AppAdapter {
                     resolution.lock_packages;
                 Ok(resolution.graph)
             }
-            // Native SwiftPM engine (Phase 2): registry-scope/name packages
-            // from the SwiftPM registry + git-only deps through allowlisted
-            // `git clone --depth 1 --branch {tag}` with commit-SHA
-            // provenance; lock entries ride the pending lock into install
-            // (Package.resolved export + checkout SHA verification).
-            // (Engine SwiftPM native (Phase 2): package registry
-            // scope/name + dep chỉ-git qua `git clone --depth 1 --branch
-            // {tag}` đã allowlist với provenance SHA commit; entry lock
-            // đi qua pending lock vào install (export Package.resolved +
-            // xác minh SHA checkout).)
+            // Swift registry archives are handled natively; Git-source
+            // dependencies fail closed until MGC owns Git transport.
+            // (Archive Swift registry được xử lý native; dependency Git bị
+            // từ chối tới khi MGC tự sở hữu transport.)
             AppLanguage::Swift => {
                 let protocol = mgc_resolver::protocols::SwiftRegistryProtocol::from_env();
                 let registry = swift_registry_tag(&protocol);

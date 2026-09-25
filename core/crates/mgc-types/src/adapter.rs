@@ -513,14 +513,12 @@ pub trait PackageAdapter:
     /// — cấp orchestrator.
     async fn list(&self, project_root: &Path) -> MgResult<Vec<InstalledPackage>>;
 
-    /// Does mgc own this adapter's manifest file (mgc may edit + rewrite
-    /// it)? `false` means the provider toolchain is the SOLE owner
-    /// (go.mod, platformio.ini): the orchestrator must run the real
-    /// toolchain add and re-read the file instead of bookkeeping a
-    /// manifest the tool will never read. Default `true`.
-    /// (mgc có sở hữu file manifest của adapter này không? `false` nghĩa
-    /// toolchain là chủ DUY NHẤT: orchestrator phải chạy add thật rồi đọc
-    /// lại file.)
+    /// Does MGC own this adapter's manifest file? `false` means dependency
+    /// mutations must fail closed; there is no provider-tool fallback.
+    /// Owned writes are committed by the CLI mutation gateway, not by direct
+    /// adapter `add/remove/update` methods. Default `true`.
+    /// (MGC có sở hữu manifest không? `false` thì mutation phải fail-closed,
+    /// không fallback tool ngoài. Ghi manifest qua CLI mutation gateway.)
     fn manifest_owned(&self) -> bool {
         true
     }
@@ -546,30 +544,17 @@ pub trait PackageAdapter:
 
     async fn prepare_add(
         &self,
-        project_root: &Path,
+        _project_root: &Path,
         name: &PackageName,
         range: Option<&VersionRange>,
-        opts: AddOptions,
+        _opts: AddOptions,
     ) -> MgResult<PreparedAdd> {
-        let exact = opts.exact;
-        let mut dry_opts = opts;
-        dry_opts.no_save = true;
-        let id = self.add(project_root, name, range, dry_opts).await?;
-        let saved_range = match range {
-            Some(range) if exact => {
-                let raw = range
-                    .as_str()
-                    .trim_start_matches('^')
-                    .trim_start_matches('~');
-                VersionRange::parse(raw)?
-            }
-            Some(range) => range.clone(),
-            None => VersionRange::star(),
-        };
-        Ok(PreparedAdd {
-            id,
-            range: saved_range,
-        })
+        let _ = (name, range);
+        Err(crate::capabilities::unsupported_capability(
+            self.core_id(),
+            "native prepare-add",
+            "this adapter has no MagiCore-owned add resolver; provider package-manager fallback is disabled",
+        ))
     }
 
     /// T5 audit --fix: re-resolve the given vulnerable packages to a newer

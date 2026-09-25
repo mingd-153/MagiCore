@@ -14,6 +14,77 @@ pub fn serialize_lockfile(lockfile: &Lockfile) -> LockfileResult<String> {
 
 /// Write lockfile to file — Ghi lockfile vào file
 pub fn write_lockfile(lockfile: &Lockfile, path: &Path) -> LockfileResult<()> {
+    ensure_lockfile_mutation_allowed(path)?;
+    write_lockfile_unchecked(lockfile, path)
+}
+
+/// Refuse ordinary lock mutations while either signature evidence or
+/// signed metadata exists. Until v3 has a crash-atomic lock+signature
+/// transaction, callers must not leave a stale signature beside new bytes.
+/// Explicit signing/import flows use their dedicated API instead.
+/// (Chặn writer thường sửa lock có chữ ký; luồng ký/import dùng API riêng.)
+pub fn ensure_lockfile_mutation_allowed(path: &Path) -> LockfileResult<()> {
+    let sig_path = crate::parser::signature_path_for(path);
+    match std::fs::symlink_metadata(&sig_path) {
+        Ok(_) => {
+            return Err(LockfileError::SignedLockMutation(format!(
+                "signature artifact '{}' exists; verify it, explicitly remove the signature, perform the mutation, then sign again (automatic pair re-sign is not crash-atomic yet)",
+                sig_path.display()
+            )));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(LockfileError::WriteFailed(format!(
+                "cannot inspect lock signature '{}': {error}",
+                sig_path.display()
+            )));
+        }
+    }
+
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if !metadata.file_type().is_file() => {
+            return Err(LockfileError::WriteFailed(format!(
+                "refusing to mutate non-regular lockfile path '{}'",
+                path.display()
+            )));
+        }
+        Ok(_) => {
+            // Inspect the shared metadata table instead of decoding only the
+            // v3 struct: an explicit v4 migration must be allowed to read an
+            // unsigned v4 lock, while signed metadata in either schema must
+            // still block ordinary writers.
+            // (Đọc TOML tổng quát để không chặn migrate v4 unsigned.)
+            let text = std::fs::read_to_string(path)?;
+            let document: toml::Value = toml::from_str(&text)?;
+            let metadata = document
+                .get("metadata")
+                .and_then(toml::Value::as_table)
+                .ok_or_else(|| {
+                    LockfileError::WriteFailed(format!(
+                        "lockfile '{}' has no valid metadata table; refusing mutation",
+                        path.display()
+                    ))
+                })?;
+            if metadata.contains_key("signer") || metadata.contains_key("signature") {
+                return Err(LockfileError::SignedLockMutation(format!(
+                    "signed metadata remains in '{}' but its signature sidecar is absent; explicitly verify and repair signing state before mutation",
+                    path.display()
+                )));
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(LockfileError::WriteFailed(format!(
+                "cannot inspect lockfile '{}': {error}",
+                path.display()
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+fn write_lockfile_unchecked(lockfile: &Lockfile, path: &Path) -> LockfileResult<()> {
     let toml_str = serialize_lockfile(lockfile)?;
     std::fs::write(path, toml_str)?;
     Ok(())
@@ -37,7 +108,7 @@ pub fn sign_and_write_lockfile(
     lockfile.metadata.lockfile_hash = String::new(); // Placeholder
 
     // Write lockfile ONCE with signer info
-    write_lockfile(lockfile, lockfile_path)?;
+    write_lockfile_unchecked(lockfile, lockfile_path)?;
 
     // Compute final hash
     let lockfile_bytes = std::fs::read(lockfile_path)?;
