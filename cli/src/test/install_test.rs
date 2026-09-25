@@ -103,17 +103,7 @@ fn test_load_locked_graph_rejects_unsupported_lock_version() {
 }
 
 #[test]
-// SAFETY (edition 2024): `env::set_var` is unsafe — this test mutates
-// MGC_TRUST_POLICY inside its own test process, matching the repo-wide
-// test env convention (chain_test.rs / npmrc.rs / auth.rs).
-// (An toàn (edition 2024): `env::set_var` là unsafe — test đổi
-// MGC_TRUST_POLICY trong process test riêng, theo đúng quy ước env của
-// test toàn repo (chain_test.rs / npmrc.rs / auth.rs).)
-#[allow(unsafe_code)]
 fn test_load_locked_graph_ignores_legacy_checksum_sidecar() {
-    // Set trust policy to warn for test (no signature required)
-    unsafe { std::env::set_var("MGC_TRUST_POLICY", "warn") };
-
     let dir = tempdir().unwrap();
     let manifest = Manifest::new("demo", Ecosystem::Web);
     let mut lock = Lockfile::new();
@@ -121,6 +111,14 @@ fn test_load_locked_graph_ignores_legacy_checksum_sidecar() {
     let key = KeyPair::generate().unwrap();
     mgc_lockfile::sign_and_write_lockfile(&mut lock, &lock_path, &key).unwrap();
     std::fs::write(dir.path().join("mgc.lock.sha256"), "bad").unwrap();
+    std::fs::write(
+        dir.path().join("mgc.toml"),
+        format!(
+            "name = \"demo\"\necosystem = \"web\"\n[lock]\npolicy = \"require\"\n[trust]\nkeys = [\"{}\"]\n",
+            key.key_id
+        ),
+    )
+    .unwrap();
 
     assert!(
         load_locked_graph(dir.path(), "web", &manifest)
