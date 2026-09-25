@@ -47,6 +47,7 @@ hex = { workspace = true }
 base64 = { workspace = true }
 sha2 = { workspace = true }
 blake3 = { workspace = true }
+uuid = { workspace = true }
 
 # Platform COW clone syscalls (clonefile/FICLONE — P0-4 export strategy)
 # Syscall clone COW theo platform (clonefile/FICLONE — chiến lược export P0-4)
@@ -58,7 +59,6 @@ tracing = { workspace = true }
 
 # Utilities
 lru = { workspace = true }
-uuid = { workspace = true }
 
 [features]
 # Gate 11-A tightening: destructive claim APIs (clear_all_cas_refs,
