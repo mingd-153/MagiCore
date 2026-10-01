@@ -12,12 +12,16 @@
 //! `x.y.*` wildcard. Archive (tar.gz) xác minh theo `archive_sha256` và giải
 //! nén vào layout pub cache.
 
+use super::GRAPH_RESOLVE_CONCURRENCY;
 use super::{RegistryProtocol, ResolvedEntry};
 use async_trait::async_trait;
+use futures_util::stream::{self, StreamExt, TryStreamExt};
 use mgc_types::{MgError, MgResult, Version};
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use tokio::sync::Semaphore;
 
 const DEFAULT_API_URL: &str = "https://pub.dev";
 const MAX_PUB_GRAPH_SOLVE_ROUNDS: usize = 128;
@@ -112,6 +116,19 @@ impl PubProtocol {
                 "package {name} {version} has no archive_url"
             )));
         }
+        let archive_sha256 = candidate
+            .archive_sha256
+            .as_deref()
+            .map(str::trim)
+            .filter(|digest| {
+                digest.len() == 64 && digest.chars().all(|ch| ch.is_ascii_hexdigit())
+            })
+            .ok_or_else(|| {
+                MgError::Integrity(format!(
+                    "pub.dev package {name} {version} has no valid archive_sha256; refusing to resolve an unverifiable artifact"
+                ))
+            })?
+            .to_ascii_lowercase();
 
         let mut markers = Vec::new();
         let pubspec = candidate.pubspec.as_ref().ok_or_else(|| {
@@ -137,7 +154,7 @@ impl PubProtocol {
             version: version.to_string(),
             deps,
             artifact_url: candidate.archive_url.clone(),
-            sha256: candidate.archive_sha256.clone().unwrap_or_default(),
+            sha256: archive_sha256,
             extra_markers: markers,
         })
     }
@@ -159,6 +176,7 @@ impl PubProtocol {
         let mut docs = HashMap::<String, PubPackage>::new();
         let mut selected = HashMap::<String, ResolvedEntry>::new();
         let mut seen_states = HashSet::<Vec<(String, String)>>::new();
+        let request_limit = Arc::new(Semaphore::new(GRAPH_RESOLVE_CONCURRENCY));
 
         for _ in 0..MAX_PUB_GRAPH_SOLVE_ROUNDS {
             let mut constraints = BTreeMap::<String, BTreeSet<String>>::new();
@@ -177,11 +195,28 @@ impl PubProtocol {
                 }
             }
 
+            let missing_docs = constraints
+                .keys()
+                .filter(|name| !docs.contains_key(*name))
+                .cloned()
+                .collect::<Vec<_>>();
+            let mut fetched_docs = stream::iter(missing_docs.into_iter().map(|name| {
+                let request_limit = Arc::clone(&request_limit);
+                async move {
+                    let _permit = request_limit.acquire_owned().await.map_err(|_| {
+                        MgError::Other("pub.dev resolver semaphore closed".to_string())
+                    })?;
+                    let doc = self.package_doc(&name).await?;
+                    Ok::<_, MgError>((name, doc))
+                }
+            }))
+            .buffered(GRAPH_RESOLVE_CONCURRENCY);
+            while let Some((name, doc)) = fetched_docs.try_next().await? {
+                docs.insert(name, doc);
+            }
+
             let mut next = HashMap::<String, ResolvedEntry>::new();
             for (name, ranges) in constraints {
-                if !docs.contains_key(&name) {
-                    docs.insert(name.clone(), self.package_doc(&name).await?);
-                }
                 let constraints = ranges.into_iter().collect::<Vec<_>>();
                 let doc = docs.get(&name).ok_or_else(|| {
                     MgError::Integrity(format!("missing cached pub.dev metadata for '{name}'"))

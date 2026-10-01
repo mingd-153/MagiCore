@@ -10,7 +10,11 @@
 use super::{OutputFormat, StrictMode, finish_and_print, run_adapter_audit};
 use crate::context::ProjectContext;
 
-pub(crate) async fn audit(ctx: &ProjectContext, fmt: OutputFormat) -> anyhow::Result<()> {
+pub(crate) async fn audit(
+    ctx: &ProjectContext,
+    fmt: OutputFormat,
+    strict: StrictMode,
+) -> anyhow::Result<()> {
     let report = run_adapter_audit(ctx).await?;
 
     // The package listing is human context — machine formats skip it and
@@ -27,5 +31,5 @@ pub(crate) async fn audit(ctx: &ProjectContext, fmt: OutputFormat) -> anyhow::Re
 
     // Shared fail-closed finisher — no more silent exit-0 on unavailable.
     // Finisher fail-closed chung — hết exit 0 âm thầm khi unavailable.
-    finish_and_print("hardware", &report, StrictMode::from_env(), fmt).await
+    finish_and_print("hardware", &report, strict, fmt).await
 }

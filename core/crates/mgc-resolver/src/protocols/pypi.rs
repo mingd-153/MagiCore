@@ -68,19 +68,65 @@ impl PypiProtocol {
         Ok(body)
     }
 
-    /// Materialize a wheel/sdist into `{wheels_dir}/<filename>`.
-    /// Materialize wheel/sdist vào `{wheels_dir}/<filename>`.
+    /// Materialize a wheel/sdist into `{wheels_dir}/sha256/<digest>`.
+    /// Materialize wheel/sdist vào `{wheels_dir}/sha256/<digest>`.
     pub fn materialize(
         &self,
         entry: &ResolvedEntry,
         bytes: &[u8],
         wheels_dir: &Path,
     ) -> MgResult<PathBuf> {
-        let filename = Self::artifact_filename(&entry.artifact_url)?;
+        let digest = Self::verified_materialization_digest(entry, bytes)?;
+        let relative = Self::artifact_cache_relpath(&entry.artifact_url, &digest)?;
         std::fs::create_dir_all(wheels_dir)?;
-        let dest = wheels_dir.join(filename);
+        let dest = wheels_dir.join(relative);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         std::fs::write(&dest, bytes)?;
         Ok(dest)
+    }
+
+    /// Return a cache path isolated by the authenticated artifact digest.
+    /// Trả path cache tách biệt theo digest artifact đã xác minh.
+    pub fn artifact_cache_relpath(artifact_url: &str, sha256: &str) -> MgResult<PathBuf> {
+        let digest = Self::canonical_sha256(sha256)?;
+        Self::artifact_filename(artifact_url)?;
+        Ok(PathBuf::from("sha256").join(digest))
+    }
+
+    /// Build a site directory identity that cannot alias another wheel with
+    /// the same distribution/version but different bytes.
+    /// (Tạo định danh site không đè wheel khác cùng tên/version nhưng khác byte.)
+    pub fn importable_site_dirname_for_digest(
+        name: &str,
+        version: &str,
+        sha256: &str,
+    ) -> MgResult<String> {
+        let base = Self::importable_site_dirname(name, version)?;
+        let digest = Self::canonical_sha256(sha256)?;
+        Ok(format!("{base}-{digest}"))
+    }
+
+    fn canonical_sha256(sha256: &str) -> MgResult<String> {
+        if sha256.len() != 64 || !sha256.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(MgError::Integrity(
+                "Python cache identity requires a valid 64-character SHA-256 digest".to_string(),
+            ));
+        }
+        Ok(sha256.to_ascii_lowercase())
+    }
+
+    fn verified_materialization_digest(entry: &ResolvedEntry, bytes: &[u8]) -> MgResult<String> {
+        let expected = Self::canonical_sha256(&entry.sha256)?;
+        let actual = super::sha256_hex(bytes);
+        if actual != expected {
+            return Err(MgError::Integrity(format!(
+                "refusing to materialize Python artifact {}@{} with mismatched SHA-256",
+                entry.name, entry.version
+            )));
+        }
+        Ok(actual)
     }
 
     /// Validate registry-controlled Python identity fields before deriving
@@ -128,6 +174,195 @@ impl PypiProtocol {
         Ok(filename.to_string())
     }
 
+    /// Return the validated basename used for an artifact URL.
+    /// Trả basename đã kiểm tra dùng cho URL artifact.
+    pub fn artifact_filename_for_url(artifact_url: &str) -> MgResult<String> {
+        Self::artifact_filename(artifact_url)
+    }
+
+    /// Re-verify a runtime site tree against the RECORD contained in its
+    /// digest-authenticated wheel. The RECORD inside `site` is deliberately
+    /// ignored because both it and the imported modules can be modified after
+    /// installation.
+    /// (Xác minh lại cây runtime bằng RECORD trong wheel đã xác thực digest;
+    /// không tin RECORD nằm trong site vì có thể bị sửa cùng module.)
+    pub fn verify_runtime_materialization(
+        wheel_bytes: &[u8],
+        expected_name: &str,
+        expected_version: &str,
+        expected_sha256: &str,
+        site: &Path,
+    ) -> MgResult<()> {
+        if expected_sha256.len() != 64
+            || !expected_sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err(MgError::Integrity(
+                "Python runtime lock entry has no valid SHA-256 digest".to_string(),
+            ));
+        }
+        let actual_sha256 = super::sha256_hex(wheel_bytes);
+        if !actual_sha256.eq_ignore_ascii_case(expected_sha256) {
+            return Err(MgError::Integrity(
+                "cached Python wheel does not match the mgc.lock SHA-256 digest".to_string(),
+            ));
+        }
+
+        Self::verify_runtime_materialization_contents(
+            wheel_bytes,
+            expected_name,
+            expected_version,
+            site,
+        )
+    }
+
+    fn verify_runtime_materialization_contents(
+        wheel_bytes: &[u8],
+        expected_name: &str,
+        expected_version: &str,
+        site: &Path,
+    ) -> MgResult<()> {
+        use base64::Engine;
+        use sha2::{Digest, Sha256};
+        use std::collections::{BTreeMap, BTreeSet};
+
+        let site_metadata = std::fs::symlink_metadata(site)?;
+        if !site_metadata.file_type().is_dir() {
+            return Err(MgError::Integrity(
+                "Python runtime site is not a real directory".to_string(),
+            ));
+        }
+
+        let archive_entries = super::zip_reader::read_zip_entries(wheel_bytes)?;
+        // Keep slices into the single decoded entry set. Cloning each
+        // payload into the map doubled peak memory for large wheels.
+        // (Map mượn slice từ entries; clone payload làm RAM đỉnh tăng gấp đôi.)
+        let mut archive_files: BTreeMap<String, &[u8]> = BTreeMap::new();
+        let mut record_bytes = None;
+        let mut metadata_bytes = None;
+        for entry in &archive_entries {
+            validate_record_path(&entry.name)?;
+            if archive_files
+                .insert(entry.name.clone(), entry.data.as_slice())
+                .is_some()
+            {
+                return Err(MgError::Integrity(format!(
+                    "Python wheel contains duplicate member '{}'",
+                    entry.name
+                )));
+            }
+            if entry.name.ends_with(".dist-info/RECORD")
+                && record_bytes.replace(entry.data.as_slice()).is_some()
+            {
+                return Err(MgError::Integrity(
+                    "Python wheel contains multiple dist-info/RECORD files".to_string(),
+                ));
+            }
+            if entry.name.ends_with(".dist-info/METADATA")
+                && metadata_bytes.replace(entry.data.as_slice()).is_some()
+            {
+                return Err(MgError::Integrity(
+                    "Python wheel contains multiple dist-info/METADATA files".to_string(),
+                ));
+            }
+        }
+        let record = record_bytes.ok_or_else(|| {
+            MgError::Integrity("authenticated Python wheel has no dist-info/RECORD".to_string())
+        })?;
+        let record = std::str::from_utf8(record)
+            .map_err(|_| MgError::Integrity("Python wheel RECORD is not UTF-8".to_string()))?;
+        let metadata = metadata_bytes.ok_or_else(|| {
+            MgError::Integrity("authenticated Python wheel has no dist-info/METADATA".to_string())
+        })?;
+        verify_wheel_identity(metadata, expected_name, expected_version)?;
+        let urlsafe = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        let mut expected_files = BTreeSet::new();
+        for (line_index, line) in record.lines().enumerate() {
+            let line = line.trim_end_matches('\r');
+            if line.is_empty() {
+                continue;
+            }
+            let fields = parse_record_row(line).map_err(|reason| {
+                MgError::Integrity(format!(
+                    "malformed authenticated wheel RECORD line {}: {reason}",
+                    line_index + 1
+                ))
+            })?;
+            let [relative, hash, size] = fields.as_slice() else {
+                return Err(MgError::Integrity(format!(
+                    "malformed authenticated wheel RECORD line {}",
+                    line_index + 1
+                )));
+            };
+            validate_record_path(relative)?;
+            let Some(archive_member) = archive_files.get(relative.as_str()) else {
+                return Err(MgError::Integrity(format!(
+                    "wheel RECORD references absent member '{relative}'"
+                )));
+            };
+            if !expected_files.insert(relative.clone()) {
+                return Err(MgError::Integrity(format!(
+                    "wheel RECORD repeats member '{relative}'"
+                )));
+            }
+            let target = verified_site_file_path(site, relative)?;
+            let data = std::fs::read(&target)?;
+            if data.as_slice() != *archive_member {
+                return Err(MgError::Integrity(format!(
+                    "Python runtime materialization differs from authenticated wheel member '{relative}'"
+                )));
+            }
+            let is_record = relative.ends_with(".dist-info/RECORD");
+            if is_record {
+                if !hash.is_empty() || !size.is_empty() {
+                    return Err(MgError::Integrity(
+                        "wheel RECORD must not self-hash its RECORD row".to_string(),
+                    ));
+                }
+                continue;
+            }
+            let digest = hash.strip_prefix("sha256=").ok_or_else(|| {
+                MgError::Integrity(format!(
+                    "unsupported or missing wheel RECORD hash for '{relative}'"
+                ))
+            })?;
+            let expected_size: u64 = size.parse().map_err(|_| {
+                MgError::Integrity(format!("invalid wheel RECORD size for '{relative}'"))
+            })?;
+            if data.len() as u64 != expected_size {
+                return Err(MgError::Integrity(format!(
+                    "Python runtime materialization size mismatch for '{relative}'"
+                )));
+            }
+            let expected_digest = urlsafe.decode(digest).map_err(|_| {
+                MgError::Integrity(format!("invalid wheel RECORD digest for '{relative}'"))
+            })?;
+            let actual_digest: [u8; 32] = Sha256::digest(&data).into();
+            if actual_digest.as_slice() != expected_digest.as_slice() {
+                return Err(MgError::Integrity(format!(
+                    "Python runtime materialization digest mismatch for '{relative}'"
+                )));
+            }
+        }
+        if expected_files.len() != archive_files.len()
+            || archive_files
+                .keys()
+                .any(|name| !expected_files.contains(name))
+        {
+            return Err(MgError::Integrity(
+                "authenticated wheel members and RECORD entries do not match".to_string(),
+            ));
+        }
+
+        let mut actual_files = BTreeSet::new();
+        collect_regular_files(site, site, &mut actual_files)?;
+        if actual_files != expected_files {
+            return Err(MgError::Integrity(
+                "Python runtime site contains unrecorded or missing files".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Whether an artifact can be materialized by the current native
     /// Python runtime (pure-Python wheel only; no build backend or ABI
     /// loader is implemented yet).
@@ -137,7 +372,7 @@ impl PypiProtocol {
         Ok(Self::is_pure_wheel_filename(&filename))
     }
 
-    /// Unpack a PURE-PYTHON wheel into `{wheels_dir}/site/<name>-<version>/`
+    /// Unpack a PURE-PYTHON wheel into a digest-specific site directory.
     /// for importable use. Compiled wheels (versioned ABI tag) return None —
     /// unpacking them would fake an install the interpreter cannot load
     /// (the ABI warning stays the honest signal).
@@ -152,108 +387,24 @@ impl PypiProtocol {
         if !Self::is_pure_wheel_filename(&filename) {
             return Ok(None);
         }
+        let digest = if entry.sha256.is_empty() {
+            super::sha256_hex(bytes)
+        } else {
+            Self::verified_materialization_digest(entry, bytes)?
+        };
         let site = wheels_dir
             .join("site")
-            .join(Self::importable_site_dirname(&entry.name, &entry.version)?);
+            .join(Self::importable_site_dirname_for_digest(
+                &entry.name,
+                &entry.version,
+                &digest,
+            )?);
         super::zip_reader::extract_zip(bytes, &site)?;
-        // RECORD verification (PEP 376): every extracted file must match
-        // its recorded sha256 + size. Whole-file sha256 (checked at
-        // download) proves the bytes came from the registry; RECORD
-        // proves the extracted tree matches the wheel's own manifest —
-        // a corrupted/truncated unzip fails closed here, never imports.
-        // (Xác minh RECORD: mọi file giải nén phải khớp hash + size.)
-        Self::verify_wheel_record_dir(&site)?;
+        // Verify archive identity before extraction, then validate the
+        // resulting tree against RECORD without hashing the wheel a second time.
+        // (Xác minh digest trước khi bung, rồi đối chiếu cây với RECORD không hash lại.)
+        Self::verify_runtime_materialization_contents(bytes, &entry.name, &entry.version, &site)?;
         Ok(Some(site))
-    }
-
-    /// Verify an unpacked wheel tree against its `*.dist-info/RECORD`
-    /// (PEP 376): every listed file must exist with matching sha256
-    /// (base64url, `sha256=` scheme) and byte size. The RECORD row itself
-    /// carries empty hash/size (self-reference). Missing RECORD, missing
-    /// files, hash or size mismatches all fail closed.
-    /// (Xác minh cây wheel đã giải nén theo RECORD.)
-    fn verify_wheel_record_dir(site: &Path) -> MgResult<()> {
-        use sha2::{Digest, Sha256};
-        let record = std::fs::read_dir(site)
-            .map_err(|e| MgError::Other(format!("read unpacked wheel: {e}")))?
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .find(|p| {
-                p.is_dir()
-                    && p.file_name()
-                        .and_then(|n| n.to_str())
-                        .is_some_and(|n| n.ends_with(".dist-info"))
-            })
-            .and_then(|d| {
-                let r = d.join("RECORD");
-                r.is_file().then_some(r)
-            })
-            .ok_or_else(|| {
-                MgError::Integrity(
-                    "unpacked wheel has no dist-info/RECORD (fail-closed)".to_string(),
-                )
-            })?;
-        let body = std::fs::read_to_string(&record)
-            .map_err(|e| MgError::Other(format!("read RECORD: {e}")))?;
-        // base64url engine (RECORD uses url-safe alphabet, no padding).
-        use base64::Engine;
-        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
-        for (lineno, line) in body.lines().enumerate() {
-            let line = line.trim().trim_end_matches('\r');
-            if line.is_empty() {
-                continue;
-            }
-            let mut cols = line.splitn(3, ',');
-            let (Some(rel), hash, size) = (cols.next(), cols.next(), cols.next()) else {
-                return Err(MgError::Integrity(format!(
-                    "malformed RECORD line {} (fail-closed)",
-                    lineno + 1
-                )));
-            };
-            // Path traversal inside RECORD is an attack — refuse.
-            if rel.contains("..") || rel.starts_with('/') || rel.starts_with('\\') {
-                return Err(MgError::Integrity(format!(
-                    "RECORD entry escapes the wheel: '{rel}' (fail-closed)"
-                )));
-            }
-            let path = site.join(rel);
-            let data = std::fs::read(&path).map_err(|_| {
-                MgError::Integrity(format!("RECORD lists missing file '{rel}' (fail-closed)"))
-            })?;
-            match hash {
-                // The RECORD row itself.
-                None | Some("") => continue,
-                Some(h) => {
-                    let digest = h.strip_prefix("sha256=").ok_or_else(|| {
-                        MgError::Integrity(format!(
-                            "unsupported RECORD hash scheme for '{rel}' (fail-closed)"
-                        ))
-                    })?;
-                    let mut hasher = Sha256::new();
-                    hasher.update(&data);
-                    let actual = b64.encode(hasher.finalize());
-                    // Compare unpadded both sides (registries vary).
-                    if actual.trim_end_matches('=') != digest.trim_end_matches('=') {
-                        return Err(MgError::Integrity(format!(
-                            "RECORD hash mismatch for '{rel}' (fail-closed)"
-                        )));
-                    }
-                    if let Some(expected_size) = size {
-                        let expected_size: u64 = expected_size.trim().parse().map_err(|_| {
-                            MgError::Integrity(format!(
-                                "malformed RECORD size for '{rel}' (fail-closed)"
-                            ))
-                        })?;
-                        if data.len() as u64 != expected_size {
-                            return Err(MgError::Integrity(format!(
-                                "RECORD size mismatch for '{rel}' (fail-closed)"
-                            )));
-                        }
-                    }
-                }
-            }
-        }
-        Ok(())
     }
 
     /// Pure-python wheel tags: `{py}-none-any` with a py2/py3 interpreter
@@ -289,10 +440,242 @@ impl PypiProtocol {
     }
 }
 
+/// Confirm wheel metadata identity before its files enter Python's import path.
+/// Xác nhận METADATA khớp tên/version trong lock trước khi thêm PYTHONPATH.
+fn verify_wheel_identity(
+    metadata: &[u8],
+    expected_name: &str,
+    expected_version: &str,
+) -> MgResult<()> {
+    let metadata = std::str::from_utf8(metadata)
+        .map_err(|_| MgError::Integrity("Python wheel METADATA is not UTF-8".to_string()))?;
+    let mut name = None;
+    let mut version = None;
+    for line in metadata.lines().take_while(|line| !line.is_empty()) {
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        match key.to_ascii_lowercase().as_str() {
+            "name" => {
+                if name.replace(value.trim()).is_some() {
+                    return Err(MgError::Integrity(
+                        "Python wheel METADATA repeats Name".to_string(),
+                    ));
+                }
+            }
+            "version" if version.replace(value.trim()).is_some() => {
+                return Err(MgError::Integrity(
+                    "Python wheel METADATA repeats Version".to_string(),
+                ));
+            }
+            "version" => version = Some(value.trim()),
+            _ => {}
+        }
+    }
+    let normalize = |value: &str| {
+        let mut normalized = String::with_capacity(value.len());
+        let mut separator = false;
+        for ch in value.chars() {
+            if matches!(ch, '-' | '_' | '.') {
+                separator = true;
+            } else {
+                if separator && !normalized.is_empty() {
+                    normalized.push('-');
+                }
+                separator = false;
+                normalized.push(ch.to_ascii_lowercase());
+            }
+        }
+        normalized
+    };
+    if name.is_none_or(|actual| normalize(actual) != normalize(expected_name))
+        || version.is_none_or(|actual| !pep440_release_identity_matches(actual, expected_version))
+    {
+        return Err(MgError::Integrity(format!(
+            "Python wheel METADATA identity does not match locked {}@{}",
+            expected_name, expected_version
+        )));
+    }
+    Ok(())
+}
+
+/// Compare stable PEP 440 release segments while preserving fail-closed
+/// behavior for epochs, pre/post/dev releases, local labels, and malformed
+/// strings that this resolver does not model yet. PEP 440 treats trailing
+/// zero release segments as equivalent (for example, `26.3 == 26.3.0`).
+/// So khớp release segment ổn định theo PEP 440; từ chối cú pháp chưa hỗ trợ.
+fn pep440_release_identity_matches(actual: &str, expected: &str) -> bool {
+    fn release_parts(value: &str) -> Option<Vec<u64>> {
+        let value = value.trim();
+        let value = value
+            .strip_prefix('v')
+            .or_else(|| value.strip_prefix('V'))
+            .unwrap_or(value);
+        if value.is_empty()
+            || !value
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || byte == b'.')
+        {
+            return None;
+        }
+        let mut parts = value
+            .split('.')
+            .map(|part| {
+                if part.is_empty() {
+                    return None;
+                }
+                part.parse::<u64>().ok()
+            })
+            .collect::<Option<Vec<_>>>()?;
+        while parts.last() == Some(&0) && parts.len() > 1 {
+            parts.pop();
+        }
+        Some(parts)
+    }
+
+    match (release_parts(actual), release_parts(expected)) {
+        (Some(actual), Some(expected)) => actual == expected,
+        _ => false,
+    }
+}
+
 impl Default for PypiProtocol {
     fn default() -> Self {
         Self::from_env()
     }
+}
+
+/// Parse the three CSV fields in a RECORD row, honoring quoted commas and
+/// escaped quotes while rejecting multiline/malformed fields.
+/// Parse ba cột CSV của RECORD, hỗ trợ dấu phẩy/quote escape.
+fn parse_record_row(line: &str) -> Result<Vec<String>, &'static str> {
+    let mut fields = Vec::with_capacity(3);
+    let mut field = String::new();
+    let mut chars = line.chars().peekable();
+    let mut quoted = false;
+    let mut closed_quote = false;
+    while let Some(ch) = chars.next() {
+        match ch {
+            '"' if quoted => {
+                if chars.peek() == Some(&'"') {
+                    chars.next();
+                    field.push('"');
+                } else {
+                    quoted = false;
+                    closed_quote = true;
+                }
+            }
+            '"' if field.is_empty() && !closed_quote => quoted = true,
+            ',' if !quoted => {
+                fields.push(std::mem::take(&mut field));
+                closed_quote = false;
+                if fields.len() >= 3 {
+                    return Err("expected exactly three CSV fields");
+                }
+            }
+            _ if quoted => field.push(ch),
+            _ if closed_quote => return Err("unexpected data after quoted CSV field"),
+            _ => field.push(ch),
+        }
+    }
+    if quoted {
+        return Err("unterminated quoted CSV field");
+    }
+    fields.push(field);
+    if fields.len() != 3 {
+        return Err("expected exactly three CSV fields");
+    }
+    Ok(fields)
+}
+
+/// Wheel member paths are POSIX-relative by specification. Reject every
+/// path that could escape the extraction root before joining it locally.
+/// Path wheel theo POSIX phải tương đối; từ chối traversal trước khi join.
+fn validate_record_path(relative: &str) -> MgResult<()> {
+    if relative.is_empty()
+        || relative.starts_with('/')
+        || relative.starts_with('\\')
+        || relative.contains('\\')
+        || relative.contains(':')
+        || relative.contains('\0')
+        || relative
+            .split('/')
+            .any(|component| component.is_empty() || component == "." || component == "..")
+    {
+        return Err(MgError::Integrity(format!(
+            "unsafe Python wheel member path '{relative}'"
+        )));
+    }
+    Ok(())
+}
+
+/// Check every component with no-follow metadata before reading the file.
+/// Kiểm tra từng thành phần không theo symlink trước khi đọc file.
+fn verified_site_file_path(site: &Path, relative: &str) -> MgResult<PathBuf> {
+    let components: Vec<_> = relative.split('/').collect();
+    let mut current = site.to_path_buf();
+    for (index, component) in components.iter().enumerate() {
+        current.push(component);
+        let metadata = std::fs::symlink_metadata(&current).map_err(|error| {
+            MgError::Integrity(format!(
+                "Python runtime materialization is missing '{relative}': {error}"
+            ))
+        })?;
+        if metadata.file_type().is_symlink() {
+            return Err(MgError::Integrity(format!(
+                "Python runtime materialization contains a symlink in '{relative}'"
+            )));
+        }
+        let is_last = index + 1 == components.len();
+        if (is_last && !metadata.file_type().is_file())
+            || (!is_last && !metadata.file_type().is_dir())
+        {
+            return Err(MgError::Integrity(format!(
+                "Python runtime materialization has an invalid path component in '{relative}'"
+            )));
+        }
+    }
+    Ok(current)
+}
+
+/// Enumerate regular files without following symlinks so site contents can
+/// be compared exactly with the authenticated wheel RECORD.
+/// Liệt kê file thường không theo symlink để đối chiếu chính xác với RECORD.
+fn collect_regular_files(
+    root: &Path,
+    current: &Path,
+    files: &mut std::collections::BTreeSet<String>,
+) -> MgResult<()> {
+    for entry in std::fs::read_dir(current)? {
+        let entry = entry?;
+        let path = entry.path();
+        let metadata = std::fs::symlink_metadata(&path)?;
+        if metadata.file_type().is_symlink() {
+            return Err(MgError::Integrity(format!(
+                "Python runtime site contains symlink '{}'",
+                path.display()
+            )));
+        }
+        if metadata.file_type().is_dir() {
+            collect_regular_files(root, &path, files)?;
+        } else if metadata.file_type().is_file() {
+            let relative = path.strip_prefix(root).map_err(|_| {
+                MgError::Integrity("Python runtime site path escaped its root".to_string())
+            })?;
+            let relative = relative
+                .components()
+                .map(|component| component.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/");
+            files.insert(relative);
+        } else {
+            return Err(MgError::Integrity(format!(
+                "Python runtime site contains special file '{}'",
+                path.display()
+            )));
+        }
+    }
+    Ok(())
 }
 
 #[async_trait]
@@ -333,16 +716,25 @@ impl RegistryProtocol for PypiProtocol {
                 let mut last_excluded: Option<String> = None;
                 for (candidate, candidate_files) in candidates {
                     let version_url = format!("{}/pypi/{name}/{candidate}/json", self.index_url);
-                    let Ok(version_body) = self.get_text(&version_url).await else {
-                        continue;
-                    };
-                    let Ok(version_doc): Result<PypiJson, _> = serde_json::from_str(&version_body)
-                    else {
-                        continue;
-                    };
+                    let version_body = self.get_text(&version_url).await.map_err(|error| {
+                        MgError::Network(format!(
+                            "cannot determine Python compatibility for {name} {candidate}: {error}"
+                        ))
+                    })?;
+                    let version_doc: PypiJson = serde_json::from_str(&version_body).map_err(|error| {
+                        MgError::Other(format!(
+                            "parse Python compatibility metadata for {name} {candidate}: {error}"
+                        ))
+                    })?;
                     let required = version_doc.info.requires_python.clone().unwrap_or_default();
                     if required.trim().is_empty() || requires_python_allows(&required, major, minor)
                     {
+                        if select_file(&candidate_files, consumer).is_none() {
+                            last_excluded = Some(format!(
+                                "{candidate} has no artifact compatible with Python {major}.{minor}"
+                            ));
+                            continue;
+                        }
                         selected = Some((candidate, candidate_files));
                         break;
                     }
@@ -358,7 +750,7 @@ impl RegistryProtocol for PypiProtocol {
                 })?
             }
         };
-        let file = select_file(&files)
+        let file = select_file(&files, consumer)
             .ok_or_else(|| MgError::Other(format!("no downloadable file for {name} {version}")))?;
 
         let mut markers = Vec::new();
@@ -386,11 +778,29 @@ impl RegistryProtocol for PypiProtocol {
             let consumer = consumer_python();
             for spec in requires {
                 let Some((dep_name, dep_range, marker)) = parse_pep508(&spec) else {
-                    continue;
+                    return Err(MgError::Other(format!(
+                        "invalid PEP 508 Requires-Dist entry for {name} {version}: '{spec}'; refusing to omit it from the dependency graph"
+                    )));
                 };
+                // A Requires-Dist entry guarded by `extra == ...` belongs
+                // to an opt-in extra of the package being resolved. This
+                // resolver has no requested-extra input, so it must record
+                // and exclude that optional edge rather than reject a base
+                // install because the optional dependency itself has extras.
+                // (Requires-Dist có marker extra là cạnh tùy chọn; resolver
+                // chưa nhận extra được yêu cầu nên ghi nhận và bỏ qua cạnh.)
                 if marker.as_deref().is_some_and(|m| m.contains("extra")) {
                     markers.push(format!("marker:{}", marker.unwrap_or_default()));
                     continue;
+                }
+                if requires_requested_extras(&spec) {
+                    return Err(MgError::Unsupported {
+                        core: "python",
+                        capability: "dependency extras",
+                        guidance: format!(
+                            "{name} {version} requires '{spec}', but extra propagation is not implemented; refusing to resolve an incomplete graph"
+                        ),
+                    });
                 }
                 if let Some(m) = marker {
                     // Certainly-excluded environments skip the dep (pip
@@ -442,17 +852,40 @@ impl RegistryProtocol for PypiProtocol {
 /// (V1.2: fail-closed — no file at all beats the wrong file).
 /// Chọn file cài tốt nhất: wheel phổ quát → wheel host → sdist. Cố ý
 /// KHÔNG fallback "wheel bất kỳ".
-fn select_file(files: &[PypiFile]) -> Option<&PypiFile> {
-    if let Some(f) = files.iter().find(|f| is_universal_wheel(f)) {
+fn select_file(files: &[PypiFile], consumer: Option<(u64, u64)>) -> Option<&PypiFile> {
+    let compatible = |file: &&PypiFile| file_requires_python_allows(file, consumer);
+    if let Some(f) = files
+        .iter()
+        .filter(compatible)
+        .find(|f| is_universal_wheel(f))
+    {
         return Some(f);
     }
     if let Some(f) = files
         .iter()
+        .filter(compatible)
         .find(|f| f.packagetype == "bdist_wheel" && wheel_platform_matches_host(&f.filename))
     {
         return Some(f);
     }
-    files.iter().find(|f| f.packagetype == "sdist")
+    files
+        .iter()
+        .filter(compatible)
+        .find(|f| f.packagetype == "sdist")
+}
+
+/// Ignore a file whose `Requires-Python` excludes the selected consumer.
+/// Keep the historical unresolved-runtime behavior until runtime discovery is
+/// wired into the project resolver rather than inventing a target version.
+/// Bỏ file có `Requires-Python` loại interpreter mục tiêu; khi chưa biết runtime,
+/// giữ hành vi cũ thay vì tự bịa phiên bản đích.
+fn file_requires_python_allows(file: &PypiFile, consumer: Option<(u64, u64)>) -> bool {
+    match (file.requires_python.as_deref(), consumer) {
+        (Some(required), Some((major, minor))) => {
+            required.trim().is_empty() || requires_python_allows(required, major, minor)
+        }
+        _ => true,
+    }
 }
 
 fn is_universal_wheel(file: &PypiFile) -> bool {
@@ -797,6 +1230,23 @@ fn pep_lt(raw: &str, version: &Version) -> bool {
         .unwrap_or(false)
 }
 
+/// Detect extras requested on a dependency name before PEP 508 parsing.
+/// Dependency extras change that dependency's own transitive graph and cannot
+/// be discarded without producing an incomplete resolution.
+/// Phát hiện extras được yêu cầu trên tên dependency trước khi parse PEP 508.
+/// Extras làm thay đổi graph bắc cầu của dependency đó nên không thể bỏ qua.
+fn requires_requested_extras(spec: &str) -> bool {
+    let requirement = spec
+        .split_once(';')
+        .map_or(spec, |(requirement, _)| requirement)
+        .trim();
+    let name_end = requirement
+        .find(|c: char| ['=', '>', '<', '!', '~'].contains(&c))
+        .unwrap_or(requirement.len());
+    let name = requirement[..name_end].trim();
+    name.contains('[') || name.contains(']')
+}
+
 /// Parse a PEP 508 requirement into `(name, range, marker)`. Extra deps are
 /// surfaced via the marker (caller skips them); `[extras]` are dropped.
 /// Parse requirement PEP 508 thành `(name, range, marker)`. Dep extra lộ qua
@@ -865,6 +1315,26 @@ struct PypiDigests {
 mod tests {
     use super::*;
     use mgc_types::Version;
+
+    #[test]
+    fn wheel_identity_accepts_pep440_equivalent_trailing_zero_release() {
+        let metadata = b"Metadata-Version: 2.4\nName: packaging\nVersion: 26.3\n\n";
+        assert!(verify_wheel_identity(metadata, "packaging", "26.3.0").is_ok());
+    }
+
+    #[test]
+    fn wheel_identity_rejects_unsupported_or_different_versions() {
+        let equivalent = b"Metadata-Version: 2.4\nName: packaging\nVersion: 26.3.0.0\n\n";
+        assert!(verify_wheel_identity(equivalent, "packaging", "26.3.0").is_ok());
+
+        for actual in ["26.3.1", "26.3rc1", "26.3.post1", "26.3+vendor", "26..3"] {
+            let metadata = format!("Metadata-Version: 2.4\nName: packaging\nVersion: {actual}\n\n");
+            assert!(
+                verify_wheel_identity(metadata.as_bytes(), "packaging", "26.3.0").is_err(),
+                "accepted {actual}"
+            );
+        }
+    }
 
     #[test]
     fn pep440_compatible_release() {
@@ -960,6 +1430,26 @@ mod tests {
         unsafe {
             std::env::set_var("MGC_PYTHON_VERSION", "3.9");
             assert_eq!(consumer_python(), Some((3, 9)));
+            let incompatible_file = PypiFile {
+                filename: "demo-1.0.0-py3-none-any.whl".to_string(),
+                url: "https://files.pythonhosted.org/demo.whl".to_string(),
+                digests: PypiDigests::default(),
+                packagetype: "bdist_wheel".to_string(),
+                requires_python: Some(">=3.10".to_string()),
+            };
+            assert!(
+                select_file(std::slice::from_ref(&incompatible_file), consumer_python()).is_none(),
+                "a wheel-specific Requires-Python constraint must reject this artifact"
+            );
+            let compatible_file = PypiFile {
+                requires_python: Some(">=3.9".to_string()),
+                ..incompatible_file
+            };
+            assert_eq!(
+                select_file(std::slice::from_ref(&compatible_file), consumer_python())
+                    .map(|file| file.filename.as_str()),
+                Some(compatible_file.filename.as_str())
+            );
             std::env::set_var("MGC_PYTHON_VERSION", "310");
             assert_eq!(consumer_python(), Some((3, 10)));
             std::env::set_var("MGC_PYTHON_VERSION", "39");
@@ -1117,7 +1607,7 @@ mod importable_tests {
         use sha2::{Digest, Sha256};
         let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
         let six_py = b"__version__ = '1.17.0'\n";
-        let meta = b"Name: six\n";
+        let meta = b"Name: six\nVersion: 1.17.0\n";
         let record_body = format!(
             "six.py,sha256={},{}\nsix-1.17.0.dist-info/METADATA,sha256={},{}\nsix-1.17.0.dist-info/RECORD,,\n",
             b64.encode(Sha256::digest(six_py)),
@@ -1142,30 +1632,70 @@ mod importable_tests {
         assert!(site.join("six.py").exists(), "six.py importable");
     }
 
-    /// A wheel whose member was tampered after RECORD was written must
-    /// fail the unpack (fail-closed, never imports).
     #[test]
-    fn materialize_importable_rejects_tampered_member() {
+    fn runtime_verification_uses_authenticated_wheel_record_not_mutable_site_record() {
+        use base64::Engine;
+        use sha2::{Digest, Sha256};
+        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        let six_py = b"VALUE = 'trusted'\n";
+        let meta = b"Name: six\nVersion: 1.17.0\n";
+        let record = format!(
+            "six.py,sha256={},{}\nsix-1.17.0.dist-info/METADATA,sha256={},{}\nsix-1.17.0.dist-info/RECORD,,\n",
+            b64.encode(Sha256::digest(six_py)),
+            six_py.len(),
+            b64.encode(Sha256::digest(meta)),
+            meta.len(),
+        );
         let wheel = stored_zip(&[
-            ("six.py", b"EVIL = True\n".as_slice()),
-            ("six-1.17.0.dist-info/METADATA", b"Name: six\n".as_slice()),
-            // RECORD claims the ORIGINAL bytes (stale content hash).
-            (
-                "six-1.17.0.dist-info/RECORD",
-                b"six.py,sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA,23\nsix-1.17.0.dist-info/METADATA,sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB,11\nsix-1.17.0.dist-info/RECORD,,\n".as_slice(),
-            ),
+            ("six.py", six_py.as_slice()),
+            ("six-1.17.0.dist-info/METADATA", meta.as_slice()),
+            ("six-1.17.0.dist-info/RECORD", record.as_bytes()),
         ]);
+        let digest = super::super::sha256_hex(&wheel);
         let dir = tempfile::tempdir().unwrap();
-        let err = PypiProtocol::new("https://pypi.org")
+        let site = PypiProtocol::new("https://pypi.org")
             .materialize_importable(
-                &entry_for("https://files.pythonhosted.org/x/six-1.17.0-py2.py3-none-any.whl"),
+                &entry_for("https://files.pythonhosted.org/six-1.17.0-py3-none-any.whl"),
                 &wheel,
                 dir.path(),
             )
-            .expect_err("tampered member must fail");
+            .unwrap()
+            .unwrap();
+
+        PypiProtocol::verify_runtime_materialization(&wheel, "six", "1.17.0", &digest, &site)
+            .unwrap();
+        // The old normalization erased separators and treated `six` and
+        // `s-ix` as identical; PEP 503 keeps one canonical hyphen.
+        // (Chuẩn hóa cũ xóa dấu phân cách khiến `six` trùng `s-ix`.)
         assert!(
-            err.to_string().contains("RECORD"),
-            "failure must name RECORD: {err}"
+            PypiProtocol::verify_runtime_materialization(&wheel, "s-ix", "1.17.0", &digest, &site)
+                .is_err()
+        );
+        assert!(
+            PypiProtocol::verify_runtime_materialization(
+                &wheel,
+                "attacker-package",
+                "1.17.0",
+                &digest,
+                &site
+            )
+            .is_err()
+        );
+
+        std::fs::write(site.join("six.py"), b"VALUE = 'attacker-controlled'\n").unwrap();
+        // Rewriting the extracted RECORD must not bless the changed module.
+        let changed = b"VALUE = 'attacker-controlled'\n";
+        let forged_record = format!(
+            "six.py,sha256={},{}\nsix-1.17.0.dist-info/METADATA,sha256={},{}\nsix-1.17.0.dist-info/RECORD,,\n",
+            b64.encode(Sha256::digest(changed)),
+            changed.len(),
+            b64.encode(Sha256::digest(meta)),
+            meta.len(),
+        );
+        std::fs::write(site.join("six-1.17.0.dist-info/RECORD"), forged_record).unwrap();
+        assert!(
+            PypiProtocol::verify_runtime_materialization(&wheel, "six", "1.17.0", &digest, &site)
+                .is_err()
         );
     }
 

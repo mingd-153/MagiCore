@@ -174,10 +174,6 @@ pub async fn run(args: DedupeArgs) -> Result<()> {
         ProjectConfig::find_project_root(&cwd).ok_or_else(crate::error::project_root_missing)?;
 
     let mgc_lock = project_root.join("mgc.lock");
-    if !mgc_lock.exists() {
-        bail!("mgc.lock not found — run mgc install first");
-    }
-
     // Writer lock FIRST (P0-2/P0-3): every authoritative read below
     // happens inside the critical section — no stale-read race, no
     // interleave with concurrent mutations, and no pending journal is
@@ -194,7 +190,16 @@ pub async fn run(args: DedupeArgs) -> Result<()> {
     // (Không đè lên journal chưa phục hồi — lỗi rõ.)
     crate::commands::core::shared::ensure_no_pending_remove_journal(&project_root, &guard)?;
 
-    let lock_content = fs::read_to_string(&mgc_lock)?;
+    let lock_bytes = match mgc_lockfile::read_lockfile_bytes(&mgc_lock) {
+        Ok(bytes) => bytes,
+        Err(mgc_lockfile::LockfileError::IoError(error))
+            if error.kind() == std::io::ErrorKind::NotFound =>
+        {
+            bail!("mgc.lock not found — run mgc install first");
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let lock_content = String::from_utf8(lock_bytes).context("mgc.lock is not valid UTF-8")?;
     let lock: mgc_lockfile::Lockfile = mgc_lockfile::serialization::from_toml(&lock_content)?;
     let before = lock.packages.len();
 

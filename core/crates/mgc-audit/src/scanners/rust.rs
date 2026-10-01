@@ -68,12 +68,7 @@ pub fn read_cargo_lock_pins(raw: &str) -> MgResult<(Vec<OsvPin>, Vec<String>)> {
 /// Dùng OSV client của MGC để audit dependency crates.io đã khóa.
 pub async fn audit_rust(project_root: &Path) -> MgResult<AuditReport> {
     let lock_path = project_root.join("Cargo.lock");
-    let raw = std::fs::read_to_string(&lock_path).map_err(|error| {
-        MgError::Other(format!(
-            "cannot read Cargo.lock for native Rust audit at {}: {error}",
-            lock_path.display()
-        ))
-    })?;
+    let raw = super::read_bounded_project_input(&lock_path, "Cargo.lock")?;
     let (pins, skipped) = read_cargo_lock_pins(&raw)?;
     let mut report = audit_osv_pins(&pins).await?;
     if !skipped.is_empty() {

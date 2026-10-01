@@ -10,7 +10,16 @@ echo "This script prepares for multi-platform release builds."
 echo "For actual cross-compilation, GitHub Actions workflow is recommended."
 echo ""
 
-VERSION="${1:-1.1.0-rc.3}"
+if [[ $# -ne 1 ]]; then
+  printf 'Usage: %s <release-version>\n' "$0" >&2
+  exit 2
+fi
+
+VERSION="${1#v}"
+if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+  printf 'Invalid release version: %s\n' "$1" >&2
+  exit 2
+fi
 
 echo "Target version: v${VERSION}"
 echo ""
@@ -58,7 +67,7 @@ case $choice in
     # Check prerequisites
     if ! command -v cross &> /dev/null; then
       echo "'cross' tool not found"
-      echo "Install: cargo install cross --git https://github.com/cross-rs/cross"
+      echo "Install: cargo install cross --git https://github.com/cross-rs/cross --rev 64b5bb4d3d34de062552b9a2093affe77b4ad16a --locked"
       exit 1
     fi
     

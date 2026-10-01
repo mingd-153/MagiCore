@@ -33,6 +33,8 @@ fn find_mgc_binary() -> String {
 fn spawn_create(
     mgc: &str,
     cwd: &std::path::Path,
+    home: &std::path::Path,
+    template_cache: &std::path::Path,
     framework: &str,
     name: &str,
 ) -> std::process::Child {
@@ -41,6 +43,9 @@ fn spawn_create(
         .arg(framework)
         .arg(name)
         .current_dir(cwd)
+        .env("HOME", home)
+        .env("USERPROFILE", home)
+        .env("MGC_TEMPLATES_DIR", template_cache)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
@@ -56,12 +61,21 @@ fn test_concurrent_create_distinct_names_no_cross_writes() {
     // phải nguyên vẹn với đúng tên của nó, không ghi chéo.
     let mgc = find_mgc_binary();
     let sandbox = TempDir::new().unwrap();
+    let home = TempDir::new().unwrap();
+    let template_cache = TempDir::new().unwrap();
     const N: usize = 8;
 
     let mut children: Vec<(std::process::Child, String)> = Vec::new();
     for i in 0..N {
         let name = format!("parallel-proj-{i}");
-        let child = spawn_create(&mgc, sandbox.path(), "vanilla", &name);
+        let child = spawn_create(
+            &mgc,
+            sandbox.path(),
+            home.path(),
+            template_cache.path(),
+            "vanilla",
+            &name,
+        );
         children.push((child, name));
     }
 
@@ -115,12 +129,21 @@ fn test_concurrent_create_same_name_single_winner() {
     // phải nguyên vẹn không phải merge của nhiều writer.
     let mgc = find_mgc_binary();
     let sandbox = TempDir::new().unwrap();
+    let home = TempDir::new().unwrap();
+    let template_cache = TempDir::new().unwrap();
     const N: usize = 4;
     let name = "race-single-winner";
 
     let mut children = Vec::new();
     for _ in 0..N {
-        children.push(spawn_create(&mgc, sandbox.path(), "vanilla", name));
+        children.push(spawn_create(
+            &mgc,
+            sandbox.path(),
+            home.path(),
+            template_cache.path(),
+            "vanilla",
+            name,
+        ));
     }
 
     let mut success = 0;

@@ -21,7 +21,7 @@ pub async fn run_install(
     language: AppLanguage,
     graph: &ResolvedGraph,
     project_root: &Path,
-    _opts: InstallOptions,
+    opts: InstallOptions,
     _store: Option<&ContentStore>,
     lock_packages: Vec<mgc_lockfile::Package>,
 ) -> MgResult<InstallSummary> {
@@ -36,15 +36,30 @@ pub async fn run_install(
                 .to_string(),
         });
     }
+
+    // Flutter and Swift native installs fetch missing archives. Until both
+    // lanes can prove a complete lock+local-cache replay, reject offline
+    // before creating cache/CAS directories or mutating the project.
+    // (Flutter/Swift còn tải archive; từ chối trước khi tạo cache/CAS hoặc
+    // sửa project cho tới khi có replay lock+cache đầy đủ.)
+    if opts.offline {
+        return Err(MgError::Unsupported {
+            core: "app",
+            capability: "offline install",
+            guidance: "offline install is unsupported for this app ecosystem until cache-only frozen reinstall is implemented; no files were changed".to_string(),
+        });
+    }
+
     match language {
         // Flutter: native pub.dev engine (Phase 2) — no `flutter pub get`
         // spawn for resolve/fetch/install.
         AppLanguage::Flutter => {
             let summary = install_flutter_native(graph, project_root).await?;
-            write_canonical_lock(
+            write_canonical_lock_with_roots(
                 project_root,
                 &[mgc_lockfile::EcosystemTag::Dart],
                 lock_packages,
+                direct_package_ids(graph),
             )?;
             Ok(summary)
         }
@@ -61,10 +76,11 @@ pub async fn run_install(
         // bị resolver từ chối.)
         AppLanguage::Swift => {
             let summary = install_swift_native(graph, &lock_packages, project_root).await?;
-            write_canonical_lock(
+            write_canonical_lock_with_roots(
                 project_root,
                 &[mgc_lockfile::EcosystemTag::Swift],
                 lock_packages,
+                direct_package_ids(graph),
             )?;
             Ok(summary)
         }
@@ -807,10 +823,20 @@ fn swift_store_root() -> MgResult<PathBuf> {
 /// remain untouched (RN JS is written by the web adapter).
 /// Thay các entry thuộc lane app đang cài. Kết quả rỗng xóa pin cũ của
 /// lane; ecosystem khác được giữ nguyên (RN JS do web adapter ghi).
+#[cfg(test)]
 fn write_canonical_lock(
     project_root: &Path,
     replace_ecosystems: &[mgc_lockfile::EcosystemTag],
     lock_packages: Vec<mgc_lockfile::Package>,
+) -> MgResult<()> {
+    write_canonical_lock_with_roots(project_root, replace_ecosystems, lock_packages, Vec::new())
+}
+
+fn write_canonical_lock_with_roots(
+    project_root: &Path,
+    replace_ecosystems: &[mgc_lockfile::EcosystemTag],
+    lock_packages: Vec<mgc_lockfile::Package>,
+    direct_package_ids: Vec<String>,
 ) -> MgResult<()> {
     let lock_path = project_root.join("mgc.lock");
     if replace_ecosystems.is_empty() {
@@ -828,22 +854,11 @@ fn write_canonical_lock(
     }
 
     let owner_core = app_lock_owner_core(project_root)?;
-    let mut lockfile = match std::fs::symlink_metadata(&lock_path) {
-        Ok(metadata) if metadata.file_type().is_file() => {
-            let content = std::fs::read_to_string(&lock_path)
-                .map_err(|e| MgError::Other(format!("failed to read existing mgc.lock: {e}")))?;
-            mgc_lockfile::parser::parse_lockfile(&content).map_err(|e| {
-                MgError::Other(format!(
-                    "refusing to replace invalid existing mgc.lock: {e}"
-                ))
-            })?
-        }
-        Ok(_) => {
-            return Err(MgError::Other(
-                "refusing to replace non-regular mgc.lock".to_string(),
-            ));
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+    let mut lockfile = match mgc_lockfile::load_lockfile(&lock_path) {
+        Ok(lockfile) => lockfile,
+        Err(mgc_lockfile::LockfileError::IoError(error))
+            if error.kind() == std::io::ErrorKind::NotFound =>
+        {
             if lock_packages.is_empty() {
                 return Ok(());
             }
@@ -851,12 +866,13 @@ fn write_canonical_lock(
         }
         Err(error) => {
             return Err(MgError::Other(format!(
-                "cannot inspect existing mgc.lock: {error}"
+                "cannot read existing mgc.lock safely: {error}"
             )));
         }
     };
     let original_packages = lockfile.packages.clone();
     let original_version = lockfile.version.clone();
+    let original_roots = lockfile.root_dependencies_by_owner.clone();
 
     // One ecosystem can be used by multiple cores in a polyglot project
     // (for example Dart by App and Python by AI after a future schema map).
@@ -888,7 +904,16 @@ fn write_canonical_lock(
             || package.owner_core.as_deref() != Some(owner_core.as_str())
     });
     lockfile.packages.extend(owned_packages);
+    for ecosystem in replace_ecosystems {
+        mgc_lockfile::update_owner_root_pins(
+            &mut lockfile,
+            &owner_core,
+            *ecosystem,
+            direct_package_ids.clone(),
+        );
+    }
     if lockfile.packages == original_packages
+        && lockfile.root_dependencies_by_owner == original_roots
         && original_version == mgc_lockfile::LOCKFILE_SCHEMA_VERSION
     {
         return Ok(());
@@ -900,6 +925,15 @@ fn write_canonical_lock(
     let toml = mgc_lockfile::writer::serialize_lockfile(&lockfile)
         .map_err(|e| MgError::Other(format!("lockfile serialization failed: {e}")))?;
     atomic_write_canonical_lock(&lock_path, toml.as_bytes())
+}
+
+fn direct_package_ids(graph: &ResolvedGraph) -> Vec<String> {
+    graph
+        .packages
+        .iter()
+        .filter(|package| package.direct)
+        .map(|package| package.id.to_string())
+        .collect()
 }
 
 /// Resolve the app install lane's core identity from the project marker/config.

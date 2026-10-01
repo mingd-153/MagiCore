@@ -12,13 +12,9 @@ use mgc_types::{PackageId, PackageName, Version};
 async fn mock_server_if_localhost_allowed() -> Option<mockito::ServerGuard> {
     match std::net::TcpListener::bind("127.0.0.1:0") {
         Ok(listener) => drop(listener),
-        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
-            eprintln!(
-                "warning: skipping native registry mock test because localhost bind is blocked"
-            );
-            return None;
-        }
-        Err(error) => panic!("failed to probe localhost bind: {error}"),
+        Err(error) => panic!(
+            "native registry mock tests require localhost; refusing to report skipped tests as passing: {error}"
+        ),
     }
     Some(mockito::Server::new_async().await)
 }

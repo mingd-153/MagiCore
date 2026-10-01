@@ -6,14 +6,15 @@
 //! through the embedded web engine (CDK/Pulumi). Direct adapter mutations
 //! fail closed; CLI mutations still pass through the shared gateway. The
 //! terraform write_manifest silent-Ok no-op is now
-//! fail-closed (hardware precedent). What IS claimed: detection,
-//! scaffold, deploy, lifecycle, install (real in both branches), audit.
+//! fail-closed (hardware precedent). What IS claimed: detection, scaffold,
+//! lifecycle, install for the embedded Web dependency lane, and audit.
+//! Deploy is not claimed until a MagiCore-owned provider API/plan engine exists.
 //! Global Gate 1: KHÔNG claim DependencyResolver/ArtifactFetcher/
 //! LockfileProvider — mặt registry chỉ thật qua web engine nhúng
 //! (CDK/Pulumi). Mutation trực tiếp fail-closed; CLI mutation qua gateway.
 //! No-op Ok âm thầm của write_manifest
-//! terraform giờ fail-closed (tiền lệ hardware). Claim thật: detect,
-//! scaffold, deploy, lifecycle, install (thật ở cả 2 nhánh), audit.
+//! terraform giờ fail-closed. Deploy cũng không claim khi chưa có API/plan
+//! engine do MagiCore sở hữu.
 
 use crate::cloud_type::{CloudType, detect_type, manifest_is_cloud};
 use async_trait::async_trait;
@@ -38,8 +39,8 @@ impl CloudAdapter {
     /// Capability manifest (Global Gate 1) — code-reality notes:
     /// - ProjectDetector: `detect_type`/`manifest_is_cloud` — real.
     /// - ScaffoldProvider: src/scaffold + `mgc create-clo` — real.
-    /// - DeployProvider: src/deploy (cdk deploy / pulumi up /
-    ///   terraform apply via mgc-exec, dry-run default) — real.
+    /// - DeployProvider is intentionally absent: provider CLI passthrough
+    ///   is not a MagiCore-owned deploy implementation.
     /// - LifecycleRunner: only the CDK/Pulumi web-backed lane is present.
     /// - ContentStoreProvider is claimed only when CDK/Pulumi has a Web
     ///   adapter; Terraform package lifecycle remains unsupported.
@@ -50,14 +51,12 @@ impl CloudAdapter {
     pub const CAPABILITIES: &'static [Capability] = &[
         Capability::ProjectDetector,
         Capability::ScaffoldProvider,
-        Capability::DeployProvider,
         Capability::AuditProvider,
     ];
 
     pub const CAPABILITIES_WEB: &'static [Capability] = &[
         Capability::ProjectDetector,
         Capability::ScaffoldProvider,
-        Capability::DeployProvider,
         Capability::LifecycleRunner,
         Capability::ContentStoreProvider,
         Capability::AuditProvider,
@@ -117,13 +116,7 @@ impl ScaffoldProvider for CloudAdapter {
 }
 
 impl DeployProvider for CloudAdapter {
-    /// Evidence: src/deploy/mod.rs — real mgc-exec passthrough
-    /// (`cdk deploy` / `pulumi up` / `terraform apply`, dry-run default).
-    /// Dẫn chứng: src/deploy/mod.rs — passthrough mgc-exec thật
-    /// (`cdk deploy` / `pulumi up` / `terraform apply`, dry-run mặc định).
-    fn probe_deploy(&self) -> MgResult<()> {
-        Ok(())
-    }
+    // Inherit the default Unsupported probe until a native deploy engine exists.
 }
 
 impl LifecycleRunner for CloudAdapter {

@@ -24,7 +24,8 @@ pub async fn update(
                 Some("bevy"),
                 None,
                 crate::commands::dep_gate::DepOp::Update,
-            ),
+            )
+            .with_manifest_format(Some("cargo-toml")),
             None,
             &compat,
             Some(&root.join(".magicore").join("exec.log")),

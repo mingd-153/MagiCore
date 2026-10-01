@@ -10,7 +10,24 @@ pub fn bare_core_command(
 
     // Bare commands must use --core or a detected project marker.
     // Lệnh bare phải có --core hoặc marker project, không fallback web âm thầm.
-    let ecosystem = ecosystem.or_else(|| detect_ecosystem().ok().flatten());
+    let ecosystem = match ecosystem {
+        Some(core) => Some(core),
+        None => detect_ecosystem()?,
+    };
+
+    // The bare `install --offline` flag used to be threaded only to Web;
+    // other core variants silently discarded it. Until a lane explicitly
+    // implements cache-only replay, reject instead of pretending the
+    // caller's no-network constraint was honored.
+    // (`install --offline` trước đây bị bỏ âm thầm ở các core khác Web.)
+    if matches!(&command, Commands::Install { offline: true, .. })
+        && !matches!(ecosystem.as_deref(), Some("web" | "lib"))
+    {
+        anyhow::bail!(
+            "offline install is not implemented for core '{}'; the request was not run",
+            ecosystem.as_deref().unwrap_or("unknown")
+        );
+    }
 
     let dispatch = match command {
         Commands::Install {
@@ -68,6 +85,7 @@ pub fn bare_core_command(
                 packages,
                 compat_runtime,
                 frozen,
+                offline,
             },
             other => return Err(crate::error::unknown_core(other)),
         }),

@@ -19,6 +19,7 @@ const WAIT_POLL_INTERVAL_MS: u64 = 20;
 /// (Cửa nghiêng giữa SIGTERM và SIGKILL trên process group — đủ cho tool
 /// tử tế kịp flush, đủ ngắn để timeout + grace luôn thấp hơn mọi ngân
 /// sách wall-clock của caller.)
+#[cfg(unix)]
 const TERM_TO_KILL_GRACE_MS: u64 = 100;
 /// Deadline for draining the output pipes AFTER the tree kill. Once the
 /// group is SIGKILLed every write end closes and EOF arrives in
@@ -36,6 +37,13 @@ const MAX_CAPTURE_BYTES: usize = 1024 * 1024;
 /// Max lines kept per captured stream — error-log excerpt size.
 /// Số dòng giữ tối đa cho mỗi stream — kích thước trích lỗi.
 const MAX_CAPTURE_LINES: usize = 40;
+/// Bound retries when a generated shim directory name collides.
+/// Giới hạn retry khi tên thư mục shim sinh ra bị trùng.
+const MAX_SHADOW_PATH_ATTEMPTS: usize = 16;
+#[cfg(unix)]
+const PROCESS_TABLE_INSPECTOR: &str = "/bin/ps";
+
+static SHADOW_PATH_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Report whether process-tree kill is active on this platform.
 /// Unix: the child runs in its own process group and the timeout signals
@@ -51,6 +59,10 @@ const MAX_CAPTURE_LINES: usize = 40;
 pub fn process_tree_guard_available() -> bool {
     cfg!(any(unix, windows))
 }
+
+#[cfg(test)]
+#[path = "test/run_tests.rs"]
+mod tests;
 
 /// Tùy chọn chạy — dry_run in lệnh không chạy (00 §5.5); log_path để ghi audit.
 #[derive(Debug, Clone, Default)]
@@ -68,8 +80,9 @@ pub struct ExecOptions {
     pub clean_env: bool,
     /// Không áp timeout — dùng cho dev server chạy dài, vẫn giữ guard process.
     pub disable_timeout: bool,
-    /// Execution scope (TestRunner/BuildRunner/DevServer allow PM tools, Install forbids them).
+    /// Execution scope for tool-specific policy; package managers are forbidden in every scope.
     /// None defaults to Install scope (most restrictive).
+    /// Phạm vi áp dụng chính sách theo tool; package manager bị cấm ở mọi scope.
     pub execution_scope: Option<crate::allowlist::ExecutionScope>,
     /// Exit codes treated as success (escape hatch for scanner tools that
     /// exit non-zero when they find findings — e.g. cargo-audit exits 1 on
@@ -204,9 +217,7 @@ pub fn run(cmd: &str, args: &[String], opts: &ExecOptions) -> Result<ExecReport>
         opts.compat_runtime.as_deref(),
     )?;
     reject_external_dependency_resolution(cmd, args, &opts.env)?;
-    if opts.clean_env {
-        reject_forbidden_script_file(cmd)?;
-    }
+    reject_forbidden_script_file(cmd)?;
     execute_command(cmd, args, opts, OutputMode::Capture)
 }
 
@@ -223,9 +234,7 @@ pub fn run_inherited(cmd: &str, args: &[String], opts: &ExecOptions) -> Result<E
         opts.compat_runtime.as_deref(),
     )?;
     reject_external_dependency_resolution(cmd, args, &opts.env)?;
-    if opts.clean_env {
-        reject_forbidden_script_file(cmd)?;
-    }
+    reject_forbidden_script_file(cmd)?;
     execute_command(cmd, args, opts, OutputMode::Inherit)
 }
 
@@ -247,16 +256,37 @@ fn reject_external_dependency_resolution(
         .map(|arg| arg.to_ascii_lowercase())
         .collect();
     let has = |flag: &str| args.iter().any(|arg| arg == flag);
-    let (first, second) = first_command(&args);
+    let (first, _) = first_command(&args);
+    let goproxy_disabled = env
+        .iter()
+        .rev()
+        .find(|(key, _)| key.eq_ignore_ascii_case("GOPROXY"))
+        .is_some_and(|(_, value)| value.eq_ignore_ascii_case("off"));
 
     let reason = match tool.as_str() {
         "cargo"
             if matches!(
                 first,
-                "add" | "remove" | "update" | "fetch" | "install" | "vendor"
+                "add" | "remove" | "update" | "fetch" | "install" | "vendor" | "generate-lockfile"
             ) =>
         {
             Some("Cargo dependency-management subcommands are not allowed through mgc-exec")
+        }
+        "cargo"
+            if matches!(
+                first,
+                "package"
+                    | "publish"
+                    | "search"
+                    | "login"
+                    | "logout"
+                    | "owner"
+                    | "yank"
+                    | "tree"
+                    | "info"
+            ) =>
+        {
+            Some("Cargo registry/package subcommands are not allowed through mgc-exec")
         }
         "cargo"
             if matches!(
@@ -266,12 +296,41 @@ fn reject_external_dependency_resolution(
         {
             Some("Cargo compile/test commands must include --locked --offline")
         }
+        "cargo"
+            if matches!(
+                first,
+                "build" | "test" | "check" | "run" | "clippy" | "metadata"
+            ) && has("--locked")
+                && has("--offline") =>
+        {
+            None
+        }
+        "cargo"
+            if matches!(
+                first,
+                "fmt"
+                    | "clean"
+                    | "version"
+                    | "help"
+                    | "locate-project"
+                    | "read-manifest"
+                    | "verify-project"
+            ) =>
+        {
+            None
+        }
+        // Bare `cargo` prints its help text and does not resolve dependencies.
+        "cargo" if first.is_empty() => None,
+        "cargo" => Some("unclassified Cargo subcommands are blocked by mgc-exec policy"),
         "python"
-            if args.windows(2).any(|pair| {
-                pair[0] == "-m" && matches!(pair[1].as_str(), "pip" | "uv" | "poetry")
-            }) =>
+            if args
+                .windows(2)
+                .any(|pair| pair[0] == "-m" && is_forbidden_python_module(&pair[1])) =>
         {
             Some("Python package-manager modules are not allowed through mgc-exec")
+        }
+        "python" if has_module(&args, "ensurepip") => {
+            Some("Python ensurepip is not allowed through mgc-exec")
         }
         "python"
             if args
@@ -285,27 +344,40 @@ fn reject_external_dependency_resolution(
         }
         "py" if args
             .windows(2)
-            .any(|pair| pair[0] == "-m" && matches!(pair[1].as_str(), "pip" | "uv" | "poetry")) =>
+            .any(|pair| pair[0] == "-m" && is_forbidden_python_module(&pair[1])) =>
         {
             Some("Python package-manager modules are not allowed through mgc-exec")
         }
-        "go" if matches!(first, "get" | "install")
-            || (first == "mod" && matches!(second, "download" | "tidy" | "vendor")) =>
-        {
+        "py" if has_module(&args, "ensurepip") => {
+            Some("Python ensurepip is not allowed through mgc-exec")
+        }
+        "go" if matches!(first, "mod" | "work") => {
+            Some("Go module/workspace commands are not allowed through mgc-exec")
+        }
+        "go" if matches!(first, "get" | "install") => {
             Some("Go dependency-management subcommands are not allowed through mgc-exec")
         }
+        "go" if first == "list" => {
+            Some("Go list may resolve modules and is not allowed through mgc-exec")
+        }
         "go" if matches!(first, "build" | "test" | "run")
-            && (!has("-mod=readonly")
-                || !env
-                    .iter()
-                    .any(|(key, value)| key == "GOPROXY" && value == "off")) =>
+            && (!has("-mod=readonly") || !goproxy_disabled) =>
         {
             Some("Go compile/test commands must use -mod=readonly and GOPROXY=off")
         }
         "dotnet" if matches!(first, "restore" | "add" | "remove") => {
             Some(".NET dependency-management subcommands are not allowed through mgc-exec")
         }
-        "dotnet" if matches!(first, "build" | "test" | "publish") && !has("--no-restore") => {
+        "dotnet" if matches!(first, "tool" | "workload" | "nuget" | "msbuild") => {
+            Some(".NET package/toolchain-management commands are not allowed through mgc-exec")
+        }
+        "dotnet" if requests_restore_target(&args) => {
+            Some("explicit MSBuild Restore targets are not allowed through mgc-exec")
+        }
+        "dotnet"
+            if matches!(first, "build" | "test" | "publish" | "run" | "pack")
+                && !has("--no-restore") =>
+        {
             Some(".NET compile/test commands must include --no-restore")
         }
         "flutter" | "dart" if has("pub") => {
@@ -336,6 +408,50 @@ fn reject_external_dependency_resolution(
         anyhow::bail!("external dependency resolution blocked: {reason}");
     }
     Ok(())
+}
+
+fn has_module(args: &[String], module: &str) -> bool {
+    args.windows(2)
+        .any(|pair| pair[0] == "-m" && pair[1] == module)
+}
+
+fn is_forbidden_python_module(module: &str) -> bool {
+    [
+        "pip", "uv", "poetry", "pipenv", "pdm", "conda", "mamba", "hatch", "rye", "pixi",
+    ]
+    .iter()
+    .any(|name| {
+        module == *name
+            || module
+                .strip_prefix(name)
+                .is_some_and(|suffix| suffix.starts_with('.'))
+    })
+}
+
+fn requests_restore_target(args: &[String]) -> bool {
+    const TARGET_PREFIXES: &[&str] = &["-t:", "/t:", "-target:", "/target:", "--target="];
+
+    args.iter().enumerate().any(|(index, arg)| {
+        let target_value = TARGET_PREFIXES
+            .iter()
+            .find_map(|prefix| arg.strip_prefix(prefix))
+            .or_else(|| {
+                matches!(
+                    arg.as_str(),
+                    "-t" | "/t" | "-target" | "/target" | "--target"
+                )
+                .then(|| args.get(index + 1).map(String::as_str))
+                .flatten()
+            });
+
+        target_value.is_some_and(|targets| {
+            targets.split([';', ',']).any(|target| {
+                target
+                    .trim_matches(|ch| matches!(ch, '\'' | '"'))
+                    .eq_ignore_ascii_case("restore")
+            })
+        })
+    })
 }
 
 fn first_command(args: &[String]) -> (&str, &str) {
@@ -415,9 +531,7 @@ fn execute_project_binary(
 
     reject_external_dependency_resolution(&canonical.display().to_string(), args, &opts.env)?;
 
-    if opts.clean_env {
-        reject_forbidden_script_file(&canonical.display().to_string())?;
-    }
+    reject_forbidden_script_file(&canonical.display().to_string())?;
     execute_command(&canonical.display().to_string(), args, opts, mode)
 }
 
@@ -597,10 +711,11 @@ fn execute_command(
     let path_var: Option<std::ffi::OsString> = opts
         .env
         .iter()
-        .find(|(key, _)| key == "PATH")
+        .rev()
+        .find(|(key, _)| is_path_env_key(key))
         .map(|(_, value)| std::ffi::OsString::from(value));
     #[cfg(not(unix))]
-    let resolved_cmd = resolve_windows_shim(cmd, path_var.as_ref().map(|p| p.as_os_str()));
+    let resolved_cmd = resolve_windows_shim(cmd, path_var.as_deref());
     #[cfg(unix)]
     let resolved_cmd: &str = cmd;
 
@@ -673,12 +788,12 @@ fn execute_command(
     // Windows: no-op tại đây — kill cây dùng `taskkill /T` tự duyệt con.
     configure_process_isolation(&mut command);
 
-    let _shadow_path = if opts.clean_env {
-        let shadow_path = ShadowPath::create(scoped_exempt)?;
-        let path_env = guarded_path_env(shadow_path.path(), &opts.env)?;
+    let shadow_path = ShadowPath::create(scoped_exempt)?;
+    let path_env = guarded_path_env(shadow_path.path(), &opts.env)?;
+    if opts.clean_env {
         command.env_clear();
         for (key, value) in &opts.env {
-            if key != "PATH" {
+            if !is_path_env_key(key) {
                 command.env(key, value);
             }
         }
@@ -701,12 +816,19 @@ fn execute_command(
                 command.env(critical_var, val);
             }
         }
-        Some(shadow_path)
     } else {
-        command.envs(opts.env.iter().map(|(key, value)| (key, value)));
-        None
-    };
+        // Preserve the caller's environment, but prepend deny shims so child
+        // processes cannot reach a forbidden package manager through PATH.
+        // (Giữ env caller nhưng đặt deny shim đầu PATH để child không gọi PM qua PATH.)
+        for (key, value) in &opts.env {
+            if !is_path_env_key(key) {
+                command.env(key, value);
+            }
+        }
+        command.env("PATH", path_env);
+    }
 
+    ensure_process_inspection_available(opts.clean_env, cfg!(unix))?;
     let child = command
         .spawn()
         .map_err(|e| anyhow::anyhow!("failed to spawn '{cmd}': {e}"))?;
@@ -763,16 +885,39 @@ struct ShadowPath {
 
 impl ShadowPath {
     fn create(scoped_exempt: &[&str]) -> Result<Self> {
-        let dir = unique_temp_dir("mgc-exec-shadow-path");
-        std::fs::create_dir_all(&dir)?;
-
-        for tool in FORBIDDEN_TOOLS {
-            if !scoped_exempt.contains(tool) {
-                write_blocker(&dir, tool)?;
+        for _ in 0..MAX_SHADOW_PATH_ATTEMPTS {
+            let dir = unique_temp_dir("mgc-exec-shadow-path");
+            match Self::create_at(dir, scoped_exempt) {
+                Ok(shadow_path) => return Ok(shadow_path),
+                Err(error)
+                    if error
+                        .downcast_ref::<std::io::Error>()
+                        .is_some_and(|io_error| {
+                            io_error.kind() == std::io::ErrorKind::AlreadyExists
+                        }) =>
+                {
+                    continue;
+                }
+                Err(error) => return Err(error),
             }
         }
 
-        Ok(Self { dir })
+        anyhow::bail!("could not allocate a unique package-manager deny directory");
+    }
+
+    fn create_at(dir: PathBuf, scoped_exempt: &[&str]) -> Result<Self> {
+        std::fs::create_dir(&dir)?;
+        let shadow_path = Self { dir };
+        for tool in FORBIDDEN_TOOLS {
+            if !scoped_exempt.contains(tool)
+                && let Err(error) = write_blocker(shadow_path.path(), tool)
+            {
+                drop(shadow_path);
+                return Err(error);
+            }
+        }
+
+        Ok(shadow_path)
     }
 
     fn path(&self) -> &Path {
@@ -791,7 +936,11 @@ fn unique_temp_dir(prefix: &str) -> PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or(0);
-    std::env::temp_dir().join(format!("{prefix}-{}-{nanos}", std::process::id()))
+    let sequence = SHADOW_PATH_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "{prefix}-{}-{nanos}-{sequence}",
+        std::process::id()
+    ))
 }
 
 #[cfg(unix)]
@@ -799,12 +948,18 @@ fn write_blocker(dir: &Path, tool: &str) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
 
     let path = dir.join(tool);
-    std::fs::write(
-        &path,
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)?;
+    file.write_all(
         format!(
             "#!/bin/sh\nprintf '%s\\n' \"MagiCore blocked forbidden package manager: {tool}\" >&2\nexit 126\n"
-        ),
+        )
+        .as_bytes(),
     )?;
+    drop(file);
     let mut permissions = std::fs::metadata(&path)?.permissions();
     permissions.set_mode(0o755);
     std::fs::set_permissions(&path, permissions)?;
@@ -813,21 +968,38 @@ fn write_blocker(dir: &Path, tool: &str) -> Result<()> {
 
 #[cfg(windows)]
 fn write_blocker(dir: &Path, tool: &str) -> Result<()> {
+    use std::io::Write;
+
     let path = dir.join(format!("{tool}.cmd"));
-    std::fs::write(
-        &path,
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?;
+    file.write_all(
         format!(
             "@echo off\r\necho MagiCore blocked forbidden package manager: {tool} 1>&2\r\nexit /b 126\r\n"
-        ),
+        )
+        .as_bytes(),
     )?;
     Ok(())
+}
+
+fn is_path_env_key(key: &str) -> bool {
+    #[cfg(windows)]
+    {
+        key.eq_ignore_ascii_case("PATH")
+    }
+    #[cfg(not(windows))]
+    {
+        key == "PATH"
+    }
 }
 
 fn guarded_path_env(shadow_dir: &Path, explicit_env: &[(String, String)]) -> Result<OsString> {
     let explicit_path = explicit_env
         .iter()
         .rev()
-        .find(|(key, _)| key == "PATH")
+        .find(|(key, _)| is_path_env_key(key))
         .map(|(_, value)| OsString::from(value));
     let base_path = explicit_path.or_else(|| std::env::var_os("PATH"));
     let mut paths = Vec::new();
@@ -956,19 +1128,30 @@ fn wait_with_timeout(
             // (đầu child đã đóng) và trả về chúng.
             return Ok(drain(&mut child, None));
         }
-        // Monitor + forbidden child in one guard — gộp điều kiện theo clippy 1.98.
-        if monitor_forbidden_children
-            && let Some(found) = find_forbidden_descendant(child.id(), exempt)
-        {
-            terminate_process_tree(child.id());
-            let _ = child.kill();
-            let out = drain(&mut child, Some(Duration::from_millis(POST_KILL_DRAIN_MS)));
-            return Err(forbidden_child_error(
-                &found,
-                out.status,
-                &out.stderr,
-                &out.stdout,
-            ));
+        if monitor_forbidden_children {
+            match find_forbidden_descendant(child.id(), exempt) {
+                Ok(Some(found)) => {
+                    terminate_process_tree(child.id());
+                    let _ = child.kill();
+                    let out = drain(&mut child, Some(Duration::from_millis(POST_KILL_DRAIN_MS)));
+                    return Err(forbidden_child_error(
+                        &found,
+                        out.status,
+                        &out.stderr,
+                        &out.stdout,
+                    ));
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    terminate_process_tree(child.id());
+                    let _ = child.kill();
+                    let out = drain(&mut child, Some(Duration::from_millis(POST_KILL_DRAIN_MS)));
+                    return Err(anyhow::anyhow!(
+                        "cannot verify child process tree; command was terminated fail-closed (status after kill: {}): {error}",
+                        out.status
+                    ));
+                }
+            }
         }
         if timeout.is_some_and(|timeout| started.elapsed() >= timeout) {
             terminate_process_tree(child.id());
@@ -1093,23 +1276,69 @@ struct ForbiddenProcess {
 }
 
 #[cfg(unix)]
-fn find_forbidden_descendant(root_pid: u32, exempt: &[&str]) -> Option<ForbiddenProcess> {
-    let output = Command::new("ps")
+fn find_forbidden_descendant(root_pid: u32, exempt: &[&str]) -> Result<Option<ForbiddenProcess>> {
+    find_forbidden_descendant_with_program(root_pid, exempt, Path::new(PROCESS_TABLE_INSPECTOR))
+}
+
+#[cfg(unix)]
+fn find_forbidden_descendant_with_program(
+    root_pid: u32,
+    exempt: &[&str],
+    inspector: &Path,
+) -> Result<Option<ForbiddenProcess>> {
+    let output = Command::new(inspector)
         .args(["-axo", "pid=,ppid=,comm=,command="])
         .output()
-        .ok()?;
+        .with_context(|| {
+            format!(
+                "cannot start process-table inspector '{}'",
+                inspector.display()
+            )
+        })?;
     if !output.status.success() {
-        return None;
+        bail!(
+            "process-table inspector '{}' exited with {}",
+            inspector.display(),
+            output.status
+        );
     }
 
+    inspect_forbidden_process_table(root_pid, output, exempt)
+}
+
+#[cfg(unix)]
+fn inspect_forbidden_process_table(
+    root_pid: u32,
+    output: std::process::Output,
+    exempt: &[&str],
+) -> Result<Option<ForbiddenProcess>> {
     let mut processes = Vec::new();
+    let mut root_seen = false;
     for line in String::from_utf8_lossy(&output.stdout).lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
         let mut parts = line.split_whitespace();
-        let pid = parts.next()?.parse::<u32>().ok()?;
-        let ppid = parts.next()?.parse::<u32>().ok()?;
-        let command = parts.next().unwrap_or_default().to_string();
+        let pid = parts
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("process-table row has no PID"))?
+            .parse::<u32>()
+            .context("process-table row has an invalid PID")?;
+        let ppid = parts
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("process-table row has no parent PID"))?
+            .parse::<u32>()
+            .context("process-table row has an invalid parent PID")?;
+        let command = parts
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("process-table row has no executable name"))?
+            .to_string();
         let command_line = parts.collect::<Vec<_>>().join(" ");
+        root_seen |= pid == root_pid;
         processes.push((pid, ppid, command, command_line));
+    }
+    if !root_seen {
+        bail!("process table did not contain monitored root PID {root_pid}");
     }
 
     let mut frontier = vec![root_pid];
@@ -1123,18 +1352,35 @@ fn find_forbidden_descendant(root_pid: u32, exempt: &[&str]) -> Option<Forbidden
             processes.iter().filter(|(_, ppid, _, _)| *ppid == parent)
         {
             if let Some(name) = forbidden_process_name(command, command_line, exempt) {
-                return Some(ForbiddenProcess { pid: *pid, name });
+                return Ok(Some(ForbiddenProcess { pid: *pid, name }));
             }
             frontier.push(*pid);
         }
     }
 
-    None
+    Ok(None)
 }
 
 #[cfg(not(unix))]
-fn find_forbidden_descendant(_root_pid: u32, _exempt: &[&str]) -> Option<ForbiddenProcess> {
-    None
+fn find_forbidden_descendant(_root_pid: u32, _exempt: &[&str]) -> Result<Option<ForbiddenProcess>> {
+    ensure_process_inspection_available(true, false)?;
+    Ok(None)
+}
+
+fn ensure_process_inspection_available(
+    monitor_enabled: bool,
+    inspector_available: bool,
+) -> Result<()> {
+    if monitor_enabled && !inspector_available {
+        return Err(process_inspection_unavailable_error());
+    }
+    Ok(())
+}
+
+fn process_inspection_unavailable_error() -> anyhow::Error {
+    anyhow::anyhow!(
+        "native process-tree inspection is unavailable on this platform; refusing to treat the process tree as clean"
+    )
 }
 
 fn process_basename(command: &str) -> String {

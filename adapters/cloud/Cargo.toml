@@ -17,7 +17,6 @@ mgc-sbom = { workspace = true }
 mgc-cache = { workspace = true }
 mgc-config = { workspace = true }
 mgc-adapter-base = { workspace = true }
-mgc-exec = { workspace = true }
 
 # Web delegate (cdk/pulumi npm-format)
 mgc-web-adapter = { path = "../web" }

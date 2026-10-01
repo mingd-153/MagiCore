@@ -88,7 +88,10 @@ fn parse_flutter_pubspec_rejects_unowned_path_git_and_hosted_sources() {
         let error = parse_manifest(AppLanguage::Flutter, &dir)
             .expect_err("non-pub.dev source must not be rewritten as a registry range");
         assert!(matches!(error, mgc_types::MgError::Unsupported { .. }));
-        assert!(error.to_string().contains(label));
+        assert!(
+            error.to_string().contains(label),
+            "expected source '{label}' in parser error: {error}"
+        );
     }
 }
 
@@ -142,6 +145,48 @@ fn parse_swift_package_rejects_computed_dependencies_without_running_swiftpm() {
     let error = parse_manifest(AppLanguage::Swift, &dir).unwrap_err();
     assert!(matches!(error, mgc_types::MgError::Unsupported { .. }));
     assert!(error.to_string().contains("computed"));
+}
+
+#[test]
+fn swift_manifest_writer_reports_unsupported_instead_of_false_success() {
+    use mgc_app_adapter::manifest::swift::write_package_swift;
+    use mgc_types::{Ecosystem, Manifest};
+
+    let dir = tmp("swift-write-unsupported");
+    let error = write_package_swift(&dir, &Manifest::new("app", Ecosystem::App))
+        .expect_err("unimplemented Swift source writer must not report success");
+    assert!(matches!(error, mgc_types::MgError::Unsupported { .. }));
+}
+
+#[cfg(unix)]
+#[test]
+fn swift_manifest_reader_rejects_symlinked_package_files() {
+    use std::os::unix::fs::symlink;
+
+    let dir = tmp("swift-symlink");
+    let outside = dir.join("outside.swift");
+    std::fs::write(
+        &outside,
+        "// swift-tools-version:5.9\nlet package = Package(name: \"victim\", dependencies: [])\n",
+    )
+    .unwrap();
+    symlink(&outside, dir.join("Package.swift")).unwrap();
+    let error = parse_manifest(AppLanguage::Swift, &dir)
+        .expect_err("Package.swift symlink must not be followed");
+    assert!(error.to_string().contains("symlink") || error.to_string().contains("link"));
+
+    std::fs::remove_file(dir.join("Package.swift")).unwrap();
+    std::fs::write(
+        dir.join("Package.swift"),
+        "// swift-tools-version:5.9\nlet package = Package(name: \"victim\", dependencies: [.package(url: \"https://example.invalid/lib.git\", from: \"1.0.0\")])\n",
+    )
+    .unwrap();
+    let pins = dir.join("outside.resolved");
+    std::fs::write(&pins, r#"{"pins":[],"version":2}"#).unwrap();
+    symlink(&pins, dir.join("Package.resolved")).unwrap();
+    let error = parse_manifest(AppLanguage::Swift, &dir)
+        .expect_err("Package.resolved symlink must not be followed");
+    assert!(error.to_string().contains("symlink") || error.to_string().contains("link"));
 }
 
 #[test]
@@ -244,6 +289,34 @@ fn write_pubspec_pins_and_round_trips() {
     );
 }
 
+#[test]
+fn write_pubspec_refuses_to_drop_unowned_sources() {
+    use mgc_app_adapter::manifest::flutter::write_pubspec;
+    use mgc_types::{Ecosystem, Manifest};
+
+    for (label, dependency) in [
+        ("path", "local_pkg:\n    path: ../local_pkg"),
+        ("malformed", "bad_pkg: [1, 2]"),
+        (
+            "git",
+            "git_pkg:\n    git:\n      url: https://example.invalid/pkg.git",
+        ),
+        (
+            "hosted",
+            "hosted_pkg:\n    hosted: https://packages.example.invalid\n    version: ^1.0.0",
+        ),
+    ] {
+        let dir = tmp(&format!("flutter-writer-source-{label}"));
+        let original = format!("name: source_app\ndependencies:\n  {dependency}\n");
+        std::fs::write(dir.join("pubspec.yaml"), &original).unwrap();
+
+        let error = write_pubspec(&dir, &Manifest::new("source_app", Ecosystem::App))
+            .expect_err("writer must not silently discard non-registry source metadata");
+        assert!(matches!(error, mgc_types::MgError::Unsupported { .. }));
+        assert!(std::fs::read_to_string(dir.join("pubspec.yaml")).unwrap() == original);
+    }
+}
+
 /// Version-catalog round-trip: ref + inline pins parse, bump rewrites,
 /// re-parse verifies. No toolchain anywhere (pure TOML).
 #[test]
@@ -254,7 +327,7 @@ fn catalog_pins_parse_and_bump() {
     std::fs::create_dir_all(dir.join("gradle")).unwrap();
     std::fs::write(
         dir.join("gradle/libs.versions.toml"),
-        "[versions]\nlang3 = \"3.12.0\"\n\n[libraries]\ncommons-lang3 = { module = \"org.apache.commons:commons-lang3\", version.ref = \"lang3\" }\nguava = \"com.google.guava:guava:32.0.0\"\n",
+        "# Keep this catalog note.\n[versions]\n# Shared version pin.\nlang3 = \"3.12.0\"\n\n[libraries]\ncommons-lang3 = { module = \"org.apache.commons:commons-lang3\", version.ref = \"lang3\" }\nguava = \"com.google.guava:guava:32.0.0\"\n",
     )
     .unwrap();
     let pins = parse_version_catalog(&dir).expect("catalog parses");
@@ -267,6 +340,14 @@ fn catalog_pins_parse_and_bump() {
     let body = std::fs::read_to_string(dir.join("gradle/libs.versions.toml")).unwrap();
     assert!(body.contains("3.14.0"), "ref value bumped:\n{body}");
     assert!(!body.contains("3.12.0"), "old pin gone:\n{body}");
+    assert!(
+        body.contains("# Keep this catalog note."),
+        "file comment preserved:\n{body}"
+    );
+    assert!(
+        body.contains("# Shared version pin."),
+        "entry comment preserved:\n{body}"
+    );
 
     assert!(bump_catalog_pin(&dir, "com.google.guava", "guava", "33.0.0").unwrap());
     let pins = parse_version_catalog(&dir).expect("re-parse works");
@@ -278,4 +359,43 @@ fn catalog_pins_parse_and_bump() {
     // Missing catalog: None, not an error.
     let empty = tempfile::tempdir().unwrap();
     assert!(parse_version_catalog(empty.path()).is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn catalog_bump_refuses_symlink_without_mutating_target() {
+    use mgc_app_adapter::manifest::gradle::{bump_catalog_pin, parse_version_catalog};
+    use std::os::unix::fs::symlink;
+
+    let dir = tmp("gradle-catalog-symlink");
+    std::fs::create_dir_all(dir.join("gradle")).unwrap();
+    let outside = dir.join("outside.toml");
+    let original = "[versions]\nfoo = \"1.0.0\"\n[libraries]\nfoo = { module = \"org.example:foo\", version.ref = \"foo\" }\n";
+    std::fs::write(&outside, original).unwrap();
+    symlink(&outside, dir.join("gradle/libs.versions.toml")).unwrap();
+
+    assert!(
+        parse_version_catalog(&dir).is_none(),
+        "catalog parser must not follow symlinks"
+    );
+    let error = bump_catalog_pin(&dir, "org.example", "foo", "2.0.0")
+        .expect_err("catalog mutator must reject a symlinked destination");
+    assert!(error.to_string().contains("symlink") || error.to_string().contains("link"));
+    assert_eq!(std::fs::read_to_string(outside).unwrap(), original);
+}
+
+#[test]
+fn catalog_bump_refuses_shared_version_ref_without_mutating_file() {
+    use mgc_app_adapter::manifest::gradle::bump_catalog_pin;
+
+    let dir = tmp("gradle-shared-version-ref");
+    std::fs::create_dir_all(dir.join("gradle")).unwrap();
+    let path = dir.join("gradle/libs.versions.toml");
+    let original = "[versions]\nshared = \"1.0.0\"\n[libraries]\nfoo = { module = \"org.example:foo\", version.ref = \"shared\" }\nbar = { module = \"org.example:bar\", version.ref = \"shared\" }\n";
+    std::fs::write(&path, original).unwrap();
+
+    let error = bump_catalog_pin(&dir, "org.example", "foo", "2.0.0")
+        .expect_err("one-package update must not silently change a shared version ref");
+    assert!(error.to_string().contains("shared"));
+    assert_eq!(std::fs::read_to_string(path).unwrap(), original);
 }

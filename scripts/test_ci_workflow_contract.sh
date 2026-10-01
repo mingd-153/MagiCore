@@ -14,6 +14,14 @@ fail() {
   exit 1
 }
 
+grep -q 'run: bash scripts/test_ci_workflow_contract.sh' "$ROOT/.github/workflows/ci.yml" \
+  || fail "CI must execute this contract before its release and action-pin assertions are treated as gates"
+grep -Fq 'python3 "$ROOT/scripts/audit_workflow_action_pins.py"' "$ROOT/scripts/test_ci_workflow_contract.sh" \
+  || fail "the CI-invoked workflow contract must audit every workflow action reference"
+python3 "$ROOT/scripts/test_workflow_action_pins.py" || fail "workflow action-pin audit regression tests failed"
+python3 "$ROOT/scripts/audit_workflow_action_pins.py" "$ROOT/.github/workflows" \
+  || fail "a workflow action reference is not immutably pinned"
+
 grep -q '^  pull_request:' "$ALL_CORE" || fail "delegated-compatibility matrix must run on pull requests"
 grep -q '"core/\*\*"' "$ALL_CORE" || fail "delegated-compatibility matrix path filter misses the core directory"
 grep -q '"fix/\*\*"' "$ALL_CORE" || fail "delegated-compatibility matrix must run on RC fix branches"
@@ -24,6 +32,45 @@ grep -q '6323deb102c322ba6fcbdcafc7e3dddab59af2b6' "$ROOT/.github/workflows/ci.y
 grep -q '7b1c307e0dcbda6122208f10795a713336a9b35a' "$ROOT/.github/workflows/ci.yml" && fail "CI contains the broken Rust toolchain pin"
 grep -q '6bed0761d98439e5a578e2877258200ad565ba87' "$ROOT/.github/workflows/ci.yml" || fail "CI Rust toolchain pin must resolve to stable"
 grep -q '6bed0761d98439e5a578e2877258200ad565ba87' "$ALL_CORE" || fail "delegated-compatibility Rust toolchain pin must resolve to stable"
+grep -q 'python3 scripts/test_audit_dependency_delegation.py' "$ROOT/.github/workflows/ci.yml" || fail "CI must run dependency ownership audit negative controls"
+grep -q 'scripts/test_dep_gate_consistency.py' "$ROOT/.github/workflows/lifecycle-matrix.yml" || fail "lifecycle CI must test binary-to-matrix operation ownership"
+grep -q 'CI cannot reach github.com' "$ROOT/scripts/verify_github_action_pin.sh" || fail "CI must fail closed when upstream action pins cannot be verified"
+grep -q 'CI cannot verify upstream action pins without git' "$ROOT/scripts/verify_github_action_pin.sh" || fail "CI must fail closed when git is unavailable for action-pin verification"
+grep -q 'UNVERIFIED: cannot reach github.com' "$ROOT/scripts/verify_github_action_pin.sh" || fail "offline action-pin checks must be reported as unverified"
+python3 "$ROOT/scripts/test_github_action_pin.py" || fail "action-pin verifier behavior tests failed"
+
+cross_rev='64b5bb4d3d34de062552b9a2093affe77b4ad16a'
+cross_install="cargo install cross --git https://github.com/cross-rs/cross --rev ${cross_rev} --locked"
+grep -Fq "$cross_install" "$RELEASE" \
+  || fail "release cross compiler install must use the reviewed immutable revision and Cargo.lock"
+grep -Fq "$cross_install" "$ROOT/scripts/build_all_platforms.sh" \
+  || fail "local cross build instructions must use the same immutable revision as release CI"
+
+manifest_signing="$(sed -n '/^      # Release provenance (P0)/,/^      # Note: Attestations/p' "$RELEASE")"
+grep -q 'MGC_RELEASE_REQUIRE_SIGNED: "1"' <<<"$manifest_signing" \
+  || fail "release manifest signing must require a signature"
+if grep -Eiq 'without the secret.*(publishes|publish).*unsigned|publishes an unsigned manifest' <<<"$manifest_signing"; then
+  fail "release workflow must not claim that unsigned manifests can be published when signing is mandatory"
+fi
+
+signed_distribution="$(sed -n '/^  verify-signed-manifest:/,$p' "$ROOT/.github/workflows/verify-release-distribution.yml")"
+grep -q 'python3 scripts/verify-release-manifest-signature.py' <<<"$signed_distribution" \
+  || fail "distribution verification must run the tested native signature-and-archive verifier"
+grep -q 'MGC_RELEASE_SIGNING_KEY:.*secrets.MGC_RELEASE_SIGNING_KEY' <<<"$signed_distribution" \
+  || fail "distribution verification must require the configured release trust key"
+grep -q 'contents: write' <<<"$signed_distribution" \
+  || fail "signed distribution verification must be able to read draft release assets before promotion"
+if grep -Eiq 'pip[[:space:]]+install.*cryptography|signature NOT verified|gh release download.*\|\|[[:space:]]*true' <<<"$signed_distribution"; then
+  fail "signed distribution verification must not install an external verifier or waive missing evidence"
+fi
+grep -q 'magicore-\*\.tar.gz' <<<"$signed_distribution" \
+  || fail "signed distribution verification must download every tar.gz archive for digest binding"
+grep -q 'magicore-\*\.zip' <<<"$signed_distribution" \
+  || fail "signed distribution verification must download every zip archive for digest binding"
+grep -q 'every signed archive must be downloaded and verified' "$ROOT/scripts/verify-release-manifest-signature.py" \
+  || fail "signed distribution verifier must reject omitted manifest-bound archives"
+grep -q 'missing required release variants' "$ROOT/scripts/verify-release-manifest-signature.py" \
+  || fail "signed distribution verifier must enforce required cross-platform variants"
 
 # Verify GitHub Actions SHA pins (real commit refs)
 checkout_sha='3d3c42e5aac5ba805825da76410c181273ba90b1' # v7.0.1 real
@@ -36,34 +83,7 @@ grep -q "actions/setup-node@${setup_node_sha}" "$ALL_CORE" || fail "delegated-co
 grep -q "actions/setup-python@${setup_python_sha}" "$ALL_CORE" || fail "delegated-compatibility setup-python SHA must be v7.0.0 real commit"
 grep -q "actions/setup-go@${setup_go_sha}" "$ALL_CORE" || fail "delegated-compatibility setup-go SHA must be v7.0.0 real commit"
 
-# Cross-check pinned SHAs against the REAL upstream tag refs via git
-# ls-remote — a self-fulfilling hardcoded SHA list proves nothing, so the
-# contract queries GitHub and fails closed on mismatch. Offline runs skip
-# with a loud warning instead of silently passing.
-# Đối chiếu SHA pin với tag THẬT trên GitHub qua git ls-remote — danh sách
-# hardcode tự trỏ vào chính nó không chứng minh gì; contract fail-closed
-# khi lệch. Môi trường offline bỏ qua với cảnh báo, không âm thầm pass.
-verify_pin() {
-    local repo="$1" tag="$2" expected="$3"
-    local actual
-    # Annotated tags point at a tag object; peel to the commit with ^{}.
-    # Tag annotated trỏ tới tag object; lột bằng ^{} để lấy commit thật.
-    # `set -e` also applies inside command substitutions. Preserve the intended
-    # offline-warning behavior instead of aborting before the empty-result check.
-    # `set -e` cũng áp dụng trong command substitution; giữ hành vi cảnh báo
-    # offline thay vì dừng trước khi kiểm tra kết quả rỗng.
-    actual="$(git ls-remote "https://github.com/${repo}.git" "refs/tags/${tag}^{}" 2>/dev/null | awk '{print $1}' || true)"
-    if [ -z "$actual" ]; then
-        actual="$(git ls-remote "https://github.com/${repo}.git" "refs/tags/${tag}" 2>/dev/null | awk '{print $1}' || true)"
-    fi
-    if [ -z "$actual" ]; then
-        echo "WARN: cannot reach github.com to verify ${repo}@${tag} — skipping remote verification (offline?)" >&2
-        return 0
-    fi
-    if [ "$actual" != "$expected" ]; then
-        fail "${repo}@${tag} pin ${expected} does not match upstream commit ${actual}"
-    fi
-}
+source "$ROOT/scripts/verify_github_action_pin.sh"
 if command -v git >/dev/null 2>&1; then
     verify_pin actions/checkout v7.0.1 "$checkout_sha"
     verify_pin actions/setup-node v7.0.0 "$setup_node_sha"
@@ -77,7 +97,11 @@ if command -v git >/dev/null 2>&1; then
     verify_pin actions/attest-build-provenance v4.2.2 '4d101475d8b20a2381f78447822ac1eab6504dd8'
     verify_pin subosito/flutter-action v2.16.0 '44ac965b96f18d999802d4b807e3256d5a3f9fa1'
 else
-    echo "WARN: git not available — skipping remote SHA verification" >&2
+    if [[ "${CI:-}" == "true" || "${CI:-}" == "1" || "${GITHUB_ACTIONS:-}" == "true" ]]; then
+        fail "CI cannot verify upstream action pins without git"
+    fi
+    echo "UNVERIFIED: git is unavailable; upstream action SHA checks cannot pass" >&2
+    exit 2
 fi
 
 setup_go_count="$(grep -c "actions/setup-go@${setup_go_sha}" "$ALL_CORE")"
@@ -95,10 +119,19 @@ grep -q 'App: SKIP' "$LOCAL_RUNNER" && fail "local all-core runner must not conv
 grep -q 'ALL CORES LIFECYCLE VERIFIED' "$LOCAL_RUNNER" || fail "local runner summary missing"
 grep -q 'publish=true' "$RELEASE" && fail "release instructions reference the removed publish input"
 
+release_dry_run="$(sed -n '/^  dry-run-summary:/,$p' "$RELEASE")"
+grep -q 'Ready to publish: YES' <<<"$release_dry_run" && fail "release dry-run must not claim publish readiness without the tag-triggered publish gates"
+grep -q 'Publish readiness: NOT ASSESSED (dry-run does not authorize publishing)' <<<"$release_dry_run" \
+  || fail "release dry-run must state that it does not authorize publishing"
+
 grep -q 'node-version: "24"' "$ALL_CORE" || fail "Node.js lifecycle pin must be 24 (latest T9-2026)"
 grep -q 'python-version: "3.14"' "$ALL_CORE" || fail "Python lifecycle pin is stale"
-grep -q 'flutter-version: "3.47.2"' "$ALL_CORE" || fail "Flutter lifecycle pin is stale"
-grep -q 'version: "0.12.10"' "$ALL_CORE" || fail "uv lifecycle pin is stale or floating"
+grep -q 'flutter-version: "3.47.4"' "$ALL_CORE" || fail "Flutter lifecycle pin is stale"
+grep -Eq 'cargo test -p mgc --test full_lifecycle_e2e --locked -- .*--ignored' "$ROOT/.github/workflows/ci.yml" \
+  || fail "CI provisions pytest and Flutter but does not execute the ignored AI/App full lifecycle tests"
+if grep -vE '^[[:space:]]*#' "$ALL_CORE" | grep -Eq 'setup-uv|(^|[[:space:]])uv([[:space:]]|$)'; then
+  fail "native AI lifecycle matrix must not provision or invoke uv"
+fi
 
 app_matrix="$(sed -n '/^  app-lifecycle:/,/^  lib-lifecycle:/p' "$ALL_CORE")"
 grep -q 'windows-latest' <<<"$app_matrix" || fail "App lifecycle must cover Windows"
@@ -111,8 +144,9 @@ rust_setup="$(grep -A1 -- '- name: Setup Rust' <<<"$lib_section")"
 grep -q 'if:' <<<"$rust_setup" && fail "Rust setup cannot be conditional because every lib row builds mgc"
 grep -q '"\$MGC_PARENT_BIN" build' <<<"$lib_section" || fail "Lib lifecycle must build through the OS-correct mgc binary"
 
-grep -q '"\$MGC_PARENT_BIN" test' <<<"$ai_section" || fail "AI lifecycle must test through the OS-correct mgc binary"
-grep -q '"\$MGC_PARENT_BIN" build' <<<"$ai_section" || fail "AI lifecycle must build through the OS-correct mgc binary"
+grep -q '"\$MGC_PARENT_BIN" add-ai six@1.17.0' <<<"$ai_section" || fail "AI lifecycle must add a real package through the native mgc path"
+grep -q '"\$MGC_PARENT_BIN" install' <<<"$ai_section" || fail "AI lifecycle must install the native lock through mgc"
+grep -q 'python -m py_compile' <<<"$ai_section" || fail "AI lifecycle must syntax-check the scaffold with the provisioned Python runtime"
 
 for section in "$web_section" "$ai_section" "$app_section" "$lib_section"; do
   grep -q 'MGC_BIN=./target/release/mgc.exe' <<<"$section" \

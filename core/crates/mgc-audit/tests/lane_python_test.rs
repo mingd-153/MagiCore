@@ -258,6 +258,22 @@ fn mgc_lock_python_pins_extract_without_spawning() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn python_audit_refuses_symlinked_mgc_lock() {
+    use std::os::unix::fs::symlink;
+
+    let project = tempfile::tempdir().unwrap();
+    let external = tempfile::tempdir().unwrap();
+    let target = external.path().join("mgc.lock");
+    std::fs::write(&target, "version = \"3\"\n").unwrap();
+    symlink(&target, project.path().join("mgc.lock")).unwrap();
+
+    let error = mgc_audit::scanners::python_pins_from_mgc_lock(project.path()).unwrap_err();
+
+    assert!(error.to_string().to_lowercase().contains("symlink"));
+}
+
 #[test]
 fn uv_lock_pins_are_normalized_and_non_pypi_sources_are_reported() {
     let raw = r#"version = 1

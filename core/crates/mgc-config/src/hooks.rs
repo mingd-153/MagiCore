@@ -8,8 +8,6 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-const FORBIDDEN_HOOK_TOOLS: &[&str] = &["npm", "npx", "pnpm", "yarn", "bun", "bunx", "deno"];
-
 /// Return the dependency verb for a direct or phase-prefixed hook event.
 /// (Trả về động từ dependency của event trực tiếp hoặc có tiền tố pre/post.)
 fn dependency_event_verb(event: &str) -> Option<&str> {
@@ -95,25 +93,17 @@ pub fn run_hooks(project_root: &Path, event: &str) -> Result<()> {
         let Some((program, args)) = argv.split_first() else {
             continue;
         };
-        reject_forbidden_hook_tool(program)?;
-        let status = std::process::Command::new(program)
-            .args(args)
-            .current_dir(project_root)
-            .status()?;
-        if !status.success() {
-            bail!("hook {event} failed (exit {:?}): {cmd}", status.code());
+        let options = mgc_exec::run::ExecOptions {
+            cwd: Some(project_root.to_path_buf()),
+            execution_scope: Some(mgc_exec::allowlist::ExecutionScope::TestRunner),
+            ..Default::default()
+        };
+        let report = mgc_exec::run::run_inherited(program, args, &options).map_err(|error| {
+            anyhow::anyhow!("hook '{event}' was refused or failed to start: {error}")
+        })?;
+        if report.exit_code != 0 {
+            bail!("hook '{event}' failed with exit code {}", report.exit_code);
         }
-    }
-    Ok(())
-}
-
-fn reject_forbidden_hook_tool(program: &str) -> Result<()> {
-    let name = Path::new(program)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or(program);
-    if FORBIDDEN_HOOK_TOOLS.contains(&name) {
-        bail!("hook command '{name}' is forbidden; use MagiCore-native commands instead");
     }
     Ok(())
 }

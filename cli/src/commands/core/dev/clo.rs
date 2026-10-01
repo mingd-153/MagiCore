@@ -21,12 +21,8 @@ pub fn cloud_type(root: &Path) -> anyhow::Result<String> {
 pub async fn dev(dry_run: bool) -> Result<()> {
     let root = project_root()?;
     let kind = cloud_type(&root)?;
-    let (cmd, args) = dev_command(&kind)?;
-    if dry_run {
-        mgc_ui::info(&format!("[dry-run] would run: {} {}", cmd, args.join(" ")));
-        return Ok(());
-    }
-    run_tool(&root, &cmd, &args)?;
+    let _ = (dry_run, &root);
+    native_dev_command(&kind)?;
     Ok(())
 }
 
@@ -35,77 +31,17 @@ pub async fn dev(dry_run: bool) -> Result<()> {
 pub async fn deploy(run: bool) -> Result<()> {
     let root = project_root()?;
     let kind = cloud_type(&root)?;
-    let (cmd, args) = deploy_command(&kind)?;
-    if !run {
-        mgc_ui::info(&format!(
-            "[dry-run] would run: {} {} (real deploy requires `mgc deploy --run`)",
-            cmd,
-            args.join(" ")
-        ));
-        return Ok(());
-    }
-    mgc_ui::info(&format!("Deploying: {} {}", cmd, args.join(" ")));
-    run_tool(&root, &cmd, &args)?;
+    let _ = (run, &root);
+    native_deploy_command(&kind)?;
     Ok(())
 }
 
-fn dev_command(kind: &str) -> Result<(String, Vec<String>)> {
-    match kind {
-        "terraform" => Ok(("terraform".to_string(), vec!["plan".to_string()])),
-        // cdk/pulumi: npm-installed CLIs — resolve node_modules/.bin (allowlist §3: "qua .bin"),
-        // nhưng dry-run in tên tool, resolve bin ở bước chạy thật.
-        "cdk" => Ok(("cdk".to_string(), vec!["synth".to_string()])),
-        "pulumi" => Ok(("pulumi".to_string(), vec!["preview".to_string()])),
-        other => Err(crate::error::dev_cloud_not_implemented(other)),
-    }
+fn native_dev_command(kind: &str) -> Result<()> {
+    Err(crate::error::dev_cloud_not_implemented(kind))
 }
 
-/// cdk/pulumi chạy từ node_modules/.bin (npm-installed, allowlist §3);
-/// thiếu → lỗi rõ hướng `mgc install` trước.
-fn bin_resolved_path(root: &std::path::Path, cmd: &str) -> Option<std::path::PathBuf> {
-    match cmd {
-        "cdk" | "pulumi" => {
-            let bin = root.join("node_modules").join(".bin").join(cmd);
-            bin.is_file().then_some(bin)
-        }
-        _ => None,
-    }
-}
-
-pub fn deploy_command(kind: &str) -> Result<(String, Vec<String>)> {
-    match kind {
-        "terraform" => Ok(("terraform".to_string(), vec!["apply".to_string()])),
-        "cdk" => Ok(("cdk".to_string(), vec!["deploy".to_string()])),
-        "pulumi" => Ok(("pulumi".to_string(), vec!["up".to_string()])),
-        other => Err(crate::error::deploy_not_implemented(other)),
-    }
-}
-
-fn run_tool(root: &Path, cmd: &str, args: &[String]) -> Result<()> {
-    let (resolved, run_cmd): (Option<PathBuf>, String) =
-        if let Some(bin) = bin_resolved_path(root, cmd) {
-            (Some(bin.clone()), bin.to_string_lossy().to_string())
-        } else {
-            (None, cmd.to_string())
-        };
-    // cdk/pulumi là npm-installed tools — chưa cài → lỗi rõ hướng `mgc install`.
-    if resolved.is_none() && matches!(cmd, "cdk" | "pulumi") {
-        return Err(crate::error::tool_not_installed_project(cmd));
-    }
-    let opts = mgc_exec::prelude::ExecOptions {
-        cwd: Some(root.to_path_buf()),
-        log_path: Some(root.join(".magicore").join("exec.log")),
-        clean_env: true,
-        ..Default::default()
-    };
-    let res = mgc_exec::prelude::run_inherited(&run_cmd, args, &opts);
-    if resolved.is_some() {
-        return match res {
-            Ok(_) => Ok(()),
-            Err(e) => Err(crate::error::project_tool_failed(cmd, &e)),
-        };
-    }
-    res.map(|_| ())
+fn native_deploy_command(kind: &str) -> Result<()> {
+    Err(crate::error::deploy_not_implemented(kind))
 }
 
 #[cfg(test)]

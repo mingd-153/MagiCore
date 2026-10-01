@@ -4,15 +4,36 @@
 use mgc_config::hooks::{list_hooks, run_hooks};
 
 #[test]
-fn hooks_run_and_fail() {
+fn hooks_run_allowlisted_command() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
         dir.path().join("mgc.hooks.toml"),
-        "hooks = { \"my-event\" = [\"touch pre-ran.txt\", \"true\"] }\n",
+        "hooks = { \"my-event\" = [\"cargo --version\"] }\n",
     )
     .unwrap();
     run_hooks(dir.path(), "my-event").unwrap();
-    assert!(dir.path().join("pre-ran.txt").exists());
+}
+
+#[test]
+fn custom_hook_rejects_executable_outside_mgc_exec_policy() {
+    let dir = tempfile::tempdir().unwrap();
+    let harmless_but_unapproved = if cfg!(windows) {
+        "cmd.exe /c exit 0"
+    } else {
+        "true"
+    };
+    std::fs::write(
+        dir.path().join("mgc.hooks.toml"),
+        format!("hooks = {{ \"custom-event\" = [{harmless_but_unapproved:?}] }}\n"),
+    )
+    .unwrap();
+
+    let error = run_hooks(dir.path(), "custom-event")
+        .expect_err("custom hook must not bypass the shared process policy");
+    assert!(
+        error.to_string().contains("allowlist") || error.to_string().contains("forbidden"),
+        "expected a policy refusal before execution, got: {error}"
+    );
 }
 
 #[test]
@@ -41,7 +62,7 @@ fn hooks_failure_fails_command() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
         dir.path().join("mgc.hooks.toml"),
-        "hooks = { \"my-event\" = [\"false\"] }\n",
+        "hooks = { \"my-event\" = [\"cargo --definitely-invalid-hook-argument\"] }\n",
     )
     .unwrap();
     let err = run_hooks(dir.path(), "my-event").unwrap_err();
@@ -124,21 +145,14 @@ fn pre_dependency_hook_rejects_post_phase_before_operation_starts() {
 }
 
 #[test]
-fn hooks_allow_toolchain_on_non_dependency_events() {
-    // The extended deny list applies ONLY to dependency events: a custom
-    // event keeps the rival-only list (the spawn itself may still fail —
-    // what matters is it is never a *forbidden* refusal).
+fn hooks_reject_package_managers_on_custom_events_too() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
         dir.path().join("mgc.hooks.toml"),
         "hooks = { \"my-event\" = [\"uv --version\"] }\n",
     )
     .unwrap();
-    match run_hooks(dir.path(), "my-event") {
-        Ok(()) => {}
-        Err(err) => assert!(
-            !err.to_string().contains("forbidden"),
-            "custom events must not apply the dependency deny list: {err}"
-        ),
-    }
+    let error = run_hooks(dir.path(), "my-event")
+        .expect_err("package managers must be rejected for every custom hook event");
+    assert!(error.to_string().contains("forbidden"));
 }

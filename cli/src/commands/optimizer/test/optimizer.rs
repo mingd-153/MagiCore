@@ -7,23 +7,17 @@ use tempfile::tempdir;
 
 #[test]
 fn test_hardware_detect_returns_valid_info() {
-    // Environment-independent shape assertions: cores/arch/os are always
-    // known; RAM may be Unknown (None) on machines where detection is
-    // unavailable (containers, sandboxes) — that is honest, not a failure.
-    // A detected value, when present, must be positive and consistent
-    // with a non-Constrained profile.
-    // (Assert hình dạng, không assert môi trường: RAM có thể Unknown.)
+    // Environment-independent shape assertions: arch/os are known; CPU and
+    // RAM may be Unknown where the OS does not expose them. Unknown resources
+    // must not be converted into fabricated tuning inputs.
+    // (CPU/RAM có thể Unknown; không biến giá trị thiếu thành số đo giả.)
     let hw = HardwareInfo::detect();
-    assert!(hw.cpu_cores > 0);
+    assert!(hw.cpu_cores.is_some_and(|cores| cores > 0));
     assert!(!hw.arch.is_empty());
     assert!(!hw.os.is_empty());
     match hw.total_memory_gb {
         Some(gb) => assert!(gb > 0, "detected RAM must be positive, got {gb}"),
-        None => assert_eq!(
-            hw.profile,
-            SystemProfile::Constrained,
-            "unknown RAM must degrade to Constrained"
-        ),
+        None => assert_eq!(hw.profile, SystemProfile::Constrained),
     }
 }
 
@@ -36,12 +30,13 @@ fn test_generate_optimizations_for_web_core() {
     fs::write(project_root.join("package.json"), "{}").unwrap();
 
     let hw = HardwareInfo {
-        cpu_cores: 8,
+        cpu_cores: Some(8),
         arch: "aarch64".to_string(),
         os: "macos".to_string(),
         total_memory_gb: Some(16),
         profile: SystemProfile::HighPerformance,
         gpus: vec![],
+        gpu_detection_status: GpuDetectionStatus::Available,
     };
 
     let files = generate_optimizations_for_core("web", &hw, project_root);
@@ -69,12 +64,13 @@ fn test_generate_optimizations_for_game_core() {
     .unwrap();
 
     let hw = HardwareInfo {
-        cpu_cores: 12,
+        cpu_cores: Some(12),
         arch: "x86_64".to_string(),
         os: "linux".to_string(),
         total_memory_gb: Some(32),
         profile: SystemProfile::HighPerformance,
         gpus: vec![],
+        gpu_detection_status: GpuDetectionStatus::Available,
     };
 
     let files = generate_optimizations_for_core("game", &hw, project_root);
@@ -90,19 +86,27 @@ fn test_profile_for_unknown_ram_degrades_to_constrained() {
     // (RAM unknown không bao giờ tuning từ số đoán: máy 64 core cũng hạ
     // về Constrained khi không đo được RAM.)
     assert_eq!(
-        HardwareInfo::profile_for(64, None),
+        HardwareInfo::profile_for(Some(64), None),
         SystemProfile::Constrained
     );
     assert_eq!(
-        HardwareInfo::profile_for(8, Some(16)),
+        HardwareInfo::profile_for(Some(8), Some(16)),
         SystemProfile::HighPerformance
     );
     assert_eq!(
-        HardwareInfo::profile_for(4, Some(8)),
+        HardwareInfo::profile_for(Some(4), Some(8)),
         SystemProfile::Standard
     );
     assert_eq!(
-        HardwareInfo::profile_for(2, Some(4)),
+        HardwareInfo::profile_for(Some(2), Some(4)),
+        SystemProfile::Constrained
+    );
+}
+
+#[test]
+fn test_profile_for_unknown_cpu_degrades_to_constrained() {
+    assert_eq!(
+        HardwareInfo::profile_for(None, Some(128)),
         SystemProfile::Constrained
     );
 }
@@ -118,12 +122,13 @@ fn test_unknown_ram_skips_memory_derived_configs() {
     fs::write(project_root.join("package.json"), "{}").unwrap();
 
     let hw = HardwareInfo {
-        cpu_cores: 8,
+        cpu_cores: Some(8),
         arch: "x86_64".to_string(),
         os: "linux".to_string(),
         total_memory_gb: None,
         profile: SystemProfile::Constrained,
         gpus: vec![],
+        gpu_detection_status: GpuDetectionStatus::Available,
     };
 
     let files = generate_optimizations_for_core("web", &hw, project_root);
@@ -178,112 +183,104 @@ fn test_hash_guard_prevents_overwriting_user_custom_file() {
 }
 
 #[test]
-fn test_classify_vendor_known_and_unknown() {
-    // Vendor đã biết — chuẩn hóa id
-    assert_eq!(HardwareInfo::classify_vendor("Apple M2"), Some("apple"));
+fn test_linux_sysfs_gpu_probe_uses_native_pci_metadata() {
+    use std::path::Path;
+
+    let dir = tempdir().unwrap();
+    let devices = dir.path().join("bus/pci/devices");
+    let nvidia = devices.join("0000:01:00.0");
+    let intel = devices.join("0000:00:02.0");
+    let network = devices.join("0000:00:1f.6");
+    for path in [&nvidia, &intel, &network] {
+        fs::create_dir_all(path).unwrap();
+    }
+    fs::write(nvidia.join("class"), "0x030000\n").unwrap();
+    fs::write(nvidia.join("vendor"), "0x10de\n").unwrap();
+    fs::write(nvidia.join("device"), "0x2684\n").unwrap();
+    fs::write(nvidia.join("product_name"), "NVIDIA GeForce RTX 4090\n").unwrap();
+    fs::write(intel.join("class"), "0x030000\n").unwrap();
+    fs::write(intel.join("vendor"), "0x8086\n").unwrap();
+    fs::write(intel.join("device"), "0x9a49\n").unwrap();
+    fs::write(network.join("class"), "0x020000\n").unwrap();
+    fs::write(network.join("vendor"), "0x8086\n").unwrap();
+    fs::write(network.join("device"), "0x1234\n").unwrap();
+
+    let (detected, status) = HardwareInfo::parse_linux_sysfs_gpus(Path::new(&devices));
+    assert_eq!(status, GpuDetectionStatus::Available);
     assert_eq!(
-        HardwareInfo::classify_vendor("NVIDIA GeForce RTX 4090"),
-        Some("nvidia")
+        detected.len(),
+        2,
+        "non-display PCI devices must be excluded"
     );
-    assert_eq!(
-        HardwareInfo::classify_vendor("AMD Radeon Pro 5500M"),
-        Some("amd")
-    );
-    assert_eq!(
-        HardwareInfo::classify_vendor("Intel Iris Xe Graphics"),
-        Some("intel")
-    );
-    // Không nhận ra — None, không đoán
-    assert_eq!(HardwareInfo::classify_vendor("FooBar 9000"), None);
-    assert_eq!(HardwareInfo::classify_vendor(""), None);
+    assert!(detected.iter().any(|gpu| {
+        gpu.name == "NVIDIA GeForce RTX 4090" && gpu.vendor.as_deref() == Some("nvidia")
+    }));
+    assert!(detected.iter().any(|gpu| {
+        gpu.name == "Intel GPU (PCI 8086:9a49)" && gpu.vendor.as_deref() == Some("intel")
+    }));
+    assert!(detected.iter().all(|gpu| gpu.vram_mb.is_none()));
 }
 
 #[test]
-fn test_parse_system_profiler_sample() {
-    // Sample thật rút gọn từ Mac Apple Silicon (unified memory: không VRAM)
-    let sample = "Graphics/Displays:\n\n    Apple M2:\n\n      Chipset Model: Apple M2\n      Type: GPU\n      Bus: Built-In\n      Total Number of Cores: 10\n      Vendor: Apple (0x106b)\n      Metal Support: Metal 4\n";
-    let gpus = HardwareInfo::parse_system_profiler(sample);
-    assert_eq!(gpus.len(), 1);
-    assert_eq!(gpus[0].name, "Apple M2");
-    assert_eq!(gpus[0].vendor.as_deref(), Some("apple"));
-    assert_eq!(gpus[0].vram_mb, None);
+fn test_empty_readable_pci_inventory_is_a_measured_zero() {
+    use std::path::Path;
+
+    let dir = tempdir().unwrap();
+    let (gpus, status) = HardwareInfo::parse_linux_sysfs_gpus(Path::new(dir.path()));
+    assert!(gpus.is_empty());
+    assert_eq!(status, GpuDetectionStatus::Available);
 }
 
 #[test]
-fn test_parse_system_profiler_empty_and_multi() {
-    assert!(HardwareInfo::parse_system_profiler("").is_empty());
-    assert!(HardwareInfo::parse_system_profiler("Graphics/Displays:\n").is_empty());
-    // Hai card rời — mỗi Chipset Model một entry
-    let sample = "      Chipset Model: NVIDIA GeForce RTX 4090\n      Vendor: NVIDIA (0x10de)\n      Chipset Model: Intel UHD Graphics 630\n      Vendor: Intel (0x8086)\n";
-    let gpus = HardwareInfo::parse_system_profiler(sample);
-    assert_eq!(gpus.len(), 2);
-    assert_eq!(gpus[0].name, "NVIDIA GeForce RTX 4090");
-    assert_eq!(gpus[0].vendor.as_deref(), Some("nvidia"));
-    assert_eq!(gpus[1].name, "Intel UHD Graphics 630");
-    assert_eq!(gpus[1].vendor.as_deref(), Some("intel"));
+fn test_unreadable_pci_inventory_is_not_reported_as_zero() {
+    use std::path::Path;
+
+    let dir = tempdir().unwrap();
+    let missing_root = dir.path().join("missing");
+    let (gpus, status) = HardwareInfo::parse_linux_sysfs_gpus(Path::new(&missing_root));
+    assert!(gpus.is_empty());
+    assert_eq!(status, GpuDetectionStatus::Unavailable);
 }
 
 #[test]
-fn test_parse_nvidia_smi_rows_and_sanity_window() {
-    let sample = "NVIDIA GeForce RTX 4090, 24564 MiB\nTesla V100-SXM2-16GB, 16384 MiB\n";
-    let gpus = HardwareInfo::parse_nvidia_smi(sample);
-    assert_eq!(gpus.len(), 2);
-    assert_eq!(gpus[0].vram_mb, Some(24564));
-    assert_eq!(gpus[0].vendor.as_deref(), Some("nvidia"));
-    // Ngoài sanity window (256 MiB – 256 GiB) — số rác bị bỏ, card giữ lại với vram None
-    let weird = "Mystery Card, 999999999 MiB\nTiny Card, 12 MiB\n";
-    let gpus = HardwareInfo::parse_nvidia_smi(weird);
-    assert_eq!(gpus.len(), 2);
-    assert!(gpus.iter().all(|g| g.vram_mb.is_none()));
-    assert!(HardwareInfo::parse_nvidia_smi("").is_empty());
-    assert!(HardwareInfo::parse_nvidia_smi("no-comma-line\n").is_empty());
-}
+fn test_incomplete_pci_inventory_does_not_emit_a_zero_count() {
+    use std::path::Path;
 
-#[test]
-fn test_parse_lspci_display_rows_only() {
-    let sample = "00:02.0 \"VGA compatible controller\" \"Intel Corporation\" \"UHD Graphics 620\"\n01:00.0 \"3D controller\" \"NVIDIA Corporation\" \"GP108M [GeForce MX150]\"\n00:1f.3 \"Audio device\" \"Intel Corporation\" \"Sunrise Point-LP HD Audio\"\n";
-    let gpus = HardwareInfo::parse_lspci(sample);
-    assert_eq!(gpus.len(), 2);
-    assert_eq!(gpus[0].vendor.as_deref(), Some("intel"));
-    assert_eq!(gpus[1].vendor.as_deref(), Some("nvidia"));
-    assert!(gpus.iter().all(|g| g.vram_mb.is_none()));
-}
+    let dir = tempdir().unwrap();
+    let device = dir.path().join("0000:00:02.0");
+    fs::create_dir_all(&device).unwrap();
+    fs::write(device.join("class"), "0x030000\n").unwrap();
+    fs::write(device.join("vendor"), "malformed\n").unwrap();
+    fs::write(device.join("device"), "0x9a49\n").unwrap();
 
-#[test]
-fn test_parse_cim_single_array_and_garbage() {
-    // Object đơn + AdapterRAM hợp lệ (8 GiB)
-    let single = r#"{"Name": "NVIDIA GeForce RTX 4070", "AdapterRAM": 8589934592}"#;
-    let gpus = HardwareInfo::parse_cim_videocontroller(single);
-    assert_eq!(gpus.len(), 1);
-    assert_eq!(gpus[0].vram_mb, Some(8192));
-    // AdapterRAM uint32 tràn trên card mới: 0xFFFFFFFF byte ≈ 4095 MiB —
-    // giá trị OS báo (có thể understated, nhưng là số thật của OS, vẫn
-    // trong sanity window nên giữ; không bịa số khác thay thế).
-    let wrapped = r#"{"Name": "Some Card", "AdapterRAM": 4294967295}"#;
-    let gpus = HardwareInfo::parse_cim_videocontroller(wrapped);
-    assert_eq!(gpus.len(), 1);
-    assert_eq!(gpus[0].vram_mb, Some(4095));
-    // Mảng + JSON rác
-    let arr =
-        r#"[{"Name": "Intel Iris Xe", "AdapterRAM": 134217728}, {"Name": "", "AdapterRAM": 0}]"#;
-    let gpus = HardwareInfo::parse_cim_videocontroller(arr);
-    assert_eq!(gpus.len(), 1);
-    assert_eq!(gpus[0].name, "Intel Iris Xe");
-    assert!(HardwareInfo::parse_cim_videocontroller("not json").is_empty());
+    let (gpus, status) = HardwareInfo::parse_linux_sysfs_gpus(Path::new(dir.path()));
+    assert!(gpus.is_empty());
+    assert_eq!(status, GpuDetectionStatus::Partial);
+    let hw = HardwareInfo {
+        cpu_cores: Some(4),
+        arch: "x86_64".to_string(),
+        os: "linux".to_string(),
+        total_memory_gb: Some(8),
+        profile: SystemProfile::Standard,
+        gpus,
+        gpu_detection_status: status,
+    };
+    assert!(!gpu_env_file(&hw).content.contains("MGC_GPU_COUNT="));
 }
 
 #[test]
 fn test_gpu_env_file_zero_and_measured() {
-    use super::detect::{GpuInfo, HardwareInfo, SystemProfile};
+    use super::detect::{GpuDetectionStatus, GpuInfo, HardwareInfo, SystemProfile};
     use super::generators::gpu_env_file;
-    // Không GPU — COUNT=0 cũng là số liệu
+    // Complete inventory with no GPUs is a measured zero.
     let hw = HardwareInfo {
-        cpu_cores: 4,
+        cpu_cores: Some(4),
         arch: "x86_64".to_string(),
         os: "linux".to_string(),
         total_memory_gb: Some(8),
         profile: SystemProfile::Standard,
         gpus: vec![],
+        gpu_detection_status: GpuDetectionStatus::Available,
     };
     let file = gpu_env_file(&hw);
     assert_eq!(file.relative_path, ".mgc-optimizer/gpu.env");
@@ -310,6 +307,57 @@ fn test_gpu_env_file_zero_and_measured() {
     assert!(file.content.contains("MGC_GPU_0_VENDOR=apple"));
     assert!(file.content.contains("unified memory or unknown"));
     assert!(file.content.contains("MGC_GPU_1_VRAM_MB=24564"));
+}
+
+#[test]
+fn test_unknown_gpu_probe_does_not_emit_a_fake_zero_count() {
+    use super::detect::{GpuDetectionStatus, HardwareInfo, SystemProfile};
+    use super::generators::gpu_env_file;
+
+    let hw = HardwareInfo {
+        cpu_cores: Some(4),
+        arch: "aarch64".to_string(),
+        os: "macos".to_string(),
+        total_memory_gb: Some(16),
+        profile: SystemProfile::Standard,
+        gpus: vec![],
+        gpu_detection_status: GpuDetectionStatus::Unavailable,
+    };
+    let output = gpu_env_file(&hw);
+
+    assert!(!output.content.contains("MGC_GPU_COUNT="));
+    assert!(output.content.contains("GPU detection unavailable"));
+}
+
+#[test]
+fn test_gpu_env_sanitizes_control_characters_without_key_injection() {
+    let hw = HardwareInfo {
+        cpu_cores: Some(4),
+        arch: "x86_64".to_string(),
+        os: "linux".to_string(),
+        total_memory_gb: Some(8),
+        profile: SystemProfile::Standard,
+        gpus: vec![GpuInfo {
+            name: "Display\nMGC_GPU_COUNT=999".to_string(),
+            vendor: Some("nvidia\r\nUNEXPECTED=1".to_string()),
+            vram_mb: None,
+        }],
+        gpu_detection_status: GpuDetectionStatus::Available,
+    };
+
+    let output = gpu_env_file(&hw);
+    assert!(output.content.contains("MGC_GPU_COUNT=1\n"));
+    assert!(
+        output
+            .content
+            .contains("MGC_GPU_0_NAME=Display MGC_GPU_COUNT=999\n")
+    );
+    assert!(
+        output
+            .content
+            .contains("MGC_GPU_0_VENDOR=nvidia  UNEXPECTED=1\n")
+    );
+    assert!(!output.content.contains("\nUNEXPECTED=1\n"));
 }
 
 #[test]
@@ -340,24 +388,81 @@ fn test_meminfo_parser_fixtures_macos_linux_windows() {
         HardwareInfo::parse_meminfo_kb("MemTotal: garbage kB\n"),
         None
     );
-    // Windows/wmic path has no parser (detection returns None there) —
-    // profile_for degrades without RAM on every OS identically.
-    // (Windows không parser — profile_for hạ cấp giống mọi OS.)
     assert_eq!(
-        HardwareInfo::profile_for(16, None),
+        HardwareInfo::parse_cgroup_memory_limit_bytes("8589934592\n"),
+        Some(8589934592)
+    );
+    assert_eq!(HardwareInfo::parse_cgroup_memory_limit_bytes("max\n"), None);
+    assert_eq!(HardwareInfo::parse_cgroup_memory_limit_bytes("0\n"), None);
+    assert_eq!(
+        HardwareInfo::parse_cgroup_memory_limit_bytes("9223372036854771712\n"),
+        None
+    );
+    // Unknown platform RAM degrades without inventing a measurement.
+    // (RAM không đọc được thì hạ cấp, không tự tạo số đo.)
+    assert_eq!(
+        HardwareInfo::profile_for(Some(16), None),
         SystemProfile::Constrained
     );
     assert_eq!(
-        HardwareInfo::profile_for(8, Some(16)),
+        HardwareInfo::profile_for(Some(8), Some(16)),
         SystemProfile::HighPerformance
     );
     assert_eq!(
-        HardwareInfo::profile_for(4, Some(8)),
+        HardwareInfo::profile_for(Some(4), Some(8)),
         SystemProfile::Standard
     );
     assert_eq!(
-        HardwareInfo::profile_for(2, Some(4)),
+        HardwareInfo::profile_for(Some(2), Some(4)),
         SystemProfile::Constrained
+    );
+}
+
+#[test]
+fn test_linux_cgroup_memory_limit_reads_nested_process_membership() {
+    use std::path::Path;
+
+    let dir = tempdir().unwrap();
+    let cgroup_root = dir.path().join("sys/fs/cgroup");
+    let nested = cgroup_root.join("system.slice/mgc.scope");
+    fs::create_dir_all(&nested).unwrap();
+    fs::write(nested.join("memory.max"), "4294967296\n").unwrap();
+
+    assert_eq!(
+        HardwareInfo::linux_cgroup_memory_limit_bytes_at(
+            Path::new(&cgroup_root),
+            "0::/system.slice/mgc.scope\n"
+        ),
+        Some(4294967296)
+    );
+    assert_eq!(
+        HardwareInfo::linux_cgroup_memory_limit_bytes_at(
+            Path::new(&cgroup_root),
+            "0::/../../outside\n"
+        ),
+        None
+    );
+}
+
+#[test]
+fn test_linux_cgroup_memory_limit_uses_effective_ancestor_limit() {
+    use std::path::Path;
+
+    let dir = tempdir().unwrap();
+    let cgroup_root = dir.path().join("sys/fs/cgroup");
+    let parent = cgroup_root.join("tenant");
+    let nested = parent.join("worker");
+    fs::create_dir_all(&nested).unwrap();
+    fs::write(parent.join("memory.max"), "8589934592\n").unwrap();
+    fs::write(nested.join("memory.max"), "max\n").unwrap();
+    fs::write(cgroup_root.join("memory.max"), "17179869184\n").unwrap();
+
+    assert_eq!(
+        HardwareInfo::linux_cgroup_memory_limit_bytes_at(
+            Path::new(&cgroup_root),
+            "0::/tenant/worker\n"
+        ),
+        Some(8589934592)
     );
 }
 
@@ -368,12 +473,13 @@ fn test_unknown_ram_omits_memory_knobs_per_adapter() {
     use super::adapters::OptimizerAdapter;
     use super::adapters::{flutter::FlutterAdapter, pytorch::PyTorchAdapter};
     let hw = HardwareInfo {
-        cpu_cores: 8,
+        cpu_cores: Some(8),
         arch: "x86_64".to_string(),
         os: "linux".to_string(),
         total_memory_gb: None,
         profile: SystemProfile::Constrained,
         gpus: vec![],
+        gpu_detection_status: GpuDetectionStatus::Available,
     };
     let known = HardwareInfo {
         total_memory_gb: Some(16),

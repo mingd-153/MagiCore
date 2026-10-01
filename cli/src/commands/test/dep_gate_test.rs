@@ -16,7 +16,242 @@ fn explicit(tool: &str) -> CompatMode {
 }
 
 fn ctx<'a>(core: &'a str, ecosystem: Option<&'a str>, op: DepOp) -> DepContext<'a> {
-    DepContext::new(core, ecosystem, None, None, op)
+    let context = DepContext::new(core, ecosystem, None, None, op);
+    if core != "lib" {
+        return context;
+    }
+    let format = match ecosystem {
+        Some(eco::TS) => Some("package-json"),
+        Some(eco::RUST) => Some("cargo-toml"),
+        Some(eco::PYTHON) => Some("pep621-native"),
+        Some(eco::GO) => Some("go-mod"),
+        Some(eco::JAVA) => Some("maven-pom"),
+        Some(eco::DOTNET) => Some("csproj"),
+        _ => None,
+    };
+    context.with_manifest_format(format)
+}
+
+fn lib_ctx(
+    ecosystem: &'static str,
+    manifest_format: Option<&'static str>,
+    op: DepOp,
+) -> DepContext<'static> {
+    DepContext::new("lib", Some(ecosystem), None, None, op).with_manifest_format(manifest_format)
+}
+
+#[test]
+fn java_and_dotnet_ownership_requires_an_mgc_owned_manifest_format() {
+    for op in [DepOp::Install, DepOp::Add, DepOp::Remove, DepOp::Update] {
+        assert!(matches!(
+            owner_for(&lib_ctx(eco::JAVA, None, op)),
+            DepOwner::Unsupported
+        ));
+        assert!(matches!(
+            owner_for(&lib_ctx(eco::JAVA, Some("gradle"), op)),
+            DepOwner::Unsupported
+        ));
+        assert!(matches!(
+            owner_for(&lib_ctx(eco::JAVA, Some("maven-pom"), op)),
+            DepOwner::Native
+        ));
+        assert!(matches!(
+            owner_for(&lib_ctx(eco::DOTNET, None, op)),
+            DepOwner::Unsupported
+        ));
+        assert!(matches!(
+            owner_for(&lib_ctx(eco::DOTNET, Some("csproj"), op)),
+            DepOwner::Native
+        ));
+    }
+}
+
+#[test]
+fn every_lib_native_lane_requires_its_concrete_owned_manifest_format() {
+    let cases = [
+        (eco::TS, "package-json"),
+        (eco::RUST, "cargo-toml"),
+        (eco::PYTHON, "pep621-native"),
+        (eco::GO, "go-mod"),
+        (eco::JAVA, "maven-pom"),
+        (eco::DOTNET, "csproj"),
+    ];
+    for (ecosystem, format) in cases {
+        for op in [DepOp::Install, DepOp::Add, DepOp::Remove, DepOp::Update] {
+            assert!(
+                matches!(
+                    owner_for(&lib_ctx(ecosystem, None, op)),
+                    DepOwner::Unsupported
+                ),
+                "lib/{ecosystem}/{op:?} without a manifest must be unsupported"
+            );
+            assert!(
+                matches!(
+                    owner_for(&lib_ctx(ecosystem, Some(format), op)),
+                    DepOwner::Native
+                ),
+                "lib/{ecosystem}/{format}/{op:?} should remain native"
+            );
+        }
+    }
+    for unsupported in ["pyproject-unsupported", "requirements-txt", "foreign-lock"] {
+        assert!(matches!(
+            owner_for(&lib_ctx(eco::PYTHON, Some(unsupported), DepOp::Install)),
+            DepOwner::Unsupported
+        ));
+    }
+}
+
+#[test]
+fn ai_python_ownership_requires_the_mgc_owned_pyproject_lane() {
+    for op in DepOp::ALL {
+        assert!(
+            matches!(
+                owner_for(&ctx("ai", Some(eco::PYTHON), *op)),
+                DepOwner::Unsupported
+            ),
+            "ai/python/{:?} must not be advertised without an owned manifest",
+            op
+        );
+        let owned = DepContext::new("ai", Some(eco::PYTHON), None, None, *op)
+            .with_manifest_format(Some("mgc-pyproject"));
+        let expected_native = !matches!(op, DepOp::OfflineReinstall | DepOp::Gc);
+        assert_eq!(
+            matches!(owner_for(&owned), DepOwner::Native),
+            expected_native,
+            "ai/python/{op:?} ownership must match implemented operations"
+        );
+    }
+}
+
+#[cfg(any(feature = "lib", feature = "ai"))]
+#[test]
+fn lib_runtime_context_uses_the_project_manifest_format() {
+    let pom = tempfile::tempdir().expect("Maven fixture");
+    std::fs::write(pom.path().join("pom.xml"), "<project/>").expect("write POM");
+    assert!(matches!(
+        owner_for(&crate::commands::dep_gate::lib_project_context(
+            pom.path(),
+            DepOp::Install
+        )),
+        DepOwner::Native
+    ));
+
+    let gradle = tempfile::tempdir().expect("Gradle fixture");
+    std::fs::write(gradle.path().join("build.gradle"), "plugins {}").expect("write Gradle script");
+    let gradle_context =
+        crate::commands::dep_gate::lib_project_context(gradle.path(), DepOp::Install);
+    assert!(matches!(owner_for(&gradle_context), DepOwner::Unsupported));
+    assert_eq!(gradle_context.describe(), "lib[java|manifest:gradle]");
+    let error = gate(&gradle_context, None, &native(), None)
+        .expect_err("Gradle must be rejected before entering the adapter")
+        .to_string();
+    assert!(error.contains("Gradle build scripts are not dependency manifests"));
+
+    let mixed = tempfile::tempdir().expect("mixed Maven/Gradle fixture");
+    std::fs::write(mixed.path().join("pom.xml"), "<project/>").expect("write POM");
+    std::fs::write(mixed.path().join("build.gradle"), "plugins {}").expect("write Gradle script");
+    let mixed_context =
+        crate::commands::dep_gate::lib_project_context(mixed.path(), DepOp::Install);
+    assert!(matches!(owner_for(&mixed_context), DepOwner::Unsupported));
+    let error = gate(&mixed_context, None, &native(), None)
+        .expect_err("mixed build systems must not be silently assigned to Maven")
+        .to_string();
+    assert!(error.contains("both Maven and Gradle manifests"));
+
+    let empty_dotnet = tempfile::tempdir().expect("empty .NET fixture");
+    assert!(matches!(
+        owner_for(&crate::commands::dep_gate::lib_project_context(
+            empty_dotnet.path(),
+            DepOp::Add
+        )),
+        DepOwner::Unsupported
+    ));
+    std::fs::write(empty_dotnet.path().join("Project.CSPROJ"), "<Project/>").expect("write csproj");
+    assert!(matches!(
+        owner_for(&crate::commands::dep_gate::lib_project_context(
+            empty_dotnet.path(),
+            DepOp::Add
+        )),
+        DepOwner::Native
+    ));
+    std::fs::write(empty_dotnet.path().join("Second.csproj"), "<Project/>")
+        .expect("write second csproj");
+    assert!(matches!(
+        owner_for(&crate::commands::dep_gate::lib_project_context(
+            empty_dotnet.path(),
+            DepOp::Add
+        )),
+        DepOwner::Unsupported
+    ));
+}
+
+#[cfg(feature = "lib")]
+#[test]
+fn lib_runtime_context_rejects_missing_and_foreign_manifest_shapes() {
+    use crate::commands::dep_gate::lib_project_context;
+
+    let cases = [
+        (eco::TS, "package.json", "{}\n"),
+        (
+            eco::RUST,
+            "Cargo.toml",
+            "[package]\nname='x'\nversion='0.1.0'\n",
+        ),
+        (eco::GO, "go.mod", "module example.test/x\n\ngo 1.24\n"),
+        (
+            eco::PYTHON,
+            "pyproject.toml",
+            "[project]\nname='x'\nversion='0.1.0'\ndependencies=[]\n",
+        ),
+    ];
+    for (ecosystem, manifest, contents) in cases {
+        let missing = tempfile::tempdir().unwrap();
+        std::fs::write(
+            missing.path().join("mgc.toml"),
+            format!("ecosystem='lib'\n\n[lib]\nlanguage='{ecosystem}'\n"),
+        )
+        .unwrap();
+        assert!(
+            matches!(
+                owner_for(&lib_project_context(missing.path(), DepOp::Install)),
+                DepOwner::Unsupported
+            ),
+            "missing {manifest} must not be advertised native"
+        );
+
+        let owned = tempfile::tempdir().unwrap();
+        std::fs::write(
+            owned.path().join("mgc.toml"),
+            format!("ecosystem='lib'\n\n[lib]\nlanguage='{ecosystem}'\n"),
+        )
+        .unwrap();
+        std::fs::write(owned.path().join(manifest), contents).unwrap();
+        assert!(
+            matches!(
+                owner_for(&lib_project_context(owned.path(), DepOp::Install)),
+                DepOwner::Native
+            ),
+            "owned {manifest} should remain native"
+        );
+    }
+
+    let foreign_python = tempfile::tempdir().unwrap();
+    std::fs::write(
+        foreign_python.path().join("mgc.toml"),
+        "ecosystem='lib'\n\n[lib]\nlanguage='python'\n",
+    )
+    .unwrap();
+    std::fs::write(
+        foreign_python.path().join("pyproject.toml"),
+        "[project]\nname='x'\nversion='0.1.0'\ndependencies=[]\n",
+    )
+    .unwrap();
+    std::fs::write(foreign_python.path().join("uv.lock"), "version = 1\n").unwrap();
+    assert!(matches!(
+        owner_for(&lib_project_context(foreign_python.path(), DepOp::Install)),
+        DepOwner::Unsupported
+    ));
 }
 
 #[test]
@@ -49,6 +284,117 @@ fn web_is_native_only_for_declared_js_ts() {
 }
 
 #[test]
+fn store_gc_is_not_inherited_from_an_install_owner() {
+    for (core, ecosystem) in [
+        ("ai", Some(eco::PYTHON)),
+        ("app", Some(eco::FLUTTER)),
+        ("lib", Some(eco::RUST)),
+        ("game", Some(eco::BEVY)),
+        ("iot", Some("esp32-rust")),
+    ] {
+        assert!(
+            matches!(
+                owner_for(&ctx(core, ecosystem, DepOp::Gc)),
+                DepOwner::Unsupported
+            ),
+            "{core}/{ecosystem:?}/gc must not inherit install ownership"
+        );
+        assert!(gate(&ctx(core, ecosystem, DepOp::Gc), None, &native(), None).is_err());
+    }
+
+    for ecosystem in [Some(eco::JS), Some(eco::TS)] {
+        assert!(matches!(
+            owner_for(&ctx("web", ecosystem, DepOp::Gc)),
+            DepOwner::Native
+        ));
+        assert!(gate(&ctx("web", ecosystem, DepOp::Gc), None, &native(), None).is_ok());
+    }
+}
+
+#[test]
+fn offline_reinstall_is_not_inherited_from_online_install() {
+    for (core, ecosystem) in [
+        ("app", Some(eco::FLUTTER)),
+        ("app", Some(eco::SWIFT)),
+        ("lib", Some(eco::RUST)),
+        ("lib", Some(eco::GO)),
+        ("lib", Some(eco::JAVA)),
+        ("lib", Some(eco::DOTNET)),
+        ("game", Some(eco::BEVY)),
+        ("iot", Some("esp32-rust")),
+    ] {
+        assert!(
+            matches!(
+                owner_for(&ctx(core, ecosystem, DepOp::OfflineReinstall)),
+                DepOwner::Unsupported
+            ),
+            "{core}/{ecosystem:?} must not inherit online install as offline support"
+        );
+        assert!(
+            gate(
+                &ctx(core, ecosystem, DepOp::OfflineReinstall),
+                None,
+                &native(),
+                None
+            )
+            .is_err()
+        );
+    }
+
+    let lib_python_native = DepContext::new(
+        "lib",
+        Some(eco::PYTHON),
+        None,
+        None,
+        DepOp::OfflineReinstall,
+    )
+    .with_manifest_format(Some("pep621-native"));
+    assert!(matches!(owner_for(&lib_python_native), DepOwner::Native));
+    assert!(gate(&lib_python_native, None, &native(), None).is_ok());
+
+    let lib_python_foreign = DepContext::new(
+        "lib",
+        Some(eco::PYTHON),
+        None,
+        None,
+        DepOp::OfflineReinstall,
+    )
+    .with_manifest_format(Some("requirements-txt"));
+    assert!(matches!(
+        owner_for(&lib_python_foreign),
+        DepOwner::Unsupported
+    ));
+
+    let ai_python_native =
+        DepContext::new("ai", Some(eco::PYTHON), None, None, DepOp::OfflineReinstall)
+            .with_manifest_format(Some("mgc-pyproject"));
+    assert!(matches!(
+        owner_for(&ai_python_native),
+        DepOwner::Unsupported
+    ));
+    assert!(gate(&ai_python_native, None, &native(), None).is_err());
+
+    for (core, ecosystem) in [
+        ("web", Some(eco::JS)),
+        ("web", Some(eco::TS)),
+        ("lib", Some(eco::TS)),
+    ] {
+        assert!(matches!(
+            owner_for(&ctx(core, ecosystem, DepOp::OfflineReinstall)),
+            DepOwner::Native
+        ));
+    }
+    let cloud_cdk = DepContext::new(
+        "clo",
+        Some(eco::JS),
+        Some("cdk"),
+        None,
+        DepOp::OfflineReinstall,
+    );
+    assert!(matches!(owner_for(&cloud_cdk), DepOwner::Unsupported));
+}
+
+#[test]
 fn lib_typescript_native_protocol_langs_split_pipeline_vs_edits() {
     assert!(matches!(
         owner_for(&ctx("lib", Some(eco::TS), DepOp::Install)),
@@ -65,7 +411,7 @@ fn lib_typescript_native_protocol_langs_split_pipeline_vs_edits() {
     );
     // Protocol languages: native pipeline (install/resolve/verify/...) but
     // toolchain-owned edits with PER-LANGUAGE tools.
-    for lang in [eco::RUST, eco::PYTHON, eco::GO, eco::JAVA, eco::DOTNET] {
+    for lang in [eco::RUST, eco::PYTHON, eco::GO] {
         assert!(
             gate(
                 &ctx("lib", Some(lang), DepOp::Install),
@@ -87,14 +433,33 @@ fn lib_typescript_native_protocol_langs_split_pipeline_vs_edits() {
             "lib[{lang}] resolve is native"
         );
     }
+    for (lang, format) in [(eco::JAVA, "maven-pom"), (eco::DOTNET, "csproj")] {
+        for op in [DepOp::Install, DepOp::Add, DepOp::Remove, DepOp::Update] {
+            assert!(matches!(
+                owner_for(&lib_ctx(lang, Some(format), op)),
+                DepOwner::Native
+            ));
+        }
+    }
     // Native Add (resolve-first + mgc-side manifest edit, zero spawn):
-    // rust/python/go/dotnet + java-pom run inside mgc. Gradle projects
-    // fail closed inside prepare_add (scripts are programs) — the gate
-    // stays Native, the failure carries the pom.xml guidance.
-    for lang in [eco::RUST, eco::PYTHON, eco::GO, eco::DOTNET, eco::JAVA] {
+    // Rust/Python/Go are language-owned; Java/.NET require explicit POM /
+    // single-csproj formats. Gradle is rejected by the gate before adapter.
+    for lang in [eco::RUST, eco::PYTHON, eco::GO] {
         assert!(
             gate(&ctx("lib", Some(lang), DepOp::Add), None, &native(), None).is_ok(),
             "lib[{lang}] add is native (no toolchain spawn)"
+        );
+    }
+    for (lang, format) in [(eco::JAVA, "maven-pom"), (eco::DOTNET, "csproj")] {
+        assert!(
+            gate(
+                &lib_ctx(lang, Some(format), DepOp::Add),
+                None,
+                &native(),
+                None
+            )
+            .is_ok(),
+            "lib[{lang}/{format}] add is native (no toolchain spawn)"
         );
     }
     // Exact actual-tool matching: python runs PIP — a uv opt-in is a
@@ -205,12 +570,12 @@ fn lib_typescript_native_protocol_langs_split_pipeline_vs_edits() {
         )
         .is_err()
     );
-    // Java/DOTNET Update run natively (resolve-latest + rewrite); gradle
-    // projects fail closed in prepare_add/write_manifest.
-    for lang in [eco::JAVA, eco::DOTNET] {
+    // Java POM/.NET csproj Update run natively; Gradle and unknown formats
+    // fail at the manifest-aware gate, before adapter construction.
+    for (lang, format) in [(eco::JAVA, "maven-pom"), (eco::DOTNET, "csproj")] {
         assert!(
             gate(
-                &ctx("lib", Some(lang), DepOp::Update),
+                &lib_ctx(lang, Some(format), DepOp::Update),
                 None,
                 &native(),
                 None
@@ -274,7 +639,8 @@ fn game_and_iot_list_are_blocked_without_installed_state_evidence() {
 #[test]
 fn cloud_list_is_native_only_for_web_backed_cdk_or_pulumi_manifests() {
     for framework in ["cdk", "pulumi"] {
-        let context = DepContext::new("clo", Some(eco::JS), Some(framework), None, DepOp::List);
+        let context = DepContext::new("clo", Some(eco::JS), Some(framework), None, DepOp::List)
+            .with_manifest_format(Some("package-json"));
         assert!(matches!(owner_for(&context), DepOwner::Native));
     }
     for (ecosystem, framework) in [
@@ -299,13 +665,20 @@ fn cloud_cdk_and_pulumi_dependency_lifecycle_is_native_only_with_js_manifest() {
             DepOp::Update,
             DepOp::List,
         ] {
-            let context = DepContext::new("clo", Some(eco::JS), Some(framework), None, op);
+            let context = DepContext::new("clo", Some(eco::JS), Some(framework), None, op)
+                .with_manifest_format(Some("package-json"));
             assert!(
                 matches!(owner_for(&context), DepOwner::Native),
                 "clo/{framework} {} must use the embedded MGC JS dependency engine",
                 op.as_str()
             );
         }
+        let missing_manifest =
+            DepContext::new("clo", Some(eco::JS), Some(framework), None, DepOp::Install);
+        assert!(matches!(
+            owner_for(&missing_manifest),
+            DepOwner::Unsupported
+        ));
     }
 
     for framework in ["terraform", "cloudflare"] {
@@ -320,11 +693,21 @@ fn cloud_gate_requires_embedded_js_manifest_and_rejects_compat() {
 
     let missing_manifest = tempfile::tempdir().unwrap();
     assert!(gate_cloud_project(missing_manifest.path(), "cdk", DepOp::Install, None).is_err());
+    assert!(
+        gate_cloud_project(
+            missing_manifest.path(),
+            "cdk",
+            DepOp::OfflineReinstall,
+            None
+        )
+        .is_err()
+    );
 
     let js_project = tempfile::tempdir().unwrap();
     std::fs::write(js_project.path().join("package.json"), "{}\n").unwrap();
     assert!(gate_cloud_project(js_project.path(), "cdk", DepOp::Install, None).is_ok());
     assert!(gate_cloud_project(js_project.path(), "pulumi", DepOp::Add, None).is_ok());
+    assert!(gate_cloud_project(js_project.path(), "cdk", DepOp::OfflineReinstall, None).is_ok());
     assert!(gate_cloud_project(js_project.path(), "terraform", DepOp::Install, None).is_err());
     assert!(gate_cloud_project(js_project.path(), "cdk", DepOp::Install, Some("npm")).is_err());
 }
@@ -338,15 +721,13 @@ fn ai_python_dependency_gate_rejects_compat_for_every_operation() {
         DepOp::Update,
         DepOp::List,
     ] {
-        let native_result = gate(&ctx("ai", Some(eco::PYTHON), op), None, &native(), None);
-        if matches!(op, DepOp::Install | DepOp::Add | DepOp::Update) {
-            assert!(native_result.is_ok(), "AI Python {op:?} static native lane");
-        } else {
-            assert!(
-                native_result.is_err(),
-                "AI Python {op:?} lacks static ownership"
-            );
-        }
+        assert!(
+            gate(&ctx("ai", Some(eco::PYTHON), op), None, &native(), None).is_err(),
+            "AI Python {op:?} without an owned manifest must fail closed"
+        );
+        let owned = DepContext::new("ai", Some(eco::PYTHON), None, None, op)
+            .with_manifest_format(Some("mgc-pyproject"));
+        assert!(gate(&owned, None, &native(), None).is_ok());
         assert!(
             gate(
                 &ctx("ai", Some(eco::PYTHON), op),
@@ -416,20 +797,31 @@ fn app_rn_unsupported_flutter_delegated_unknown_unsupported() {
 
 #[test]
 fn game_iot_clo_need_declared_ecosystem() {
-    assert!(
-        gate(
-            &ctx("game", Some(eco::BEVY), DepOp::Install),
-            None,
-            &native(),
-            None
-        )
-        .is_ok()
-    );
+    for (core, ecosystem, framework) in [
+        ("game", eco::BEVY, eco::BEVY),
+        ("iot", "esp32-rust", "esp32-rust"),
+    ] {
+        for op in [DepOp::Install, DepOp::Add, DepOp::Update, DepOp::Remove] {
+            let without_manifest =
+                DepContext::new(core, Some(ecosystem), Some(framework), None, op);
+            assert!(
+                matches!(owner_for(&without_manifest), DepOwner::Unsupported),
+                "{core}/{framework}/{op:?} without Cargo.toml must be unsupported"
+            );
+            let with_manifest = without_manifest.with_manifest_format(Some("cargo-toml"));
+            assert!(
+                matches!(owner_for(&with_manifest), DepOwner::Native),
+                "{core}/{framework}/{op:?} with Cargo.toml is native"
+            );
+        }
+    }
+    let bevy =
+        ctx("game", Some(eco::BEVY), DepOp::Install).with_manifest_format(Some("cargo-toml"));
+    let esp32 =
+        ctx("iot", Some("esp32-rust"), DepOp::Install).with_manifest_format(Some("cargo-toml"));
+    assert!(gate(&bevy, None, &native(), None).is_ok());
     assert!(gate(&ctx("game", None, DepOp::Install), None, &native(), None).is_err());
-    assert!(matches!(
-        owner_for(&ctx("iot", Some("esp32-rust"), DepOp::Install)),
-        DepOwner::Native
-    ));
+    assert!(matches!(owner_for(&esp32), DepOwner::Native));
     for fw in ["platformio", "zephyr"] {
         assert!(
             gate(&ctx("iot", Some(fw), DepOp::Install), None, &native(), None).is_err(),
@@ -702,17 +1094,13 @@ fn capabilities_json_carries_dep_gate_ownership() {
     assert_eq!(ai_languages["python"]["update"]["owner"], "mgc-native");
     let hardware = &dependency_ownership("hardware")["operations"];
     assert_eq!(hardware["install"]["owner"], "unsupported");
-    // Splitting cores expose per-ecosystem overrides that differ from the
-    // core-level branch (lib/ts + lib/rust native install over an
-    // unsupported base; app/rn unsupported install over an unsupported
-    // base with delegated siblings).
+    // Splitting cores expose per-ecosystem overrides with their concrete
+    // manifest formats; the unspecialized base remains unsupported.
     let lib_languages = dependency_ownership("lib")["languages"].clone();
     assert_eq!(lib_languages["ts"]["add"]["owner"], "mgc-native");
     assert_eq!(lib_languages["rust"]["install"]["owner"], "mgc-native");
     assert_eq!(lib_languages["rust"]["add"]["owner"], "mgc-native");
-    // Capability snapshot vs REAL runners: native Add carries no tools;
-    // python Remove still spawns pip only (uv excluded); go remove has
-    // no runner (unsupported).
+    // Native capability rows carry no external dependency-manager tools.
     assert_eq!(lib_languages["python"]["add"]["owner"], "mgc-native");
     assert_eq!(
         lib_languages["python"]["add"]["tools"],
@@ -725,9 +1113,43 @@ fn capabilities_json_carries_dep_gate_ownership() {
     );
     assert_eq!(lib_languages["go"]["remove"]["owner"], "mgc-native");
     assert_eq!(lib_languages["go"]["add"]["owner"], "mgc-native");
-    assert_eq!(lib_languages["java"]["add"]["owner"], "mgc-native");
-    assert_eq!(lib_languages["java"]["install"]["owner"], "mgc-native");
-    assert_eq!(lib_languages["dotnet"]["update"]["owner"], "mgc-native");
+    let game_languages = dependency_ownership("game")["languages"].clone();
+    assert_eq!(game_languages["bevy"]["install"]["owner"], "mgc-native");
+    assert_eq!(game_languages["bevy"]["install"]["requires"], "Cargo.toml");
+    let iot_languages = dependency_ownership("iot")["languages"].clone();
+    assert_eq!(iot_languages["esp32-rust"]["add"]["owner"], "mgc-native");
+    assert_eq!(iot_languages["esp32-rust"]["add"]["requires"], "Cargo.toml");
+    let lib_operations = &dependency_ownership("lib")["operations"];
+    assert_eq!(lib_operations["add"]["owner"], "unsupported");
+    assert_eq!(lib_operations["install"]["owner"], "unsupported");
+    let variants = &dependency_ownership("lib")["manifest_variants"];
+    assert_eq!(
+        variants["ts/package-json"]["install"]["owner"],
+        "mgc-native"
+    );
+    assert_eq!(variants["ts/unknown"]["install"]["owner"], "unsupported");
+    assert_eq!(variants["rust/cargo-toml"]["add"]["owner"], "mgc-native");
+    assert_eq!(variants["rust/unknown"]["add"]["owner"], "unsupported");
+    assert_eq!(
+        variants["python/pep621-native"]["install"]["owner"],
+        "mgc-native"
+    );
+    assert_eq!(
+        variants["python/pyproject-unsupported"]["install"]["owner"],
+        "unsupported"
+    );
+    assert_eq!(variants["go/go-mod"]["install"]["owner"], "mgc-native");
+    assert_eq!(variants["go/unknown"]["install"]["owner"], "unsupported");
+    assert_eq!(variants["java/maven-pom"]["add"]["owner"], "mgc-native");
+    assert_eq!(variants["java/maven-pom"]["install"]["owner"], "mgc-native");
+    assert_eq!(variants["java/gradle"]["add"]["owner"], "unsupported");
+    assert_eq!(variants["java/gradle"]["install"]["owner"], "unsupported");
+    assert_eq!(variants["dotnet/csproj"]["update"]["owner"], "mgc-native");
+    assert_eq!(variants["java/unknown"]["add"]["owner"], "unsupported");
+    assert_eq!(
+        variants["dotnet/unknown"]["install"]["owner"],
+        "unsupported"
+    );
     let app_languages = dependency_ownership("app")["languages"].clone();
     // "rn" is omitted when identical to the (unsupported) base row — the
     // languages map carries ONLY differing ecosystems. When present it
@@ -792,4 +1214,20 @@ fn non_native_iot_package_operations_are_unsupported_even_with_compat() {
             );
         }
     }
+}
+
+#[cfg(not(any(feature = "lib", feature = "ai")))]
+#[test]
+fn lib_project_context_fails_closed_when_lib_adapter_is_not_compiled() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(
+        root.path().join("Cargo.toml"),
+        "[package]\nname='sample'\nversion='0.1.0'\nedition='2024'\n",
+    )
+    .unwrap();
+
+    let context = lib_project_context(root.path(), DepOp::Install);
+
+    assert!(context.ecosystem.is_none());
+    assert!(matches!(owner_for(&context), DepOwner::Unsupported));
 }

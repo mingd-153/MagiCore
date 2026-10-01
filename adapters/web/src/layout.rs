@@ -8,42 +8,12 @@ fn symlink_dir(original: &Path, link: &Path) -> std::io::Result<()> {
 
 #[cfg(not(unix))]
 fn symlink_dir(original: &Path, link: &Path) -> std::io::Result<()> {
-    // Windows: directory symlinks need Developer Mode or elevation. Try the
-    // real symlink first, then fall back to a junction point (no privilege
-    // required, resolved by the filesystem like a symlink for our purposes).
-    // Windows: symlink cần Developer Mode/elevation — thử symlink trước,
-    // fail thì fallback junction point (không cần quyền, CI runner dùng được).
-    match std::os::windows::fs::symlink_dir(original, link) {
-        Ok(()) => Ok(()),
-        Err(first_err) => {
-            // mklink /J must run inside cmd.exe (it is a shell builtin).
-            let status = std::process::Command::new("cmd")
-                .args([
-                    "/C",
-                    "mklink",
-                    "/J",
-                    &link.to_string_lossy(),
-                    &original.to_string_lossy(),
-                ])
-                .status()
-                .map_err(|e| {
-                    // Report the ORIGINAL symlink error, not the fallback spawn error.
-                    std::io::Error::new(first_err.kind(), format!("{first_err}"))
-                })?;
-            if status.success() {
-                Ok(())
-            } else {
-                // Surface the original symlink error — junction also failed.
-                Err(std::io::Error::new(
-                    first_err.kind(),
-                    format!(
-                        "symlink_dir failed on Windows (symlink: {first_err}; mklink /J exit {:?})",
-                        status.code()
-                    ),
-                ))
-            }
-        }
-    }
+    // Windows: try the native API only. Callers already have a hardlink-tree
+    // fallback; invoking cmd.exe here would interpolate project-controlled
+    // paths into shell syntax and create a command-injection boundary.
+    // Windows: chỉ dùng API native. Caller đã có hardlink-tree fallback;
+    // gọi cmd.exe sẽ đưa path do project kiểm soát vào shell syntax.
+    std::os::windows::fs::symlink_dir(original, link)
 }
 
 /// Clear the read-only attribute before deletion. npm tarballs store files

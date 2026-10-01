@@ -121,3 +121,88 @@ fn test_keyring_secure_permissions() {
     let mode = metadata.permissions().mode();
     assert_eq!(mode & 0o777, 0o600); // Owner read/write only — Chỉ owner đọc/ghi
 }
+
+#[test]
+#[cfg(unix)]
+fn test_keyring_load_rejects_group_or_world_readable_private_keys() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("keyring.json");
+    let mut keyring = Keyring::new();
+    keyring.add_key(KeyPair::generate().unwrap());
+    keyring.save_test(&path).unwrap();
+
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+
+    let error = Keyring::load(&path).unwrap_err();
+
+    assert!(
+        error.to_string().contains("permissions") && error.to_string().contains("group/world"),
+        "unsafe private-key file must be rejected explicitly, got: {error}"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn test_keyring_load_rejects_symlink_path() {
+    use std::os::unix::fs::symlink;
+
+    let dir = tempdir().unwrap();
+    let target = dir.path().join("target.json");
+    let link = dir.path().join("keyring.json");
+    let mut keyring = Keyring::new();
+    keyring.add_key(KeyPair::generate().unwrap());
+    keyring.save_test(&target).unwrap();
+    symlink(&target, &link).unwrap();
+
+    assert!(Keyring::load(&link).is_err());
+    assert!(target.exists(), "load must not mutate the symlink target");
+}
+
+#[test]
+#[cfg(unix)]
+fn test_keyring_load_rejects_fifo_without_blocking() {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("keyring.fifo");
+    let c_path = CString::new(path.as_os_str().as_bytes()).unwrap();
+    let mkfifo_result = unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) };
+    assert_eq!(
+        mkfifo_result,
+        0,
+        "mkfifo failed: {}",
+        std::io::Error::last_os_error()
+    );
+
+    let (sender, receiver) = mpsc::channel();
+    std::thread::spawn(move || {
+        let result = Keyring::load(&path);
+        let _ = sender.send(result.map(|_| ()).map_err(|error| error.to_string()));
+    });
+
+    let result = receiver
+        .recv_timeout(Duration::from_millis(500))
+        .expect("loading a FIFO must not hang before rejecting the non-regular file");
+    assert!(result.is_err(), "FIFO must be rejected, got {result:?}");
+}
+
+#[test]
+fn test_keypair_debug_redacts_private_key_bytes() {
+    let key_pair = KeyPair::generate().unwrap();
+    let debug = format!("{key_pair:?}");
+    let private_bytes = format!("{:?}", key_pair.private_key_pkcs8);
+
+    assert!(
+        debug.contains("REDACTED"),
+        "debug output must mark the secret as redacted"
+    );
+    assert!(
+        !debug.contains(&private_bytes),
+        "debug output must not include private key bytes"
+    );
+}

@@ -8,7 +8,6 @@ pub mod download;
 pub mod verify;
 
 use download::ModelSource;
-use verify::verify_model_checksum;
 
 /// Model install summary
 #[derive(Debug, Clone)]
@@ -35,7 +34,8 @@ pub async fn install_model(
 
     // Verify checksum if provided
     let verified = if let Some(checksum) = source.checksum() {
-        verify_model_checksum(&local_path, checksum)?
+        download::verify_file_checksum(&local_path, checksum)?;
+        true
     } else {
         false
     };

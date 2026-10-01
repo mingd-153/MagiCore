@@ -17,6 +17,37 @@ fn tmp(tag: &str) -> PathBuf {
     dir
 }
 
+#[cfg(unix)]
+#[test]
+fn language_detection_does_not_follow_external_mgc_config_symlink() {
+    let project = tmp("external-mgc-config-link");
+    let external = tmp("external-mgc-config-target");
+    std::fs::write(external.join("mgc.toml"), "[app]\nlanguage = 'flutter'\n").unwrap();
+    std::os::unix::fs::symlink(external.join("mgc.toml"), project.join("mgc.toml")).unwrap();
+
+    assert_eq!(detect_language(&project), None);
+    let _ = std::fs::remove_dir_all(project);
+    let _ = std::fs::remove_dir_all(external);
+}
+
+#[cfg(unix)]
+#[test]
+fn language_detection_does_not_follow_external_package_json_symlink() {
+    let project = tmp("external-package-json-link");
+    let external = tmp("external-package-json-target");
+    std::fs::write(
+        external.join("package.json"),
+        r#"{"dependencies":{"react-native":"0.74.0"}}"#,
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(external.join("package.json"), project.join("package.json"))
+        .unwrap();
+
+    assert_eq!(detect_language(&project), None);
+    let _ = std::fs::remove_dir_all(project);
+    let _ = std::fs::remove_dir_all(external);
+}
+
 // ── detect_language — tất cả 6 loại marker ─────────────────────────────────
 
 #[test]
@@ -88,6 +119,18 @@ fn detect_multi_via_mgc_toml() {
     )
     .unwrap();
     assert_eq!(detect_language(&dir), Some(AppLanguage::Multi));
+}
+
+#[test]
+fn detect_react_native_via_explicit_mgc_toml_language() {
+    let dir = tmp("rn-explicit");
+    std::fs::write(dir.join("mgc.toml"), "[app]\nlanguage = \"react-native\"\n").unwrap();
+
+    assert_eq!(detect_language(&dir), Some(AppLanguage::ReactNative));
+    assert_eq!(
+        adapter_for(&dir).map(|adapter| adapter.language),
+        Some(AppLanguage::ReactNative)
+    );
 }
 
 #[test]

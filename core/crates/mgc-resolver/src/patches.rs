@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 pub fn apply_patch(vstore_root: &Path, patch_path: &Path) -> Result<Vec<PathBuf>> {
     let content = fs::read_to_string(patch_path)
         .with_context(|| format!("read patch file {}", patch_path.display()))?;
-    let mut modified = Vec::new();
+    let mut staged = Vec::new();
     let mut lines = content.lines().map(|s| s.to_string()).peekable();
 
     while lines.peek().is_some() {
@@ -23,26 +23,34 @@ pub fn apply_patch(vstore_root: &Path, patch_path: &Path) -> Result<Vec<PathBuf>
             bail!("patch file mismatch: {} vs {}", old_file, new_file);
         }
 
-        let target = vstore_root.join(&old_file);
+        let target = safe_vstore_target(vstore_root, &old_file)?;
         if !target.exists() {
             bail!("target file not found in vstore: {}", target.display());
         }
 
         let mut hunks = Vec::new();
-        while let Some(line) = lines.next() {
-            if line.starts_with("@@") {
-                hunks.push(parse_hunk(line, &mut lines)?);
-            } else if line.starts_with("---") || line.starts_with("+++") {
-                // Next file header - put back
+        while let Some(line) = lines.peek() {
+            if line.starts_with("---") {
                 break;
             }
+            if !line.starts_with("@@") {
+                bail!("expected unified-diff hunk header, found: {line}");
+            }
+            let header = lines.next().expect("peeked hunk header must still exist");
+            hunks.push(parse_hunk(header, &mut lines)?);
         }
-
-        apply_hunks(&target, hunks)?;
-        modified.push(target);
+        let original = fs::read_to_string(&target)?;
+        let updated = apply_hunks(&original, hunks)?;
+        staged.push((target, updated));
     }
 
-    Ok(modified)
+    // Parse every file and validate every hunk before the first write. This
+    // prevents a malformed later file from leaving earlier files modified.
+    // (Đọc/kiểm tra mọi file trước lần ghi đầu tiên.)
+    for (target, updated) in &staged {
+        fs::write(target, updated)?;
+    }
+    Ok(staged.into_iter().map(|(target, _)| target).collect())
 }
 
 #[derive(Debug)]
@@ -69,7 +77,44 @@ where
     }
     // Strip 'a/' or 'b/' prefix
     let path = parts[1].trim_start_matches("a/").trim_start_matches("b/");
+    validate_patch_relative_path(path)?;
     Ok(path.to_string())
+}
+
+/// Reject patch headers that could address files outside the package store.
+/// (Từ chối header patch có thể ghi file bên ngoài package store.)
+fn validate_patch_relative_path(path: &str) -> Result<()> {
+    use std::path::Component;
+
+    if path.is_empty() || path.contains('\\') || path.contains('\0') {
+        bail!("unsafe patch path: expected a non-empty slash-separated relative path");
+    }
+    let candidate = Path::new(path);
+    if candidate.components().any(|component| {
+        matches!(
+            component,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) | Component::CurDir
+        )
+    }) {
+        bail!("unsafe patch path: path traversal or absolute paths are forbidden: {path}");
+    }
+    Ok(())
+}
+
+/// Canonicalize both sides so symlinked package files cannot escape vstore.
+/// (Canonicalize hai phía để symlink trong package không thoát vstore.)
+fn safe_vstore_target(vstore_root: &Path, relative_path: &str) -> Result<PathBuf> {
+    validate_patch_relative_path(relative_path)?;
+    let root = vstore_root.canonicalize()?;
+    let target = root.join(relative_path);
+    let canonical_target = target.canonicalize()?;
+    if !canonical_target.starts_with(&root) {
+        bail!("patch target escapes package store: {}", target.display());
+    }
+    if !canonical_target.is_file() {
+        bail!("patch target is not a regular file: {}", target.display());
+    }
+    Ok(canonical_target)
 }
 
 fn parse_hunk<I>(header: String, lines: &mut std::iter::Peekable<I>) -> Result<Hunk>
@@ -85,17 +130,23 @@ where
     let _new_range = parse_range(parts[2])?;
 
     let mut hunk_lines = Vec::new();
-    for line in lines.by_ref() {
+    while let Some(line) = lines.peek() {
         if line.starts_with("@@") || line.starts_with("---") || line.starts_with("+++") {
-            // Put back - will be processed in next iteration
+            // Leave the next hunk/file header for the caller.
             break;
         }
+        let line = lines.next().expect("peeked patch line must still exist");
         if line.is_empty() {
             hunk_lines.push((' ', String::new()));
             continue;
         }
         let op = line.chars().next().unwrap_or(' ');
-        let content = &line[1..];
+        if !matches!(op, ' ' | '+' | '-') {
+            bail!("invalid hunk operation: {op:?}");
+        }
+        let content = line
+            .get(op.len_utf8()..)
+            .ok_or_else(|| anyhow!("invalid UTF-8 boundary in patch hunk"))?;
         hunk_lines.push((op, content.to_string()));
     }
 
@@ -119,14 +170,21 @@ fn parse_range(s: &str) -> Result<(usize, usize)> {
     Ok((start, len))
 }
 
-fn apply_hunks(target: &Path, hunks: Vec<Hunk>) -> Result<()> {
-    let content = fs::read_to_string(target)?;
+fn apply_hunks(content: &str, hunks: Vec<Hunk>) -> Result<String> {
+    let trailing_newline = content.ends_with('\n');
+    let line_ending = if content.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
     let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
 
     for hunk in hunks {
         // Convert 1-based to 0-based
         let start = hunk.old_start.saturating_sub(1);
-        let end = start + hunk.old_len;
+        let end = start
+            .checked_add(hunk.old_len)
+            .ok_or_else(|| anyhow!("hunk range overflows addressable file length"))?;
 
         if end > lines.len() {
             bail!("hunk range exceeds file length: {} > {}", end, lines.len());
@@ -165,8 +223,11 @@ fn apply_hunks(target: &Path, hunks: Vec<Hunk>) -> Result<()> {
         lines.splice(start..end, new_lines);
     }
 
-    fs::write(target, lines.join("\n"))?;
-    Ok(())
+    let mut updated = lines.join(line_ending);
+    if trailing_newline {
+        updated.push_str(line_ending);
+    }
+    Ok(updated)
 }
 
 /// Verify patch integrity (SHA256 of patch file content)

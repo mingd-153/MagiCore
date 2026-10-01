@@ -27,9 +27,19 @@ pub async fn test(
     core: Option<&str>,
     compat_runtime: Option<&str>,
 ) -> Result<()> {
-    let compat = CompatMode::from_flag(compat_runtime)?;
     let ctx = crate::context::ProjectContext::load_with_core(core)?;
-    let project_root = ctx.root();
+    test_at(ctx.root(), args, core, compat_runtime).await
+}
+
+/// Run the same test discovery and execution policy against an explicit project root.
+/// Chạy cùng chính sách phát hiện và thực thi test trên project root tường minh.
+pub(crate) async fn test_at(
+    project_root: &Path,
+    args: Vec<String>,
+    core: Option<&str>,
+    compat_runtime: Option<&str>,
+) -> Result<()> {
+    let compat = CompatMode::from_flag(compat_runtime)?;
 
     // 1. Priority: mgc.toml [scripts] test — ưu tiên: mgc.toml [scripts] test
     let mgc_toml_path = project_root.join("mgc.toml");
@@ -83,7 +93,7 @@ pub async fn test(
 
         // Load optimizer env for test runtime
         // Tải env optimizer cho runtime test
-        let runtime = detect_test_runtime(project_root);
+        let runtime = detect_test_runtime(project_root)?;
         let optimizer_envs =
             crate::commands::optimizer::env_loader::load_optimizer_env(project_root, &runtime)
                 .map_err(|e| {
@@ -99,32 +109,14 @@ pub async fn test(
             env.push(("GOTOOLCHAIN".to_string(), "local".to_string()));
         }
 
-        // Native python packages (mgc-owned wheels unpacked at install)
-        // must be importable under pytest/python — prepend their site
-        // dirs to PYTHONPATH. An absent lock yields no MGC Python entries;
-        // a malformed lock or a locked package without a verified importable
-        // site directory fails closed instead of hiding an incomplete install.
-        // This is the run side of native Python: `mgc test` sees what
-        // `mgc install-lib` fetched and materialized.
-        // (PYTHONPATH cho package python do mgc cài.)
-        // lib-gated: single-core builds (e.g. web-only) have no
-        // mgc-lib-adapter dependency — the block vanishes there.
-        #[cfg(feature = "lib")]
-        {
-            if runner == "pytest" || runner == "python" || runner == "python3" {
-                let mut paths = mgc_lib_adapter::install::native_python_path_entries(project_root)?;
-                if !paths.is_empty() {
-                    if let Some(cur) = std::env::var_os("PYTHONPATH") {
-                        paths.extend(std::env::split_paths(&cur));
-                    }
-                    if let Ok(joined) = std::env::join_paths(&paths) {
-                        env.push((
-                            "PYTHONPATH".to_string(),
-                            joined.to_string_lossy().to_string(),
-                        ));
-                    }
-                }
-            }
+        // Native MGC-installed Python packages must be visible to Python
+        // test runners. Invalid/missing materializations fail closed.
+        if matches!(runner.as_str(), "pytest" | "python" | "python3") {
+            crate::commands::python_runtime::extend_native_python_env(
+                &mut env,
+                project_root,
+                true,
+            )?;
         }
 
         // P0-1: compat lane truyền runtime đã chọn (gate ở trên đã kiểm)
@@ -172,7 +164,7 @@ fn test_runner_policy(runner: &str) -> Option<crate::commands::launcher_policy::
 /// Detect test runner based on project manifest files — phát hiện test runner dựa trên file manifest
 fn detect_test_runner(project_root: &Path) -> Result<Option<(String, Vec<String>)>> {
     // Check Cargo.toml (Rust) — kiểm tra Cargo.toml
-    if project_root.join("Cargo.toml").exists() {
+    if read_project_manifest(project_root, "Cargo.toml")?.is_some() {
         return Ok(Some((
             "cargo".to_string(),
             vec![
@@ -184,7 +176,7 @@ fn detect_test_runner(project_root: &Path) -> Result<Option<(String, Vec<String>
     }
 
     // Check go.mod (Go) — kiểm tra go.mod
-    if project_root.join("go.mod").exists() {
+    if read_project_manifest(project_root, "go.mod")?.is_some() {
         return Ok(Some((
             "go".to_string(),
             vec![
@@ -196,7 +188,9 @@ fn detect_test_runner(project_root: &Path) -> Result<Option<(String, Vec<String>
     }
 
     // Check pyproject.toml or setup.py (Python) — kiểm tra pyproject.toml hoặc setup.py
-    if project_root.join("pyproject.toml").exists() || project_root.join("setup.py").exists() {
+    if read_project_manifest(project_root, "pyproject.toml")?.is_some()
+        || read_project_manifest(project_root, "setup.py")?.is_some()
+    {
         // Try pytest first, fall back to python -m unittest — thử pytest trước
         // Note: pytest auto-discovers test_*.py and *_test.py in current directory
         // -s: no output capture, -v: verbose
@@ -207,7 +201,7 @@ fn detect_test_runner(project_root: &Path) -> Result<Option<(String, Vec<String>
     }
 
     // Check pubspec.yaml (Flutter/Dart) — kiểm tra pubspec.yaml
-    if project_root.join("pubspec.yaml").exists() {
+    if read_project_manifest(project_root, "pubspec.yaml")?.is_some() {
         return Ok(Some((
             "flutter".to_string(),
             vec!["test".to_string(), "--no-pub".to_string()],
@@ -224,9 +218,7 @@ fn detect_test_runner(project_root: &Path) -> Result<Option<(String, Vec<String>
     // cũng vậy — lane test web native chạy qua binary local của project,
     // không qua PM.
     let package_json_path = project_root.join("package.json");
-    if package_json_path.exists()
-        && let Some(test_script) = resolve_package_json_script(&package_json_path, "test")?
-    {
+    if let Some(test_script) = resolve_package_json_script(&package_json_path, "test")? {
         // Run the project's OWN test script through the native task
         // runner (run.rs gates rival runtimes/PMs the same way).
         // Chạy script test CỦA CHÍNH project qua task runner native
@@ -245,53 +237,56 @@ fn detect_test_runner(project_root: &Path) -> Result<Option<(String, Vec<String>
 /// Phát hiện runtime để load env optimizer dựa trên test runner
 fn detect_test_runtime(
     project_root: &Path,
-) -> crate::commands::optimizer::runtime_detect::DetectedRuntime {
+) -> Result<crate::commands::optimizer::runtime_detect::DetectedRuntime> {
     use crate::commands::optimizer::runtime_detect::{DetectedRuntime, detect_runtimes};
 
-    // Detect core type first
-    let core = if project_root.join(".mgc.core").exists() {
-        std::fs::read_to_string(project_root.join(".mgc.core"))
-            .unwrap_or_default()
-            .trim()
-            .to_string()
-    } else {
-        // Fallback: infer from files
-        if project_root.join("Cargo.toml").exists() {
-            "lib".to_string()
-        } else if project_root.join("pyproject.toml").exists() {
-            // Check if AI project (has torch/pytorch)
-            if let Ok(content) = std::fs::read_to_string(project_root.join("pyproject.toml")) {
-                if content.contains("torch")
-                    || content.contains("pytorch")
-                    || content.contains("[tool.magicore]")
-                {
-                    "ai".to_string()
-                } else {
-                    "lib".to_string()
-                }
-            } else {
-                "lib".to_string()
-            }
-        } else if project_root.join("pubspec.yaml").exists() {
-            "app".to_string()
-        } else if project_root.join("package.json").exists() {
-            "web".to_string()
-        } else {
-            "lib".to_string()
-        }
-    };
+    let core = detect_test_core(project_root)?;
 
     // Use detect_runtimes from optimizer (core-aware)
     let runtimes = detect_runtimes(project_root, &core);
-    runtimes
+    Ok(runtimes
         .first()
         .cloned()
-        .unwrap_or(DetectedRuntime::Unknown)
+        .unwrap_or(DetectedRuntime::Unknown))
+}
+
+/// Use the shared fail-closed marker reader before applying legacy manifest inference.
+/// Dùng chung marker reader fail-closed trước khi suy luận từ manifest cũ.
+fn detect_test_core(project_root: &Path) -> Result<String> {
+    if let Some(core) = mgc_config::project::ProjectConfig::read_core_marker(project_root)? {
+        return Ok(core);
+    }
+
+    // Fallback for unmarked legacy projects. — Dự phòng cho project cũ chưa có marker.
+    let read_manifest =
+        |name: &str| mgc_config::project::read_regular_project_text(&project_root.join(name), name);
+    let core = if read_manifest("Cargo.toml")?.is_some() {
+        "lib"
+    } else if let Some(content) = read_manifest("pyproject.toml")? {
+        if content.contains("torch")
+            || content.contains("pytorch")
+            || content.contains("[tool.magicore]")
+        {
+            "ai"
+        } else {
+            "lib"
+        }
+    } else if read_manifest("pubspec.yaml")?.is_some() {
+        "app"
+    } else if read_manifest("package.json")?.is_some() {
+        "web"
+    } else {
+        "lib"
+    };
+    Ok(core.to_string())
 }
 
 /// Resolve test script from mgc.toml — lấy test script từ mgc.toml
 fn resolve_mgc_toml_script(path: &Path, script: &str) -> Result<Option<String>> {
-    let content = std::fs::read_to_string(path)?;
+    let Some(content) = mgc_config::project::read_regular_project_text(path, "project config")?
+    else {
+        return Ok(None);
+    };
     let toml: toml::Value = toml::from_str(&content)?;
     Ok(toml
         .get("scripts")
@@ -300,9 +295,16 @@ fn resolve_mgc_toml_script(path: &Path, script: &str) -> Result<Option<String>> 
         .map(|s| s.to_string()))
 }
 
+fn read_project_manifest(project_root: &Path, name: &str) -> Result<Option<String>> {
+    mgc_config::project::read_regular_project_text(&project_root.join(name), name)
+}
+
 /// Resolve test script from package.json — lấy test script từ package.json
 fn resolve_package_json_script(path: &Path, script: &str) -> Result<Option<String>> {
-    let content = std::fs::read_to_string(path)?;
+    let Some(content) = mgc_config::project::read_regular_project_text(path, "package manifest")?
+    else {
+        return Ok(None);
+    };
     let manifest: serde_json::Value = serde_json::from_str(&content)?;
     Ok(manifest
         .get("scripts")

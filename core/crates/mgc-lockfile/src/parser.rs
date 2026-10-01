@@ -5,12 +5,132 @@ use crate::{LOCKFILE_SCHEMA_VERSION, Lockfile, LockfileError, LockfileResult, Si
 use mgc_crypto::blake3_signer::Blake3Hasher;
 use mgc_crypto::ed25519_signer::{Ed25519PublicKey, Ed25519Signature, verify_signature};
 use std::path::Path;
+use std::{fs::OpenOptions, io::Read};
+
+const MAX_LOCKFILE_SIZE: u64 = 10 * 1024 * 1024;
+const MAX_SIGNATURE_FILE_SIZE: u64 = 64 * 1024;
+
+/// Parsed lock document without discarding schema-specific identity.
+/// Tài liệu lock đã parse, giữ nguyên identity theo schema.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LockDocument {
+    Legacy(Lockfile),
+    V4(crate::canonical::LockfileV4),
+}
+
+/// Read a regular file without following links, bounded by a caller-supplied byte limit.
+/// Đọc file thường, từ chối đi theo link và giới hạn theo số byte caller cung cấp.
+pub fn read_bounded_regular_file(
+    path: &Path,
+    max_size: u64,
+    label: &str,
+) -> LockfileResult<Vec<u8>> {
+    let read_limit = max_size
+        .checked_add(1)
+        .ok_or_else(|| LockfileError::ParseError(format!("{label} size limit is too large")))?;
+    let max_capacity = usize::try_from(max_size)
+        .ok()
+        .filter(|capacity| *capacity < usize::MAX)
+        .ok_or_else(|| {
+            LockfileError::ParseError(format!("{label} size limit exceeds addressable memory"))
+        })?;
+    let path_metadata = std::fs::symlink_metadata(path)?;
+    if path_metadata.file_type().is_symlink() || !path_metadata.is_file() {
+        return Err(LockfileError::ParseError(format!(
+            "{label} '{}' must be a regular non-symlink file",
+            path.display()
+        )));
+    }
+    if path_metadata.len() > max_size {
+        return Err(LockfileError::ParseError(format!(
+            "{label} too large: {} bytes (max {})",
+            path_metadata.len(),
+            max_size
+        )));
+    }
+
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    let file = options.open(path)?;
+    let opened_metadata = file.metadata()?;
+    if !opened_metadata.is_file() {
+        return Err(LockfileError::ParseError(format!(
+            "{label} '{}' is not a regular file",
+            path.display()
+        )));
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+        if opened_metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(LockfileError::ParseError(format!(
+                "{label} '{}' must not be a reparse point",
+                path.display()
+            )));
+        }
+    }
+    if opened_metadata.len() > max_size {
+        return Err(LockfileError::ParseError(format!(
+            "{label} too large: {} bytes (max {})",
+            opened_metadata.len(),
+            max_size
+        )));
+    }
+
+    let capacity = usize::try_from(opened_metadata.len())
+        .ok()
+        .filter(|capacity| *capacity <= max_capacity)
+        .ok_or_else(|| {
+            LockfileError::ParseError(format!("{label} size exceeds addressable memory"))
+        })?;
+    let mut bytes = Vec::with_capacity(capacity);
+    file.take(read_limit).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > max_size {
+        return Err(LockfileError::ParseError(format!(
+            "{label} too large: more than {max_size} bytes"
+        )));
+    }
+    Ok(bytes)
+}
+
+/// Read the canonical MGC lockfile bytes with a fixed size limit and a
+/// no-follow regular-file check. Use this for every production read of
+/// `mgc.lock`, including consumers that need a legacy-format fallback.
+/// (Đọc mgc.lock có giới hạn cố định, từ chối symlink và file không thường.)
+pub fn read_lockfile_bytes(path: &Path) -> LockfileResult<Vec<u8>> {
+    read_bounded_regular_file(path, MAX_LOCKFILE_SIZE, "lockfile")
+}
+
+/// Read a lock signature sidecar with no-follow checks and its smaller limit.
+pub fn read_signature_file_bytes(path: &Path) -> LockfileResult<Vec<u8>> {
+    read_bounded_regular_file(path, MAX_SIGNATURE_FILE_SIZE, "signature file")
+}
 
 /// Parse lockfile from TOML string — Parse lockfile từ chuỗi TOML
 pub fn parse_lockfile(toml_str: &str) -> LockfileResult<Lockfile> {
-    let lockfile: Lockfile = toml::from_str(toml_str)
+    let value: toml::Value = toml::from_str(toml_str)
         .map_err(|e| LockfileError::ParseError(format!("TOML parse failed: {}", e)))?;
+    parse_legacy_value(value)
+}
 
+/// Deserialize a legacy schema from an already parsed TOML value.
+/// Parse schema legacy từ TOML value đã được đọc một lần.
+fn parse_legacy_value(value: toml::Value) -> LockfileResult<Lockfile> {
+    let lockfile: Lockfile = value
+        .try_into()
+        .map_err(|error| LockfileError::ParseError(format!("TOML parse failed: {error}")))?;
     // Validate version: v2 stays readable (new fields fall back to their
     // serde defaults), v3 is the canonical write target.
     // Kiểm tra version: v2 vẫn đọc được (field mới về mặc định serde),
@@ -25,22 +145,62 @@ pub fn parse_lockfile(toml_str: &str) -> LockfileResult<Lockfile> {
     Ok(lockfile)
 }
 
+/// Dispatch TOML lockfiles by their declared schema version.
+/// Do not deserialize v4 into the legacy `(name, version)` model.
+/// Chọn parser theo version; không ép v4 vào model legacy.
+pub fn parse_document(toml_str: &str) -> LockfileResult<LockDocument> {
+    let value: toml::Value = toml::from_str(toml_str)
+        .map_err(|error| LockfileError::ParseError(format!("TOML parse failed: {error}")))?;
+    let version = value
+        .get("version")
+        .and_then(toml::Value::as_str)
+        .ok_or_else(|| LockfileError::ParseError("missing lockfile version".to_string()))?
+        .to_string();
+
+    match version.as_str() {
+        "4" => {
+            let lock: crate::canonical::LockfileV4 = value.try_into().map_err(|error| {
+                LockfileError::ParseError(format!("TOML parse failed: {error}"))
+            })?;
+            if lock.version != crate::v4::LOCKFILE_SCHEMA_V4 {
+                return Err(LockfileError::ParseError(format!(
+                    "expected v4 lockfile, got version '{}'",
+                    lock.version
+                )));
+            }
+            Ok(LockDocument::V4(lock))
+        }
+        "2" | LOCKFILE_SCHEMA_VERSION => parse_legacy_value(value).map(LockDocument::Legacy),
+        other => Err(LockfileError::ParseError(format!(
+            "unsupported lockfile version: {other}"
+        ))),
+    }
+}
+
+/// Load a lock document while preserving the schema-specific representation.
+/// Nạp lock và giữ nguyên model riêng của từng schema.
+pub fn load_lock_document(path: &Path) -> LockfileResult<LockDocument> {
+    let bytes = read_lockfile_bytes(path)?;
+    let content = std::str::from_utf8(&bytes)
+        .map_err(|error| LockfileError::ParseError(format!("invalid UTF-8: {error}")))?;
+    parse_document(content)
+}
+
+/// Require the legacy API model without silently flattening v4 identity.
+/// Chỉ nhận model legacy, không ép identity v4 vào schema cũ.
+fn require_legacy_document(document: LockDocument) -> LockfileResult<Lockfile> {
+    match document {
+        LockDocument::Legacy(lockfile) => Ok(lockfile),
+        LockDocument::V4(_) => Err(LockfileError::ParseError(
+            "v4 lockfile requires the lossless LockDocument API; legacy Lockfile cannot preserve v4 package identities"
+                .to_string(),
+        )),
+    }
+}
+
 /// Load lockfile from file — Load lockfile từ file
 pub fn load_lockfile(path: &Path) -> LockfileResult<Lockfile> {
-    // L3 FIX: Limit lockfile size to prevent DoS (max 10MB)
-    const MAX_LOCKFILE_SIZE: u64 = 10 * 1024 * 1024; // 10MB
-
-    let metadata = std::fs::metadata(path)?;
-    if metadata.len() > MAX_LOCKFILE_SIZE {
-        return Err(LockfileError::ParseError(format!(
-            "lockfile too large: {} bytes (max {})",
-            metadata.len(),
-            MAX_LOCKFILE_SIZE
-        )));
-    }
-
-    let content = std::fs::read_to_string(path)?;
-    parse_lockfile(&content)
+    require_legacy_document(load_lock_document(path)?)
 }
 
 /// Load and verify lockfile with signature — Load và verify lockfile với chữ ký
@@ -48,22 +208,14 @@ pub fn load_and_verify_lockfile(
     lockfile_path: &Path,
     signature_path: &Path,
 ) -> LockfileResult<Lockfile> {
-    // Load lockfile
-    let lockfile_bytes = std::fs::read(lockfile_path)?;
-    // L8 FIX: Graceful UTF-8 handling (không panic)
+    let lockfile_bytes = read_bounded_regular_file(lockfile_path, MAX_LOCKFILE_SIZE, "lockfile")?;
     let lockfile_str = std::str::from_utf8(&lockfile_bytes)
         .map_err(|e| LockfileError::ParseError(format!("invalid UTF-8: {}", e)))?;
-    let lockfile = parse_lockfile(lockfile_str)?;
+    let lockfile = require_legacy_document(parse_document(lockfile_str)?)?;
 
-    // Check if signature file exists
-    if !signature_path.exists() {
-        return Err(LockfileError::VerificationFailed(
-            "signature file not found".to_string(),
-        ));
-    }
-
-    // Load signature file
-    let sig_content = std::fs::read_to_string(signature_path)?;
+    let signature_bytes = read_signature_file_bytes(signature_path)?;
+    let sig_content = std::str::from_utf8(&signature_bytes)
+        .map_err(|e| LockfileError::ParseError(format!("invalid signature UTF-8: {e}")))?;
     let sig_file: SignatureFile = sig_content
         .parse()
         .map_err(LockfileError::InvalidSignatureFile)?;
@@ -115,9 +267,22 @@ pub fn load_and_verify_lockfile(
 }
 
 /// Check if lockfile is signed (signature file exists) — Kiểm tra lockfile đã ký chưa
+#[deprecated(note = "use signature_file_presence to distinguish missing from invalid paths")]
 pub fn is_lockfile_signed(lockfile_path: &Path) -> bool {
+    signature_file_presence(lockfile_path).unwrap_or(false)
+}
+
+/// Fallible signature-sidecar probe that distinguishes absence from an
+/// invalid path, symlink, or metadata error.
+pub fn signature_file_presence(lockfile_path: &Path) -> LockfileResult<bool> {
     let sig_path = signature_path_for(lockfile_path);
-    sig_path.exists()
+    match read_signature_file_bytes(&sig_path) {
+        Ok(_) => Ok(true),
+        Err(LockfileError::IoError(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(false)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// Get signature path for lockfile — Lấy đường dẫn signature cho lockfile

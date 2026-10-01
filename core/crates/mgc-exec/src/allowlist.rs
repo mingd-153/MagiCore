@@ -20,7 +20,8 @@ use std::path::Path;
 
 /// Execution scope — determines security policy for tool execution.
 /// Install scope: HIGH RISK (arbitrary package fetch, transitive deps).
-/// TestRunner/BuildRunner/DevServer: MEDIUM RISK (project-local scripts only).
+/// Test/build/dev: MEDIUM RISK; DeviceControl: explicit attached-device control.
+/// Test/build/dev: rủi ro trung bình; DeviceControl: quyền điều khiển thiết bị riêng.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecutionScope {
     /// HIGH RISK: Package installation, fetch from registry, install scripts.
@@ -35,6 +36,10 @@ pub enum ExecutionScope {
 
     /// Dev server execution; package managers remain forbidden.
     DevServer,
+
+    /// Explicit control of a local development device or emulator.
+    /// Điều khiển thiết bị hoặc emulator cục bộ trong luồng phát triển.
+    DeviceControl,
 }
 
 /// Scope constraints — security policy per execution scope.
@@ -69,7 +74,8 @@ impl ExecutionScope {
             },
             ExecutionScope::TestRunner
             | ExecutionScope::BuildRunner
-            | ExecutionScope::DevServer => ScopeConstraints {
+            | ExecutionScope::DevServer
+            | ExecutionScope::DeviceControl => ScopeConstraints {
                 cwd_locked: true,        // Must run in project root
                 no_network: false,       // Tests may need network (integration tests)
                 no_arbitrary_args: true, // Only predefined commands
@@ -96,6 +102,9 @@ pub struct ScriptInvocation {
 /// Mỗi core khai báo subset; thêm tool phải review + ghi lý do.
 pub const ALLOWED_TOOLS: &[&str] = &[
     "python3",
+    // Android Debug Bridge is restricted to the dedicated DeviceControl scope.
+    // ADB chỉ được dùng trong scope DeviceControl riêng, không phải scope dev chung.
+    "adb",
     "pytest", // AI test runner
     // TypeScript compiler (lib/ts + web test lanes, P0 finding
     // 2026-09-12): `tsc --noEmit` is the scaffold's own typecheck test
@@ -237,6 +246,12 @@ pub fn check_tool_with_scope_compat(
         );
     }
 
+    // ADB can affect attached devices; require the narrow device-control scope.
+    // ADB có thể tác động thiết bị thật; bắt buộc dùng scope điều khiển riêng.
+    if normalized == "adb" && scope != ExecutionScope::DeviceControl {
+        bail!("tool 'adb' is only allowed in DeviceControl scope");
+    }
+
     // Non-PM tools: check against general allowlist
     if !ALLOWED_TOOLS.contains(&normalized.as_str()) {
         bail!(
@@ -296,8 +311,17 @@ pub fn is_react_native_subdir(cwd: Option<&Path>) -> bool {
 /// Find forbidden package-manager tools anywhere in a shell-ish script.
 /// Tìm tool PM bị cấm trong toàn bộ script, không chỉ token đầu tiên.
 pub fn find_forbidden_tool_in_script(script: &str) -> Option<&'static str> {
+    // Scan identifier boundaries inside inline code and quoted command strings,
+    // not only shell whitespace; ambiguous mentions fail closed intentionally.
+    // Quét ranh giới identifier cả trong code/chuỗi; trường hợp mơ hồ chủ động chặn.
     script
-        .split(|c: char| c.is_whitespace() || matches!(c, ';' | '&' | '|' | '(' | ')' | '<' | '>'))
+        .split(|c: char| {
+            c.is_whitespace()
+                || matches!(
+                    c,
+                    ';' | '&' | '|' | '(' | ')' | '<' | '>' | '\'' | '"' | '`' | '='
+                )
+        })
         .filter_map(normalize_script_token)
         .find_map(|token| {
             FORBIDDEN_TOOLS
@@ -414,9 +438,22 @@ fn normalize_script_token(token: &str) -> Option<String> {
         .or_else(|| base.strip_suffix(".exe"))
         .or_else(|| base.strip_suffix(".bat"))
         .or_else(|| base.strip_suffix(".ps1"))
+        .or_else(|| base.strip_suffix(".cjs"))
+        .or_else(|| base.strip_suffix(".mjs"))
+        .or_else(|| base.strip_suffix(".js"))
+        .or_else(|| base.strip_suffix(".phar"))
         .unwrap_or(&base)
         .to_string();
-    Some(base)
+    // Recognize common executable entrypoint filenames passed through a
+    // language runtime, not just direct package-manager commands.
+    // Nhận diện entrypoint phổ biến chạy qua runtime, không chỉ lệnh gọi trực tiếp.
+    Some(match base.as_str() {
+        "npm-cli" => "npm".to_string(),
+        "pnpm-cli" => "pnpm".to_string(),
+        "yarn-cli" => "yarn".to_string(),
+        "bun-cli" => "bun".to_string(),
+        other => other.to_string(),
+    })
 }
 
 fn is_env_assignment(token: &str) -> bool {

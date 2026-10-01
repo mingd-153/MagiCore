@@ -10,6 +10,12 @@ use mgc_types::package::{PackageId, PackageName, VersionRange};
 /// Cargo.toml parse/write helpers — shared by lib (rust), game (bevy), iot (esp32-rust) cores.
 pub mod cargo_manifest;
 
+/// Secure read/replace primitives for package manifests in project roots.
+/// Native adapter writers should use these instead of `read_to_string` plus
+/// `fs::write`, which follow final-component symlinks and can truncate files
+/// before an error is observed.
+pub mod project_file;
+
 /// BaseAdapter — safe shared manifest removal helper.
 ///
 /// Each ecosystem adapter must implement both `PackageAdapter` and `BaseAdapter`.

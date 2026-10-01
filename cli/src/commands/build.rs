@@ -19,12 +19,10 @@ pub async fn run(
     target: Option<String>,
     compat_runtime: Option<&str>,
 ) -> Result<()> {
-    // Native-engine gate (2026-09-10): validate cờ compat sớm — build
-    // mặc định là engine native, sai giá trị cờ fail trước khi động fs.
-    // F-C fix (2026-09-10 audit): CompatMode được GIỮ và truyền xuống
-    // framework-build lane — script build program là runtime đối thủ
-    // phải qua gate (native từ chối, compat tường minh mới mở).
+    // Reject legacy rival-runtime flags before project discovery for every core.
+    // (Từ chối cờ runtime đối thủ trước khi dò project, áp dụng đồng nhất mọi core.)
     let compat = crate::commands::compat::CompatMode::from_flag(compat_runtime)?;
+    ensure_native_build_mode(&compat)?;
     let root = find_root()?;
 
     if !mgc_ui::is_quiet() {
@@ -33,7 +31,7 @@ pub async fn run(
     }
     info(&format!("Project root: {}", root.display()));
 
-    if root.join("Cargo.toml").exists() && !root.join(".mgc.core").exists() {
+    if should_use_legacy_rust_build(&root)? {
         // Load optimizer env for standalone Rust projects
         // Tải env optimizer cho Rust project độc lập
         let runtime = crate::commands::optimizer::runtime_detect::DetectedRuntime::RustLib;
@@ -83,16 +81,47 @@ pub async fn run(
     }
 }
 
+/// Build is a MagiCore-owned route; historical rival-runtime flags are refused.
+/// (Build thuộc luồng MagiCore; cờ runtime đối thủ cũ luôn bị từ chối.)
+fn ensure_native_build_mode(mode: &crate::commands::compat::CompatMode) -> Result<()> {
+    match mode {
+        crate::commands::compat::CompatMode::Native => Ok(()),
+        crate::commands::compat::CompatMode::Explicit(runtime) => {
+            Err(crate::error::rival_runtime_not_native(runtime))
+        }
+    }
+}
+
+/// Keep the legacy Cargo build lane only for a plain, unmarked Rust project.
+/// Chỉ dùng nhánh Cargo legacy cho Rust project thuần, chưa có identity MagiCore.
+fn should_use_legacy_rust_build(root: &Path) -> Result<bool> {
+    let detected = mgc_config::project::ProjectConfig::detect_core(root)?;
+    if detected.as_deref() != Some("lib") {
+        return Ok(false);
+    }
+    let has_config =
+        mgc_config::project::read_regular_project_text(&root.join("mgc.toml"), "project config")?
+            .is_some();
+    let has_marker = mgc_config::project::ProjectConfig::read_core_marker(root)?.is_some();
+    Ok(!has_config && !has_marker)
+}
+
+/// A build backend selector accepts only regular project manifests.
+/// Chỉ cho bộ chọn backend nhận manifest là file thường, không theo symlink.
+fn project_manifest_present(root: &Path, name: &str) -> Result<bool> {
+    Ok(mgc_config::project::read_regular_project_text(&root.join(name), name)?.is_some())
+}
+
 /// Build an AI project with its native language toolchain — build project AI bằng toolchain gốc.
 #[cfg(feature = "ai")]
 async fn build_ai(root: &Path) -> Result<()> {
     use crate::commands::optimizer::runtime_detect::DetectedRuntime;
 
-    let runtime = if root.join("pyproject.toml").exists() {
+    let runtime = if project_manifest_present(root, "pyproject.toml")? {
         DetectedRuntime::PythonPyTorch
-    } else if root.join("Cargo.toml").exists() {
+    } else if project_manifest_present(root, "Cargo.toml")? {
         DetectedRuntime::RustCandle
-    } else if root.join("go.mod").exists() {
+    } else if project_manifest_present(root, "go.mod")? {
         DetectedRuntime::GoTensorFlow
     } else {
         return Err(crate::error::no_framework_detected("ai build", root));
@@ -111,7 +140,8 @@ async fn build_ai(root: &Path) -> Result<()> {
                 return Err(crate::error::build_toolchain_missing(python));
             }
             info("Building Python AI package: python -m build");
-            let env = optimizer_envs.into_iter().collect::<Vec<_>>();
+            let mut env = optimizer_envs.into_iter().collect::<Vec<_>>();
+            crate::commands::python_runtime::extend_native_python_env(&mut env, root, false)?;
             let env = (!env.is_empty()).then_some(env);
             run_allowlisted_tool_with_env(root, python, &["-m", "build", "--no-isolation"], env)
                 .map_err(|error| crate::error::python_build_failed(&error))?;
@@ -175,23 +205,25 @@ async fn build_game(root: &Path) -> Result<()> {
     }
 }
 
-/// IoT build (04 §5): esp32-rust → cargo (build_rust); platformio → pio run;
-/// zephyr → west build. Toolchain thiếu → cảnh báo + hướng cài (04: không tự tải P1).
+/// IoT build supports the MagiCore Rust lane only; provider builders may
+/// perform dependency resolution and are not native MagiCore build backends.
+/// IoT chỉ hỗ trợ lane Rust của MagiCore; builder ngoài có thể tự resolve
+/// dependency nên không được coi là backend build native.
 #[cfg(feature = "iot")]
 async fn build_iot(root: &Path) -> Result<()> {
-    if root.join("platformio.ini").exists() {
-        if tool_unavailable("pio") {
-            return Err(crate::error::build_toolchain_missing("pio"));
-        }
-        return run_allowlisted_tool(root, "pio", &["run"]);
+    if project_manifest_present(root, "platformio.ini")? {
+        return Err(crate::error::build_not_supported(
+            "iot/platformio",
+            "MagiCore has no native PlatformIO build backend; refusing to invoke `pio run`, which may resolve or install dependencies",
+        ));
     }
-    if root.join("west.yml").exists() {
-        if tool_unavailable("west") {
-            return Err(crate::error::build_toolchain_missing("west"));
-        }
-        return run_allowlisted_tool(root, "west", &["build", "-b", "native_sim"]);
+    if project_manifest_present(root, "west.yml")? {
+        return Err(crate::error::build_not_supported(
+            "iot/zephyr",
+            "MagiCore has no native Zephyr build backend; refusing to invoke `west build`, which may resolve or install dependencies",
+        ));
     }
-    if root.join("Cargo.toml").exists() {
+    if project_manifest_present(root, "Cargo.toml")? {
         // esp32-rust: build_rust with optimizer env
         // esp32-rust: build với env optimizer
         if tool_unavailable("cargo") {
@@ -215,18 +247,20 @@ async fn build_iot(root: &Path) -> Result<()> {
 /// First `*.csproj` directly inside the project root (SDK-style layout).
 /// (File `*.csproj` đầu tiên ngay trong root project.)
 #[cfg(feature = "lib")]
-fn find_local_csproj(root: &std::path::Path) -> Option<std::path::PathBuf> {
-    std::fs::read_dir(root)
-        .ok()?
-        .filter_map(|entry| {
-            let path = entry.ok()?.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("csproj") {
-                Some(path)
-            } else {
-                None
-            }
-        })
-        .next()
+fn find_local_csproj(root: &std::path::Path) -> Result<Option<std::path::PathBuf>> {
+    for entry in std::fs::read_dir(root)? {
+        let path = entry?.path();
+        if path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("csproj"))
+            && mgc_config::project::read_regular_project_text(&path, "C# project manifest")?
+                .is_some()
+        {
+            return Ok(Some(path));
+        }
+    }
+    Ok(None)
 }
 
 /// Lib build (09 §5): rust → cargo; ts → tsc qua node_modules/.bin (npm-format,
@@ -242,10 +276,10 @@ async fn build_lib(root: &Path) -> Result<()> {
             e
         })
         .unwrap_or_default();
-    if root.join("Cargo.toml").exists() {
+    if project_manifest_present(root, "Cargo.toml")? {
         return build_rust_with_env(root, optimizer_envs);
     }
-    if root.join("pyproject.toml").exists() {
+    if project_manifest_present(root, "pyproject.toml")? {
         let python = python_cmd();
         if tool_unavailable(python) {
             return Err(crate::error::build_toolchain_missing(python));
@@ -267,7 +301,7 @@ async fn build_lib(root: &Path) -> Result<()> {
     // Go modules build through the go toolchain (mgc owns
     // resolve/fetch/install; compilation stays toolchain territory,
     // same split as the ai GoTensorFlow lane).
-    if root.join("go.mod").exists() {
+    if project_manifest_present(root, "go.mod")? {
         if tool_unavailable("go") {
             return Err(crate::error::build_toolchain_missing("go"));
         }
@@ -284,7 +318,7 @@ async fn build_lib(root: &Path) -> Result<()> {
     }
     // .NET: dotnet SDK build (toolchain-gated; absent SDK fails closed
     // with guidance instead of a false native claim).
-    if find_local_csproj(root).is_some() {
+    if find_local_csproj(root)?.is_some() {
         if tool_unavailable("dotnet") {
             return Err(crate::error::build_toolchain_missing("dotnet"));
         }
@@ -293,6 +327,9 @@ async fn build_lib(root: &Path) -> Result<()> {
         let env_opt = if env.is_empty() { None } else { Some(env) };
         return run_allowlisted_tool_with_env(root, "dotnet", &["build", "--no-restore"], env_opt)
             .map_err(|e| crate::error::dotnet_build_failed(&e));
+    }
+    if has_java_build_manifest(root)? {
+        return Err(crate::error::java_build_backend_unavailable(root));
     }
     let tsc = root.join("node_modules").join(".bin").join("tsc");
     // Windows: tsc resolves via the tsc.cmd shim (npm-style .bin layout).
@@ -333,37 +370,52 @@ async fn build_lib(root: &Path) -> Result<()> {
     ))
 }
 
-/// Hardware build: platformio (pio run) — chung cơ chế với iot.
+/// Detect Java build descriptors before the TypeScript fallback.
+/// Nhận diện build descriptor Java trước nhánh fallback TypeScript.
+#[cfg(feature = "lib")]
+fn has_java_build_manifest(root: &Path) -> Result<bool> {
+    [
+        "pom.xml",
+        "build.gradle",
+        "build.gradle.kts",
+        "settings.gradle",
+        "settings.gradle.kts",
+    ]
+    .iter()
+    .try_fold(false, |found, name| {
+        if found {
+            Ok(true)
+        } else {
+            project_manifest_present(root, name)
+        }
+    })
+}
+
+/// Hardware PlatformIO projects require a MagiCore-owned build backend.
+/// Project PlatformIO của Hardware cần backend build do MagiCore sở hữu.
 #[cfg(feature = "hardware")]
 async fn build_hardware(root: &Path) -> Result<()> {
-    if root.join("platformio.ini").exists() {
-        if tool_unavailable("pio") {
-            return Err(crate::error::build_toolchain_missing("pio"));
-        }
-        return run_allowlisted_tool(root, "pio", &["run"]);
+    if project_manifest_present(root, "platformio.ini")? {
+        return Err(crate::error::build_not_supported(
+            "hardware/platformio",
+            "MagiCore has no native PlatformIO build backend; refusing to invoke `pio run`, which may resolve or install dependencies",
+        ));
     }
     Err(crate::error::no_framework_detected("hardware", root))
 }
 
-/// C9 — build app: single framework passthrough hoặc multi-platform (shared + platforms).
-/// Fail-closed: platform thiếu toolchain → cảnh báo + skip, không fail cả project.
+/// C9 — build app: single framework or all selected multi-platform targets.
+/// Missing, unknown, or unsupported targets make the aggregate build fail.
 #[cfg(feature = "app")]
 async fn build_app(root: &Path) -> Result<()> {
-    let mgc_toml = std::fs::read_to_string(root.join("mgc.toml")).ok();
-    let v: Option<toml::Value> = mgc_toml.as_deref().and_then(|cfg| toml::from_str(cfg).ok());
-    let language = v
-        .as_ref()
-        .and_then(|v| v.get("app"))
-        .and_then(|a| a.get("language"))
-        .and_then(|l| l.as_str())
-        .or_else(|| infer_app_language(root))
-        .unwrap_or("flutter");
+    let config = read_app_build_config(root)?;
+    let language = resolve_app_language_from_config(root, config.as_ref())?;
 
     // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
     if language == "multi"
-        && let Some(v) = v
+        && let Some(v) = config.as_ref()
     {
-        return build_multi_app(root, &v);
+        return build_multi_app(root, v);
     }
 
     // Load optimizer env for app runtime
@@ -399,55 +451,95 @@ async fn build_app(root: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Resolve an App build target without guessing a default runtime. An invalid
+/// project config or an unknown explicit language must not silently route a
+/// project into Flutter's external build toolchain.
+/// Không đoán runtime mặc định; config hỏng/không biết ngôn ngữ không được
+/// âm thầm chạy Flutter.
+#[cfg(all(test, feature = "app"))]
+fn resolve_app_language(root: &Path) -> Result<&'static str> {
+    let config = read_app_build_config(root)?;
+    resolve_app_language_from_config(root, config.as_ref())
+}
+
 #[cfg(feature = "app")]
-fn infer_app_language(root: &Path) -> Option<&'static str> {
-    if root.join("Package.swift").exists() {
-        Some("swift")
-    } else if root.join("settings.gradle.kts").exists() || root.join("build.gradle.kts").exists() {
-        Some("kotlin")
-    } else if root.join("pubspec.yaml").exists() {
-        Some("flutter")
-    } else {
-        None
+fn read_app_build_config(root: &Path) -> Result<Option<toml::Value>> {
+    let path = root.join("mgc.toml");
+    match mgc_config::project::read_regular_project_text(&path, "project config") {
+        Ok(Some(contents)) => Ok(Some(
+            toml::from_str::<toml::Value>(&contents)
+                .map_err(|error| crate::error::app_build_config_invalid(&path, &error))?,
+        )),
+        Ok(None) => Ok(None),
+        Err(error) => Err(crate::error::app_build_config_read_failed(&path, &error)),
+    }
+}
+
+#[cfg(feature = "app")]
+fn resolve_app_language_from_config(
+    root: &Path,
+    config: Option<&toml::Value>,
+) -> Result<&'static str> {
+    if let Some(language) = config
+        .and_then(|value| value.get("app"))
+        .and_then(|app| app.get("language"))
+    {
+        let language = language
+            .as_str()
+            .ok_or_else(|| crate::error::app_build_language_invalid("<non-string>"))?;
+        return match language {
+            "flutter" => Ok("flutter"),
+            "kotlin" => Ok("kotlin"),
+            "swift" => Ok("swift"),
+            "multi" => Ok("multi"),
+            other => Err(crate::error::app_build_language_invalid(other)),
+        };
+    }
+    infer_app_language(root)?
+        .ok_or_else(|| crate::error::no_framework_detected("app language", root))
+}
+
+#[cfg(feature = "app")]
+fn infer_app_language(root: &Path) -> Result<Option<&'static str>> {
+    let candidates = [
+        ("Package.swift", "swift"),
+        ("settings.gradle", "kotlin"),
+        ("settings.gradle.kts", "kotlin"),
+        ("build.gradle", "kotlin"),
+        ("build.gradle.kts", "kotlin"),
+        ("pubspec.yaml", "flutter"),
+    ];
+    let mut found = Vec::new();
+    for (marker, language) in candidates {
+        if project_manifest_present(root, marker)? && !found.contains(&language) {
+            found.push(language);
+        }
+    }
+    match found.as_slice() {
+        [] => Ok(None),
+        [language] => Ok(Some(*language)),
+        _ => Err(crate::error::app_build_language_ambiguous(&found)),
     }
 }
 
 #[cfg(feature = "app")]
 fn build_multi_app(root: &Path, v: &toml::Value) -> Result<()> {
-    let platforms: Vec<String> = v
-        .get("app")
-        .and_then(|a| a.get("platforms"))
-        .and_then(|p| p.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|s| s.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
-    let platforms = if platforms.is_empty() {
-        vec![
-            "android".to_string(),
-            "ios".to_string(),
-            "react-native".to_string(),
-            "flutter".to_string(),
-        ]
-    } else {
-        platforms
-    };
+    // Validate every configured target before invoking any toolchain.
+    // Kiểm tra toàn bộ target trước khi gọi bất kỳ toolchain nào.
+    let platforms = resolve_multi_platforms(v)?;
 
     let mut built = 0;
+    let mut skipped = Vec::new();
     for platform in &platforms {
         let dir = root.join(platform);
         if !dir.exists() {
-            mgc_ui::warning(&format!(
-                "Platform '{platform}' has no directory — skipping"
-            ));
+            skipped.push(format!("{platform} (directory missing)"));
             continue;
         }
         match platform.as_str() {
             "android" => {
                 if tool_unavailable("gradle") {
-                    mgc_ui::warning("gradle not found — skipping android build");
+                    skipped.push("android (gradle not found)".to_string());
                     continue;
                 }
                 run_allowlisted_tool(&dir, "gradle", &["build", "--offline"])?;
@@ -455,7 +547,7 @@ fn build_multi_app(root: &Path, v: &toml::Value) -> Result<()> {
             }
             "ios" => {
                 if tool_unavailable("swift") {
-                    mgc_ui::warning("swift not found — skipping ios build");
+                    skipped.push("ios (swift not found)".to_string());
                     continue;
                 }
                 run_allowlisted_tool(
@@ -466,13 +558,11 @@ fn build_multi_app(root: &Path, v: &toml::Value) -> Result<()> {
                 built += 1;
             }
             "react-native" => {
-                mgc_ui::warning(
-                    "react-native build is blocked in beta until the MagiCore-native app runner is available",
-                );
+                skipped.push("react-native (native runner unavailable)".to_string());
             }
             "flutter" => {
                 if tool_unavailable("flutter") {
-                    mgc_ui::warning("flutter not found — skipping flutter build");
+                    skipped.push("flutter (flutter toolchain not found)".to_string());
                     continue;
                 }
                 // `flutter build` without a target exits 2 ("Missing
@@ -488,8 +578,58 @@ fn build_multi_app(root: &Path, v: &toml::Value) -> Result<()> {
                 run_allowlisted_tool(&dir, "flutter", &["build", "web", "--no-pub"])?;
                 built += 1;
             }
-            other => mgc_ui::warning(&format!("Unknown platform '{other}' — skipping")),
+            other => skipped.push(format!("{other} (unknown platform)")),
         }
+    }
+    finish_multi_build(built, &skipped)
+}
+
+#[cfg(feature = "app")]
+fn resolve_multi_platforms(config: &toml::Value) -> Result<Vec<String>> {
+    let Some(value) = config.get("app").and_then(|app| app.get("platforms")) else {
+        return Ok(["android", "ios", "react-native", "flutter"]
+            .into_iter()
+            .map(String::from)
+            .collect());
+    };
+
+    let Some(platforms) = value.as_array() else {
+        return Err(crate::error::app_build_platforms_invalid(
+            "expected an array of platform names",
+        ));
+    };
+    if platforms.is_empty() {
+        return Err(crate::error::app_build_platforms_invalid(
+            "the explicit platform list must not be empty",
+        ));
+    }
+
+    let mut selected = Vec::with_capacity(platforms.len());
+    for (index, platform) in platforms.iter().enumerate() {
+        let Some(platform) = platform.as_str() else {
+            return Err(crate::error::app_build_platforms_invalid(&format!(
+                "entry {index} must be a string"
+            )));
+        };
+        if !["android", "ios", "react-native", "flutter"].contains(&platform) {
+            return Err(crate::error::app_build_platforms_invalid(&format!(
+                "unknown platform '{platform}' at entry {index}"
+            )));
+        }
+        if selected.iter().any(|existing| existing == platform) {
+            return Err(crate::error::app_build_platforms_invalid(&format!(
+                "duplicate platform '{platform}'"
+            )));
+        }
+        selected.push(platform.to_string());
+    }
+    Ok(selected)
+}
+
+#[cfg(feature = "app")]
+fn finish_multi_build(built: usize, skipped: &[String]) -> Result<()> {
+    if !skipped.is_empty() {
+        return Err(crate::error::build_multi_platforms_incomplete(skipped));
     }
     if built == 0 {
         return Err(crate::error::build_no_artifact());

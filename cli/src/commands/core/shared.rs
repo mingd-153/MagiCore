@@ -50,6 +50,28 @@ fn ensure_native_update_owner(native_update: bool) -> Result<()> {
     anyhow::bail!("native MagiCore update engine is unavailable; provider-tool update is disabled")
 }
 
+/// Refuse a core command when the persisted/detected project identity belongs
+/// to another core, even if an adjacent manifest matches this command's lane.
+/// Từ chối lệnh nếu identity project thuộc core khác dù có manifest trùng.
+pub(crate) fn ensure_project_core_identity(root: &Path, expected: &str) -> Result<()> {
+    let detected = mgc_config::project::ProjectConfig::detect_core(root)?;
+    let Some(detected) = detected else {
+        return Err(crate::error::project_core_identity_missing(root, expected));
+    };
+    let expected = if expected == "cloud" { "clo" } else { expected };
+    let detected = if detected == "cloud" {
+        "clo"
+    } else {
+        detected.as_str()
+    };
+    if detected != expected {
+        return Err(crate::error::project_core_identity_mismatch(
+            root, expected, detected,
+        ));
+    }
+    Ok(())
+}
+
 /// Writer-lock acquire timeout: mgc.toml [lock].acquire_timeout_ms,
 /// else 30s (mirrors migrate). A live holder is never robbed — timeout
 /// surfaces LockBusy, never last-writer-wins.
@@ -580,10 +602,13 @@ impl MutationSnapshot {
         op: MutationOperation,
     ) -> Result<Self> {
         let lock_path = root.join("mgc.lock");
-        refuse_project_link(&lock_path)?;
-        let lock_bytes = match std::fs::read(&lock_path) {
+        let lock_bytes = match mgc_lockfile::read_lockfile_bytes(&lock_path) {
             Ok(bytes) => Some(bytes),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(mgc_lockfile::LockfileError::IoError(error))
+                if error.kind() == std::io::ErrorKind::NotFound =>
+            {
+                None
+            }
             Err(e) => {
                 return Err(anyhow::anyhow!(
                     "remove cannot snapshot '{}': {e:#}",
@@ -613,21 +638,6 @@ fn refuse_project_link(path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Read a project file ONLY after refusing link-swaps (P0: recovery
-/// must never follow a planted symlink — validate first, read second).
-/// (Đọc file SAU khi chống link — không bao giờ đọc trước.)
-/// Read a project file ONLY after refusing link-swaps, and (on unix)
-/// opening with O_NOFOLLOW so a final-component swap between the check
-/// and the open still fails instead of redirecting the read. Residual
-/// window: a parent-dir swap in the same instant by an attacker who can
-/// already rewrite project files directly — full dirfd chaining is
-/// tracked as hardening follow-up, not a correctness dependency.
-/// (Đọc sau khi chống link + O_NOFOLLOW lúc mở.)
-fn read_project_file(path: &Path) -> Result<Vec<u8>> {
-    refuse_project_link(path)?;
-    read_project_bytes(path)
-}
-
 /// Open a file for reading with O_NOFOLLOW (unix): a planted
 /// final-component symlink fails the open instead of redirecting.
 /// (Mở đọc có O_NOFOLLOW.)
@@ -639,21 +649,6 @@ fn open_nofollow_read(path: &Path) -> Result<std::fs::File> {
         .custom_flags(libc::O_NOFOLLOW)
         .open(path)
         .map_err(|e| anyhow::anyhow!("cannot open '{}': {e:#}", path.display()))
-}
-
-#[cfg(unix)]
-fn read_project_bytes(path: &Path) -> Result<Vec<u8>> {
-    use std::io::Read;
-    let mut file = open_nofollow_read(path)?;
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)
-        .map_err(|e| anyhow::anyhow!("cannot read '{}': {e:#}", path.display()))?;
-    Ok(bytes)
-}
-
-#[cfg(not(unix))]
-fn read_project_bytes(path: &Path) -> Result<Vec<u8>> {
-    std::fs::read(path).map_err(|e| anyhow::anyhow!("cannot read '{}': {e:#}", path.display()))
 }
 
 fn read_project_string(path: &Path) -> Result<String> {
@@ -1265,7 +1260,7 @@ async fn restore_mutation_snapshot(
                 std::time::Duration::from_secs(60),
             )
             .map_err(|e| anyhow::anyhow!("lock restore failed: {e}"))?;
-            let back = std::fs::read(&lock_path)?;
+            let back = mgc_lockfile::read_lockfile_bytes(&lock_path)?;
             if back != *bytes {
                 return Err(anyhow::anyhow!(
                     "lock restore verify failed: re-read bytes differ from snapshot"
@@ -1386,7 +1381,9 @@ async fn recover_interrupted_remove(
         )
     })?;
     let lock_bytes = if journal.lock_existed {
-        Some(read_project_file(&dir.join("mgc.lock.bak"))?)
+        Some(mgc_lockfile::read_lockfile_bytes(
+            &dir.join("mgc.lock.bak"),
+        )?)
     } else {
         None
     };
@@ -1757,7 +1754,7 @@ async fn install_with_adapter_locked(
         graph,
         summary: _prepared_summary,
         used_lockfile,
-    } = prepare_install_execution(adapter, root, frozen, Some(add_cmd)).await?;
+    } = prepare_install_execution(adapter, root, frozen || opts.offline, Some(add_cmd)).await?;
     profile_install_mark("prepare_install_execution", command_started_at);
     let started_at = std::time::Instant::now();
 
@@ -2173,7 +2170,10 @@ fn load_locked_graph(
     if !lock_matches_manifest(&lock, manifest) {
         return Ok(None);
     }
-    Ok(Some(graph_from_lockfile(&lock)?))
+    if !lock_graph_matches_manifest_closure(&lock, manifest, &owner_core) {
+        return Ok(None);
+    }
+    Ok(Some(graph_from_lockfile(&lock, &owner_core)?))
 }
 
 fn lock_owner_core(project_root: &Path, adapter_name: &str) -> Result<String> {
@@ -2199,6 +2199,224 @@ fn lock_owner_core(project_root: &Path, adapter_name: &str) -> Result<String> {
 
 fn read_checked_lockfile(project_root: &Path) -> Result<Option<Lockfile>> {
     mgc_lockfile::read_lockfile_checked(project_root).map_err(|e| anyhow::anyhow!("{}", e))
+}
+
+/// A lock graph is reusable only when every pin in the active owner slice is
+/// reachable from a manifest root through explicit package/peer edges. An
+/// orphan row must not be allowed to inject an arbitrary artifact URL into an
+/// install merely because the manifest's own direct pins still match.
+/// (Chỉ tái dùng lock khi mọi pin của owner đi tới được từ manifest root;
+/// entry mồ côi không được chèn URL artifact tùy ý vào install.)
+pub(crate) fn lock_graph_matches_manifest_closure(
+    lock: &Lockfile,
+    manifest: &Manifest,
+    owner_core: &str,
+) -> bool {
+    if lock.packages.is_empty() {
+        if manifest.all_dependencies().next().is_none() {
+            return true;
+        }
+        return false;
+    }
+
+    // Build graph indexes once. A per-edge scan of the whole lock would make
+    // validation O(packages × edges), which becomes visible on large graphs.
+    // (Tạo index một lần; tránh quét toàn lock cho từng cạnh ở graph lớn.)
+    type ScopedName = (Option<String>, mgc_lockfile::EcosystemTag, String);
+    type ScopedPackage = (Option<String>, mgc_lockfile::EcosystemTag, String, String);
+    let has_foreign_owner = lock.packages.iter().any(|package| {
+        package
+            .owner_core
+            .as_deref()
+            .is_some_and(|owner| owner != owner_core)
+    });
+    let mut by_name: std::collections::HashMap<String, Vec<usize>> =
+        std::collections::HashMap::new();
+    let mut by_scoped_name: std::collections::HashMap<ScopedName, Vec<usize>> =
+        std::collections::HashMap::new();
+    let mut by_scoped_package: std::collections::HashMap<ScopedPackage, Vec<usize>> =
+        std::collections::HashMap::new();
+    let mut by_owner_package: std::collections::HashMap<
+        (Option<String>, String, String),
+        Vec<usize>,
+    > = std::collections::HashMap::new();
+    for (index, package) in lock.packages.iter().enumerate() {
+        by_name.entry(package.name.clone()).or_default().push(index);
+        by_scoped_name
+            .entry((
+                package.owner_core.clone(),
+                package.ecosystem,
+                package.name.clone(),
+            ))
+            .or_default()
+            .push(index);
+        by_scoped_package
+            .entry((
+                package.owner_core.clone(),
+                package.ecosystem,
+                package.name.clone(),
+                package.version.clone(),
+            ))
+            .or_default()
+            .push(index);
+        by_owner_package
+            .entry((
+                package
+                    .owner_core
+                    .clone()
+                    .or_else(|| (!has_foreign_owner).then(|| owner_core.to_string())),
+                package.name.clone(),
+                package.version.clone(),
+            ))
+            .or_default()
+            .push(index);
+    }
+
+    let belongs_to_owner = |index: usize| {
+        let owner = lock.packages[index].owner_core.as_deref();
+        owner == Some(owner_core) || (owner.is_none() && !has_foreign_owner)
+    };
+
+    // Root pins include ecosystem in new locks. Legacy pins are accepted only
+    // when they identify exactly one package within this owner; ambiguity is
+    // a miss, never an implicit cross-ecosystem selection.
+    // (Root mới có ecosystem; root cũ chỉ nhận khi định danh duy nhất.)
+    let explicit_roots = lock.root_dependencies_by_owner.get(owner_core);
+    let mut root_records = Vec::<(usize, mgc_lockfile::EcosystemTag)>::new();
+    if let Some(roots) = explicit_roots {
+        let mut seen = std::collections::HashSet::new();
+        for root in roots {
+            let parsed_root = mgc_lockfile::parse_root_pin(root);
+            let Ok(id) = PackageId::parse(parsed_root.package_id) else {
+                return false;
+            };
+            let candidates = by_owner_package
+                .get(&(
+                    Some(owner_core.to_string()),
+                    id.name_str().to_string(),
+                    id.version().to_string(),
+                ))
+                .into_iter()
+                .flatten()
+                .copied()
+                .filter(|index| belongs_to_owner(*index))
+                .filter(|index| {
+                    parsed_root
+                        .ecosystem
+                        .is_none_or(|ecosystem| lock.packages[*index].ecosystem == ecosystem)
+                })
+                .collect::<Vec<_>>();
+            let [index] = candidates.as_slice() else {
+                return false;
+            };
+            if !seen.insert(*index) {
+                return false;
+            }
+            root_records.push((*index, lock.packages[*index].ecosystem));
+        }
+    }
+
+    let mut pending = Vec::new();
+    let mut expected_roots = std::collections::HashSet::new();
+    for dependency in manifest.all_dependencies() {
+        let candidates: Vec<_> = if explicit_roots.is_some() {
+            root_records
+                .iter()
+                .map(|(index, _)| *index)
+                .filter(|index| lock.packages[*index].name == dependency.name.as_str())
+                .filter(|index| {
+                    Version::parse(&lock.packages[*index].version)
+                        .is_ok_and(|version| dependency.range.matches(&version))
+                })
+                .collect()
+        } else {
+            by_name
+                .get(dependency.name.as_str())
+                .into_iter()
+                .flatten()
+                .copied()
+                .filter(|index| belongs_to_owner(*index))
+                .filter(|index| {
+                    Version::parse(&lock.packages[*index].version)
+                        .is_ok_and(|version| dependency.range.matches(&version))
+                })
+                .collect()
+        };
+        if candidates.len() != 1 {
+            return false;
+        }
+        let index = candidates[0];
+        expected_roots.insert(index);
+        pending.push(index);
+    }
+
+    // Only enforce exact root-set equality for ecosystems selected by this
+    // manifest. Other ecosystem roots for the same core are sibling lanes and
+    // must not make a valid frozen install fail.
+    // (Chỉ so chính xác root của ecosystem được manifest hiện tại chọn.)
+    let selected_ecosystems = expected_roots
+        .iter()
+        .map(|index| lock.packages[*index].ecosystem)
+        .collect::<std::collections::HashSet<_>>();
+    if selected_ecosystems.is_empty() {
+        return !lock
+            .packages
+            .iter()
+            .enumerate()
+            .any(|(index, _)| belongs_to_owner(index));
+    }
+    if explicit_roots.is_some()
+        && root_records.iter().any(|(index, ecosystem)| {
+            selected_ecosystems.contains(ecosystem) && !expected_roots.contains(index)
+        })
+    {
+        return false;
+    }
+
+    let mut reachable = std::collections::HashSet::new();
+    while let Some(index) = pending.pop() {
+        if !reachable.insert(index) {
+            continue;
+        }
+        let package = &lock.packages[index];
+        let references = package
+            .dependencies
+            .iter()
+            .chain(package.peers.iter().flatten());
+        for reference in references {
+            let candidates = if let Ok(id) = PackageId::parse(reference) {
+                by_scoped_package.get(&(
+                    package.owner_core.clone(),
+                    package.ecosystem,
+                    id.name_str().to_string(),
+                    id.version().to_string(),
+                ))
+            } else {
+                by_scoped_name.get(&(
+                    package.owner_core.clone(),
+                    package.ecosystem,
+                    reference.clone(),
+                ))
+            };
+            let Some([target]) = candidates.map(Vec::as_slice) else {
+                return false;
+            };
+            pending.push(*target);
+        }
+    }
+
+    let expected_packages = lock
+        .packages
+        .iter()
+        .enumerate()
+        .filter(|(index, package)| {
+            belongs_to_owner(*index) && selected_ecosystems.contains(&package.ecosystem)
+        })
+        .count();
+    if reachable.len() != expected_packages {
+        return false;
+    }
+    true
 }
 
 /// Single lock-vs-manifest matcher (any-match): multi-version locks are
@@ -2231,12 +2449,21 @@ pub(crate) fn lock_matches_manifest(lock: &Lockfile, manifest: &Manifest) -> boo
 // }
 
 #[allow(dead_code)]
-fn graph_from_lockfile(lock: &Lockfile) -> Result<ResolvedGraph> {
+fn graph_from_lockfile(lock: &Lockfile, owner_core: &str) -> Result<ResolvedGraph> {
+    let direct_roots: std::collections::HashSet<_> = lock
+        .root_dependencies_by_owner
+        .get(owner_core)
+        .into_iter()
+        .flatten()
+        .cloned()
+        .collect();
     let packages = lock
         .packages
         .iter()
         .map(|package| {
             let id = PackageId::parse(&format!("{}@{}", package.name, package.version))?;
+            let package_id = id.to_string();
+            let qualified_root = mgc_lockfile::format_root_pin(package.ecosystem, &package_id);
             let deps = package
                 .dependencies
                 .iter()
@@ -2262,13 +2489,20 @@ fn graph_from_lockfile(lock: &Lockfile) -> Result<ResolvedGraph> {
                     ))
                 })
                 .collect::<std::result::Result<Vec<_>, _>>()?;
+            let peer_deps = package
+                .peers
+                .iter()
+                .flatten()
+                .map(|peer| PackageId::parse(peer))
+                .collect::<std::result::Result<Vec<_>, _>>()?;
             Ok(ResolvedPackage {
                 id,
                 integrity: package.integrity.clone(),
                 tarball_url: package.resolved.clone(),
                 deps,
-                peer_deps: vec![],
-                direct: false,
+                peer_deps,
+                direct: direct_roots.contains(&qualified_root)
+                    || direct_roots.contains(&package_id),
                 dev: false,
             })
         })
@@ -2351,15 +2585,22 @@ pub async fn why(adapter: &dyn PackageAdapter, root: &Path, package: &str) -> Re
         return Err(crate::error::why_web_only());
     }
     let lock_path = root.join("mgc.lock");
-    if !lock_path.exists() {
-        return Err(crate::error::lock_missing_install());
-    }
     // Reverse-dependency lookup over the lockfile graph (v2/v3/v4): who
     // pulls this package in. Replaces the old `unimplemented!()` stub
     // (P0-4: a user-reachable panic) — Issue #4 closed by reading the
     // edges the installer actually wrote instead of a `pkg.direct` field.
     // (Tra cứu phụ thuộc ngược trên graph lockfile — thay stub panic cũ.)
-    let text = std::fs::read_to_string(&lock_path)?;
+    let lock_bytes = match mgc_lockfile::read_lockfile_bytes(&lock_path) {
+        Ok(bytes) => bytes,
+        Err(mgc_lockfile::LockfileError::IoError(error))
+            if error.kind() == std::io::ErrorKind::NotFound =>
+        {
+            return Err(crate::error::lock_missing_install());
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let text = String::from_utf8(lock_bytes)
+        .map_err(|error| anyhow::anyhow!("mgc.lock is not valid UTF-8: {error}"))?;
     let version = toml::from_str::<toml::Value>(&text)
         .ok()
         .and_then(|v| v.get("version")?.as_str().map(str::to_string))
@@ -2370,6 +2611,21 @@ pub async fn why(adapter: &dyn PackageAdapter, root: &Path, package: &str) -> Re
         "4" => {
             let doc = mgc_lockfile::canonical::parse_v4_document(&text)
                 .map_err(|e| anyhow::anyhow!("parse mgc.lock v4 failed: {e}"))?;
+            let report = mgc_lockfile::policy::verify_v4_math(&doc)?;
+            mgc_lockfile::policy::enforce_policy(
+                &report,
+                mgc_lockfile::policy::LockPolicyMode::Warn,
+                &[],
+            )?;
+            if !report.signed {
+                mgc_ui::warning(
+                    "mgc.lock v4 digest is valid, but the lock is unsigned; signer trust was not evaluated",
+                );
+            } else {
+                mgc_ui::warning(
+                    "mgc.lock v4 signature math is valid; signer trust was not evaluated by this command",
+                );
+            }
             let payload = doc.payload();
             let nodes = payload
                 .packages
@@ -2534,11 +2790,35 @@ pub fn should_use_legacy_flat_layout(core_type: &str) -> bool {
 // thay vì duplic per file. Message giữ từng core để không mất context lỗi.
 
 /// project_root của core — seeded từ find_project_root (mgc.toml/.mgc.core/package.json...).
-#[cfg(any(feature = "game", feature = "clo"))]
 pub fn core_project_root(core: &str) -> Result<PathBuf> {
     let cwd = std::env::current_dir().map_err(|e| crate::error::cwd_deleted(&e))?;
     let root = find_project_root(&cwd)?.ok_or_else(|| crate::error::no_mgc_project_found(core))?;
+    ensure_project_core_identity(&root, core)?;
     Ok(root)
+}
+
+/// Build the Lib adapter only after validating the project's persisted owner.
+/// Dựng Lib adapter sau khi xác thực core owner đã lưu của project.
+#[cfg(feature = "lib")]
+pub fn lib_adapter(root: &Path) -> Result<Arc<dyn PackageAdapter>> {
+    ensure_project_core_identity(root, "lib")?;
+    let root = root.to_path_buf();
+    let context = crate::context::ProjectContext::load_at(&root, Some(&root), None)?;
+    ensure_project_core_identity(&root, "lib")?;
+    if let Some(registry_url) = std::env::var("MAGICORE_LIB_REGISTRY_URL")
+        .ok()
+        .filter(|value| !value.is_empty())
+    {
+        let token = std::env::var("MAGICORE_LIB_REGISTRY_TOKEN").ok();
+        return crate::factory::create_adapter_for(
+            &root,
+            &Ecosystem::Lib,
+            Some(&registry_url),
+            token.as_deref(),
+            &[],
+        );
+    }
+    Ok(context.adapter)
 }
 
 /// Adapter của core — wrapper factory (expect giữ fail-closed như từng core cũ).
@@ -2716,9 +2996,9 @@ async fn game_hook_optimizer_dep(root: &Path) -> Result<()> {
 #[cfg(feature = "ai")]
 pub fn ai_project_root() -> Result<PathBuf> {
     let cwd = std::env::current_dir()?;
-    mgc_ai_adapter::adapter_for(&cwd)
-        .map(|_| cwd.clone())
-        .ok_or_else(crate::error::ai_project_not_detected)
+    mgc_ai_adapter::adapter_for(&cwd).ok_or_else(crate::error::ai_project_not_detected)?;
+    ensure_project_core_identity(&cwd, "ai")?;
+    Ok(cwd)
 }
 
 /// Refuse legacy Python manifests until MagiCore owns their complete
@@ -2740,6 +3020,7 @@ pub fn require_native_ai_python(root: &std::path::Path, operation: &str) -> Resu
 #[cfg(feature = "ai")]
 pub async fn ai_dev(_dry_run: bool) -> Result<()> {
     let root = ai_project_root()?;
+    require_native_ai_python(&root, "dev")?;
     let framework =
         mgc_ai_adapter::adapter_for(&root).ok_or_else(|| crate::error::no_ai_framework(&root))?;
     let script = framework.framework.entry_script().to_string();
@@ -2754,7 +3035,8 @@ pub async fn ai_dev(_dry_run: bool) -> Result<()> {
                 e
             })
             .unwrap_or_default();
-    let env: Vec<(String, String)> = optimizer_envs.into_iter().collect();
+    let mut env: Vec<(String, String)> = optimizer_envs.into_iter().collect();
+    crate::commands::python_runtime::extend_native_python_env(&mut env, &root, false)?;
 
     let opts = mgc_exec::prelude::ExecOptions {
         cwd: Some(root.clone()),
@@ -2764,10 +3046,10 @@ pub async fn ai_dev(_dry_run: bool) -> Result<()> {
         execution_scope: Some(mgc_exec::prelude::ExecutionScope::DevServer),
         ..Default::default()
     };
-    let cmd = "python3".to_string();
+    let cmd = crate::commands::build::python_cmd().to_string();
     mgc_ui::info(&format!("AI dev: running `{} {}`...", cmd, script));
     mgc_exec::prelude::run_inherited(&cmd, &[script], &opts)
-        .map_err(|e| crate::error::python3_failed(&e))?;
+        .map_err(|e| crate::error::python_runtime_failed(&cmd, &e))?;
     Ok(())
 }
 

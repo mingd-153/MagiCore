@@ -132,30 +132,16 @@ echo "✓ All hashes computed"
 
 if [[ "$verify_only" -eq 1 ]]; then
   echo "Verify mode - checking manifests contain correct hashes..."
-  
-  # Check Homebrew magicore.rb
-  if ! grep -q "$hash_macos_arm64" "$homebrew_dir/magicore.rb"; then
-    echo "magicore.rb: macOS arm64 hash mismatch" >&2
-    exit 1
-  fi
-  if ! grep -q "$hash_macos_x64" "$homebrew_dir/magicore.rb"; then
-    echo "magicore.rb: macOS x64 hash mismatch" >&2
-    exit 1
-  fi
-  if ! grep -q "$hash_linux_x64" "$homebrew_dir/magicore.rb"; then
-    echo "magicore.rb: Linux x64 hash mismatch" >&2
-    exit 1
-  fi
-  
-  # Check Scoop magicore.json
-  if ! grep -q "$hash_windows_x64" "$scoop_dir/magicore.json"; then
-    echo "magicore.json: Windows x64 hash mismatch" >&2
-    exit 1
-  fi
+
+  # Compare every published URL to the digest of its exact release artifact.
+  # Đối chiếu từng URL phát hành với digest của đúng artifact tương ứng.
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  python3 "$script_dir/verify_updated_manifests.py" \
+    --repo-root "$repo_root" --version "$version" --artifacts "$artifacts_dir"
   
   # Check for placeholders
-  if grep -R "PLACEHOLDER_WILL_BE_REPLACED_BY_CI\|UPDATE_ME" "$homebrew_dir" "$scoop_dir" >/dev/null 2>&1; then
-    echo "Found PLACEHOLDER or UPDATE_ME in manifests" >&2
+  if grep -R -E "PLACEHOLDER_WILL_BE_REPLACED_BY_CI|UPDATE_ME|PENDING_|UNAVAILABLE_" "$homebrew_dir" "$scoop_dir" >/dev/null 2>&1; then
+    echo "Found a pending/unavailable placeholder in manifests" >&2
     exit 1
   fi
   

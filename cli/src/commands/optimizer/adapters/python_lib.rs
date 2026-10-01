@@ -20,7 +20,10 @@ impl OptimizerAdapter for PythonLibAdapter {
     fn generate(&self, hw: &HardwareInfo) -> Vec<OptimizedConfigFile> {
         let mut files = vec![];
 
-        let workers = hw.cpu_cores.max(2);
+        let workers = hw.cpu_cores.map(|cores| cores.max(2));
+        let workers_line = workers
+            .map(|count| format!("UV_CONCURRENT_DOWNLOADS={count}\n"))
+            .unwrap_or_else(|| "# CPU count unknown; keep uv's runtime default.\n".to_string());
         let cache_size = match hw.profile {
             SystemProfile::HighPerformance => 512,
             SystemProfile::Standard => 256,
@@ -36,9 +39,9 @@ impl OptimizerAdapter for PythonLibAdapter {
                  PYTHONUNBUFFERED=1\n\
                  UV_CACHE_DIR=.mgc-optimizer/.uv-cache\n\
                  PIP_CACHE_DIR=.mgc-optimizer/.pip-cache\n\
-                 UV_CONCURRENT_DOWNLOADS={}\n\
+                 {workers_line}\
                  PY_COMPILE_CACHE_SIZE={cache_size}\n",
-                hw.profile, workers
+                hw.profile
             ),
             description: format!(
                 "Python optimization flags & UV/pip cache (cache size={cache_size}MB)"

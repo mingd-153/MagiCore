@@ -17,6 +17,7 @@ pub use crate::install::link_tree::{
     hardlink_thread_count, hardlink_tree, hardlink_tree_with_profile, link_package_tree,
     link_package_tree_with_profile,
 };
+use crate::install::script_policy::LifecyclePackage;
 use crate::lockfile::installed_package_matches;
 use crate::profile::MaterializationProfile;
 
@@ -304,7 +305,7 @@ pub fn materialize_strict_layout(
     store: &ContentStore,
     shared_cache: Option<&SharedWebCache>,
     cache: &PackageCache,
-    packages_with_scripts: &mut Vec<std::path::PathBuf>,
+    packages_with_scripts: &mut Vec<LifecyclePackage>,
     extracted_roots: &std::collections::HashMap<PackageId, PathBuf>,
     generation: i64,
 ) -> MgResult<()> {
@@ -368,12 +369,13 @@ pub fn materialize_strict_layout(
                 )?;
                 write_materialized_package_marker(&vstore_pkg_dir, source_marker.as_ref())?;
             }
-            Ok::<_, MgError>(vstore_pkg_dir)
+            Ok::<_, MgError>((vstore_pkg_dir, pkg_id))
         })
         .collect();
 
     for result in materialize_results {
-        packages_with_scripts.push(result?);
+        let (directory, package_id) = result?;
+        packages_with_scripts.push(LifecyclePackage::new(package_id, directory));
     }
 
     let link_results: Vec<_> = materialization_graph
@@ -531,7 +533,7 @@ pub fn materialize_nested_dependencies(
     extracted_roots: &mut std::collections::HashMap<PackageId, PathBuf>,
     visiting: &mut std::collections::HashSet<String>,
     depth: usize,
-    packages_with_scripts: &mut Vec<std::path::PathBuf>,
+    packages_with_scripts: &mut Vec<LifecyclePackage>,
     generation: i64,
 ) -> MgResult<()> {
     const MAX_DEPTH: usize = 50;
@@ -591,7 +593,7 @@ pub fn materialize_nested_dependencies(
                 generation,
             )?;
             hardlink_tree(package_root.as_path(), &nested_dir)?;
-            packages_with_scripts.push(nested_dir.clone());
+            packages_with_scripts.push(LifecyclePackage::new(dep_id.clone(), nested_dir.clone()));
         }
 
         materialize_nested_dependencies(

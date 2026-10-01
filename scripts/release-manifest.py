@@ -11,9 +11,14 @@ Usage: VERSION=1.1.0-rc.9 python3 scripts/release-manifest.py <assets-dir>
 """
 
 import hashlib
+import errno
 import json
 import os
+import stat
 import sys
+import tempfile
+
+HASH_CHUNK_BYTES = 1024 * 1024
 
 KNOWN_OS = {"linux", "macos", "windows"}
 KNOWN_ARCH = {"x64", "arm64"}
@@ -101,10 +106,7 @@ def build_manifest(assets_dir, version):
             continue
         package, os_name, arch = parsed
         path = os.path.join(assets_dir, fname)
-        if not os.path.isfile(path):
-            continue
-        with open(path, "rb") as fh:
-            digest = hashlib.sha256(fh.read()).hexdigest()
+        digest, size = hash_release_asset(path)
         artifacts.append(
             {
                 "package": package,
@@ -112,11 +114,77 @@ def build_manifest(assets_dir, version):
                 "arch": arch,
                 "archive": fname,
                 "sha256": digest,
-                "size": os.path.getsize(path),
+                "size": size,
             }
         )
     artifacts.sort(key=lambda a: a["archive"])
     return {"version": version, "artifacts": artifacts}
+
+
+def hash_release_asset(path):
+    """Hash a regular asset through one no-follow descriptor with bounded memory."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as error:
+        if error.errno == errno.ELOOP:
+            raise ValueError(
+                f"release asset is not a regular file: {os.path.basename(path)}"
+            ) from error
+        raise
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            raise ValueError(f"release asset is not a regular file: {os.path.basename(path)}")
+        digest = hashlib.sha256()
+        with os.fdopen(descriptor, "rb", closefd=False) as handle:
+            while True:
+                chunk = handle.read(HASH_CHUNK_BYTES)
+                if not chunk:
+                    break
+                digest.update(chunk)
+        after = os.fstat(descriptor)
+        if (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        ) != (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        ):
+            raise ValueError(f"release asset changed while hashing: {os.path.basename(path)}")
+        return digest.hexdigest(), after.st_size
+    finally:
+        os.close(descriptor)
+
+
+def write_manifest_atomic(assets_dir, manifest):
+    """Publish a complete manifest atomically; never leave a partial JSON file."""
+    text = json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+    descriptor, temporary = tempfile.mkstemp(prefix=".manifest-", dir=assets_dir)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, os.path.join(assets_dir, "manifest.json"))
+        if hasattr(os, "O_DIRECTORY"):
+            directory = os.open(assets_dir, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+        raise
 
 
 def main(argv):
@@ -134,7 +202,11 @@ def main(argv):
         )
         return 2
     assets_dir = argv[1]
-    manifest = build_manifest(assets_dir, version)
+    try:
+        manifest = build_manifest(assets_dir, version)
+    except (OSError, ValueError) as error:
+        print(f"release-manifest.py: {error}", file=sys.stderr)
+        return 2
     if require_matrix:
         errors = check_required_matrix(manifest["artifacts"])
         if errors:
@@ -142,9 +214,11 @@ def main(argv):
                 print(f"release-manifest.py: {e}", file=sys.stderr)
             return 2
         print(f"matrix contract met: {len(REQUIRED_MATRIX)} required variants present")
-    text = json.dumps(manifest, indent=2, sort_keys=True) + "\n"
-    with open(os.path.join(assets_dir, "manifest.json"), "w") as fh:
-        fh.write(text)
+    try:
+        write_manifest_atomic(assets_dir, manifest)
+    except OSError as error:
+        print(f"release-manifest.py: cannot publish manifest atomically: {error}", file=sys.stderr)
+        return 2
     print(f"manifest.json: {len(manifest['artifacts'])} artifacts")
     return 0
 

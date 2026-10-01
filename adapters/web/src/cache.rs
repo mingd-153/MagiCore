@@ -176,6 +176,7 @@ impl SharedWebCache {
             .collect();
         self.root
             .join("metadata")
+            .join("v2")
             .join(reg_key)
             .join(package)
             .join("metadata.json")

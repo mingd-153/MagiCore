@@ -291,6 +291,24 @@ pub const RECORDS: &[FrameworkRecord] = &[
         status: FrameworkStatus::NativeEngine,
         evidence: "Python native path is manifest/artifact constrained; unsupported source/wheel/marker cases must fail closed; per-operation claims are emitted from dep_gate",
     },
+    FrameworkRecord {
+        core: "lib",
+        framework: "go",
+        status: FrameworkStatus::NativeEngine,
+        evidence: "MGC-native Go dependency lane requires go.mod; no Go scaffold is currently offered by the Lib wizard",
+    },
+    FrameworkRecord {
+        core: "lib",
+        framework: "java",
+        status: FrameworkStatus::NativeEngine,
+        evidence: "MGC-native Maven lane requires pom.xml; Gradle and Java scaffold generation are not currently offered by the Lib wizard",
+    },
+    FrameworkRecord {
+        core: "lib",
+        framework: "dotnet",
+        status: FrameworkStatus::NativeEngine,
+        evidence: "MGC-native NuGet lane requires exactly one root csproj; .NET scaffold generation is not currently offered by the Lib wizard",
+    },
     // ── web: base engine native; every named framework scaffold-only ──
     FrameworkRecord {
         core: "web",
@@ -609,12 +627,32 @@ fn dependency_ecosystem(record: &FrameworkRecord) -> Option<&'static str> {
     }
 }
 
+/// Manifest identity required by the owner table for language lanes whose
+/// ecosystem alone is insufficient to prove MGC owns the dependency format.
+/// (Manifest cụ thể bắt buộc cho lane mà tên ecosystem chưa đủ để chứng minh ownership.)
+fn dependency_manifest_format(record: &FrameworkRecord) -> Option<&'static str> {
+    match (record.core, record.framework) {
+        ("ai", "python-agent") => Some("mgc-pyproject"),
+        ("lib", "ts") => Some("package-json"),
+        ("lib", "rust") => Some("cargo-toml"),
+        ("lib", "python") => Some("pep621-native"),
+        ("lib", "go") => Some("go-mod"),
+        ("lib", "java") => Some("maven-pom"),
+        ("lib", "dotnet") => Some("csproj"),
+        ("clo", "cdk" | "pulumi") => Some("package-json"),
+        ("game", "bevy") | ("iot", "esp32-rust") => Some("cargo-toml"),
+        _ => None,
+    }
+}
+
 fn dependency_ownership_json(record: &FrameworkRecord) -> serde_json::Value {
     use crate::commands::dep_gate::{DepContext, DepOp, DepOwner, owner_for};
     let ecosystem = dependency_ecosystem(record);
+    let manifest_format = dependency_manifest_format(record);
     let mut operations = serde_json::Map::new();
     for op in DepOp::ALL {
-        let context = DepContext::new(record.core, ecosystem, Some(record.framework), None, *op);
+        let context = DepContext::new(record.core, ecosystem, Some(record.framework), None, *op)
+            .with_manifest_format(manifest_format);
         let owner = match owner_for(&context) {
             DepOwner::Native => "mgc-native",
             DepOwner::ScaffoldOnly => "scaffold-only",
@@ -623,6 +661,13 @@ fn dependency_ownership_json(record: &FrameworkRecord) -> serde_json::Value {
         let mut cell = serde_json::json!({"owner": owner});
         if matches!((record.core, record.framework), ("clo", "cdk" | "pulumi")) {
             cell["requires"] = serde_json::json!("package.json; embedded MGC JavaScript engine");
+        }
+        if matches!(
+            (record.core, record.framework),
+            ("game", "bevy") | ("iot", "esp32-rust")
+        ) && owner == "mgc-native"
+        {
+            cell["requires"] = serde_json::json!("Cargo.toml");
         }
         operations.insert(op.as_str().to_string(), cell);
     }
@@ -637,12 +682,16 @@ pub fn qualification_json(core: &str) -> serde_json::Value {
         .iter()
         .filter(|record| record.core == core)
         .map(|record| {
-            serde_json::json!({
+            let mut row = serde_json::json!({
                 "framework": record.framework,
                 "status": status_string(&record.status),
                 "dependency_ownership": dependency_ownership_json(record),
                 "evidence": record.evidence,
-            })
+            });
+            if let Some(format) = dependency_manifest_format(record) {
+                row["required_manifest"] = serde_json::json!(format);
+            }
+            row
         })
         .collect();
     serde_json::Value::Array(rows)

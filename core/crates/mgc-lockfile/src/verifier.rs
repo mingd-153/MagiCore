@@ -3,7 +3,7 @@
 
 use crate::ecosystem_tag::EcosystemTag;
 use crate::schema::SOURCE_KIND_DELEGATED_TOOL;
-use crate::{Lockfile, LockfileError, LockfileResult};
+use crate::{LockDocument, Lockfile, LockfileError, LockfileResult};
 use std::path::Path;
 
 /// Verification result — Kết quả verify
@@ -22,15 +22,16 @@ pub enum VerificationStatus {
     UntrustedKey(String),
 }
 
-/// Verify lockfile integrity and signature — Verify tính toàn vẹn và chữ ký lockfile
+/// Verify a version-dispatched lockfile's integrity and signature.
+/// Xác minh toàn vẹn/chữ ký sau khi dispatch theo phiên bản lock.
 pub fn verify_lockfile(lockfile_path: &Path) -> LockfileResult<VerificationStatus> {
     verify_lockfile_inner(lockfile_path, None)
 }
 
-/// Verify a v3 lock and require its signer fingerprint to appear in the
-/// caller-supplied project trust roots. Cryptographic validity alone is not
-/// proof that the project trusts the signer.
-/// (Ngoài xác minh mật mã, yêu cầu signer phải có trong trust roots.)
+/// Verify a legacy sidecar-signed or v4 inline-signed lock and require its
+/// signer fingerprint to appear in the caller-supplied project trust roots.
+/// Cryptographic validity alone is not proof that the project trusts the signer.
+/// (Ngoài xác minh mật mã, bắt signer phải nằm trong trust roots của project.)
 pub fn verify_lockfile_with_trust(
     lockfile_path: &Path,
     trust_keys: &[String],
@@ -42,11 +43,70 @@ fn verify_lockfile_inner(
     lockfile_path: &Path,
     trust_keys: Option<&[String]>,
 ) -> LockfileResult<VerificationStatus> {
+    // Dispatch v4 before inspecting the legacy sidecar. v4 carries its
+    // signature inline and must never be flattened through `Lockfile`.
+    // (Chọn v4 trước sidecar legacy; chữ ký v4 nằm inline, không flatten.)
+    if let LockDocument::V4(lock) = crate::parser::load_lock_document(lockfile_path)? {
+        let sidecar_path = lockfile_path.with_extension("lock.sig");
+        match std::fs::symlink_metadata(&sidecar_path) {
+            Ok(_) => {
+                return Ok(VerificationStatus::InvalidSignature(
+                    "v4 lockfile uses an inline signature; a legacy signature sidecar is not allowed"
+                        .to_string(),
+                ));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+
+        let report = match crate::policy::verify_v4_math(&lock) {
+            Ok(report) => report,
+            Err(LockfileError::CryptoError(error)) => {
+                return Ok(VerificationStatus::InvalidSignature(error.to_string()));
+            }
+            Err(LockfileError::VerificationFailed(message)) => {
+                return Ok(VerificationStatus::InvalidSignature(message));
+            }
+            Err(error) => return Err(error),
+        };
+        if !report.digest_ok {
+            return Ok(VerificationStatus::Tampered(
+                "v4 payload digest does not match metadata.lockfile_hash".to_string(),
+            ));
+        }
+        if !report.signed {
+            return Ok(VerificationStatus::Unsigned);
+        }
+        if !report.signature_ok {
+            return Ok(VerificationStatus::InvalidSignature(
+                "v4 Ed25519 signature does not verify".to_string(),
+            ));
+        }
+        let signer_id = report.key_id.unwrap_or_default();
+        if trust_keys.is_some_and(|keys| !keys.iter().any(|key| key == &signer_id)) {
+            return Ok(VerificationStatus::UntrustedKey(signer_id));
+        }
+        return Ok(VerificationStatus::Valid);
+    }
+
     let sig_path = lockfile_path.with_extension("lock.sig");
 
-    // Check if signature file exists
-    if !sig_path.exists() {
-        return Ok(VerificationStatus::Unsigned);
+    // Inspect without following links: a dangling signature symlink must not
+    // downgrade a signed lock to `Unsigned`, and an unsigned lock still has to
+    // be a valid, bounded regular file before it receives that status.
+    // (Không follow symlink; lock unsigned cũng phải là file hợp lệ, có giới hạn.)
+    match std::fs::symlink_metadata(&sig_path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let lockfile = crate::parser::load_lockfile(lockfile_path)?;
+            if lockfile.metadata.signer.is_some() {
+                return Ok(VerificationStatus::InvalidSignature(
+                    "lockfile declares a signer but its signature sidecar is missing".to_string(),
+                ));
+            }
+            return Ok(VerificationStatus::Unsigned);
+        }
+        Err(error) => return Err(error.into()),
+        Ok(_) => {}
     }
 
     // Try to load and verify

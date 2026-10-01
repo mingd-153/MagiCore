@@ -133,7 +133,7 @@ fn run_mgc(
 fn ai_project(dir: &std::path::Path) {
     std::fs::write(
         dir.join("mgc.toml"),
-        "name = \"canary-ai\"\n[ai]\nframework = \"python-agent\"\n",
+        "name = \"canary-ai\"\necosystem = \"ai\"\n[ai]\nframework = \"python-agent\"\n",
     )
     .unwrap();
     // uv.lock present → the lane deterministically picks `uv`.
@@ -143,7 +143,7 @@ fn ai_project(dir: &std::path::Path) {
 fn pip_project(dir: &std::path::Path) {
     std::fs::write(
         dir.join("mgc.toml"),
-        "name = \"canary-ai-pip\"\n[ai]\nframework = \"python-agent\"\n",
+        "name = \"canary-ai-pip\"\necosystem = \"ai\"\n[ai]\nframework = \"python-agent\"\n",
     )
     .unwrap();
     // requirements only → the lane deterministically picks `pip`.
@@ -152,6 +152,7 @@ fn pip_project(dir: &std::path::Path) {
 
 fn rn_project(dir: &std::path::Path) {
     // package.json carrying react-native → AppLanguage::ReactNative.
+    std::fs::write(dir.join(".mgc.core"), "app\n").unwrap();
     std::fs::write(
         dir.join("package.json"),
         "{\"name\": \"canary-rn\", \"dependencies\": {\"react-native\": \"0.74.0\"}}\n",
@@ -388,21 +389,36 @@ fn lib_install_native_proceeds_without_spawning_cargo() {
 }
 
 #[test]
-fn lib_add_native_runs_inside_mgc_without_spawning_cargo() {
-    // Native add (resolve-first via crates.io + mgc-side Cargo edit) —
-    // the toolchain NEVER spawns; the canary proves it. (Policy flip:
-    // rust/python/go Add are mgc-native; Remove/Update still delegate.)
+fn lib_add_native_reaches_resolver_without_spawning_cargo() {
+    // Point this process-canary test at a deliberately closed local index:
+    // it proves the native route was reached without making the suite depend
+    // on crates.io availability. Live successful add is covered separately.
+    // (Index localhost đóng có chủ ý để test canary không phụ thuộc mạng;
+    // E2E online riêng kiểm chứng add thành công.)
     let project = TempDir::new().unwrap();
     rust_lib_project(project.path());
     let sandbox = CanarySandbox::new("cargo");
+    // Port zero is invalid for an HTTP destination and needs no socket bind.
+    // This stays deterministic even in sandboxes that deny localhost sockets.
+    // (Port 0 không hợp lệ cho HTTP, không cần bind socket và chạy được
+    // trong sandbox chặn localhost.)
+    let closed_index = "http://127.0.0.1:0";
 
-    let (code, stdout, stderr, marker) =
-        run_mgc(&["add-lib", "serde"], project.path(), &sandbox, None);
+    let (code, stdout, stderr, marker) = run_mgc(
+        &["add-lib", "serde"],
+        project.path(),
+        &sandbox,
+        Some(("MGC_CRATES_INDEX_URL", closed_index)),
+    );
     let output = format!("{stdout}{stderr}");
-    assert_eq!(
+    assert_ne!(
         code,
         Some(0),
-        "native 'add-lib' (rust) must succeed inside mgc:\n{output}"
+        "closed test index must fail the add:\n{output}"
+    );
+    assert!(
+        output.contains(closed_index),
+        "failure must come from the native crates resolver, not an ownership refusal:\n{output}"
     );
     assert!(
         marker.is_empty(),
@@ -410,8 +426,8 @@ fn lib_add_native_runs_inside_mgc_without_spawning_cargo() {
     );
     let cargo = std::fs::read_to_string(project.path().join("Cargo.toml")).unwrap();
     assert!(
-        cargo.contains("serde"),
-        "Cargo.toml must pin serde (mgc-side edit):\n{cargo}"
+        !cargo.contains("serde"),
+        "failed resolution must not mutate Cargo.toml:\n{cargo}"
     );
 }
 

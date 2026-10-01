@@ -15,6 +15,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Validate CI, release, and action-pin contracts
+        run: bash scripts/test_ci_workflow_contract.sh
       - name: Validate Phase 0 coverage schema, fixture, and anti-laundering rules
         run: |
           python3 -m json.tool ci/evidence/coverage-manifest.schema.json >/dev/null
@@ -54,6 +56,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Dependency ownership audit negative controls
+        run: python3 scripts/test_audit_dependency_delegation.py
       - name: Audit dependency ownership (fail on any delegation)
         run: python3 scripts/audit_dependency_delegation.py
       - name: Audit mutation-writer call manifest (fail on gateway bypass)
@@ -104,6 +108,10 @@ jobs:
           echo "=== Running mgc-exec Windows Tests ==="
           cargo test -p mgc-exec --test windows_spawn_test --test multiplatform_tools_test -- --nocapture
         timeout-minutes: 5
+      - name: Native dependency ownership matrix (Windows)
+        shell: bash
+        run: cargo test -p mgc --test native_ownership_matrix_e2e --locked -- --test-threads=1
+        timeout-minutes: 20
       - name: single-core web CLI surface
         run: cargo test -p mgc --no-default-features --features web test_single_core_create_alias_parses --quiet
       - name: cargo check
@@ -129,6 +137,8 @@ jobs:
           python3 -m json.tool packaging/scoop/magicore-web.json >/dev/null
       - name: benchmark provenance
         run: python3 benchmark/scripts/verify_benchmark_provenance.py
+      - name: benchmark command parity
+        run: python3 benchmark/scripts/test_bench_v2.py
       - name: analyzer regression tests
         run: python3 benchmark/scripts/test_analyzer_strict.py
       - name: manifest updater integration tests
@@ -282,7 +292,10 @@ jobs:
         run: cargo test -p mgc --test optimizer_lifecycle_e2e --locked -- --nocapture
 
       - name: Run lifecycle tests (MUST PASS - no || true)
-        run: cargo test -p mgc --test full_lifecycle_e2e --locked -- --nocapture
+        # Both toolchain-dependent AI/App lifecycle tests are #[ignore] for
+        # local machines; this job provisions pytest + Flutter and must run
+        # them explicitly instead of reporting an empty suite as green.
+        run: cargo test -p mgc --test full_lifecycle_e2e --locked -- --ignored --nocapture --test-threads=1
 
       - name: Run cache stress tests (MUST PASS)
         run: cargo test -p mgc --test cache_stress_test --locked -- --nocapture

@@ -74,6 +74,9 @@ fn framework_route_is_not_misreported_as_dependency_support() {
         ("lib", "ts"),
         ("lib", "rust"),
         ("lib", "python"),
+        ("lib", "go"),
+        ("lib", "java"),
+        ("lib", "dotnet"),
         ("clo", "cdk"),
         ("clo", "pulumi"),
     ];
@@ -112,6 +115,57 @@ fn operation_ownership_json_is_complete_and_derived_from_gate() {
 }
 
 #[test]
+fn framework_operation_ownership_uses_the_concrete_mgc_manifest_lane() {
+    for (core, framework, operation, expected, required_manifest) in [
+        (
+            "ai",
+            "python-agent",
+            "install",
+            "mgc-native",
+            "mgc-pyproject",
+        ),
+        ("lib", "ts", "install", "mgc-native", "package-json"),
+        ("lib", "rust", "install", "mgc-native", "cargo-toml"),
+        ("lib", "python", "install", "mgc-native", "pep621-native"),
+        ("lib", "go", "install", "mgc-native", "go-mod"),
+        ("lib", "java", "install", "mgc-native", "maven-pom"),
+        ("lib", "dotnet", "install", "mgc-native", "csproj"),
+    ] {
+        let records = qualification_json(core);
+        let row = records
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["framework"] == framework)
+            .unwrap_or_else(|| panic!("missing framework record {core}/{framework}"));
+        assert_eq!(
+            row["dependency_ownership"][operation]["owner"], expected,
+            "wrong {core}/{framework}/{operation} owner"
+        );
+        assert_eq!(row["required_manifest"], required_manifest);
+    }
+}
+
+#[test]
+fn game_and_iot_native_rows_require_cargo_manifest() {
+    for (core, framework) in [("game", "bevy"), ("iot", "esp32-rust")] {
+        let row = qualification_json(core)
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["framework"] == framework)
+            .cloned()
+            .expect("framework row");
+        assert_eq!(row["required_manifest"], "cargo-toml");
+        for operation in ["install", "add", "update", "remove"] {
+            let cell = &row["dependency_ownership"][operation];
+            assert_eq!(cell["owner"], "mgc-native");
+            assert_eq!(cell["requires"], "Cargo.toml");
+        }
+    }
+}
+
+#[test]
 fn cloud_native_engine_label_is_conditional_and_terraform_is_not_native() {
     for framework in ["cdk", "pulumi"] {
         let row = qualification_json("clo")
@@ -122,14 +176,28 @@ fn cloud_native_engine_label_is_conditional_and_terraform_is_not_native() {
             .cloned()
             .expect("cloud framework record");
         assert_eq!(row["status"], "mgc-engine-path");
-        for op in crate::commands::dep_gate::DepOp::ALL {
+        assert_eq!(row["required_manifest"], "package-json");
+        for op in [
+            crate::commands::dep_gate::DepOp::Install,
+            crate::commands::dep_gate::DepOp::Add,
+            crate::commands::dep_gate::DepOp::Remove,
+            crate::commands::dep_gate::DepOp::Update,
+            crate::commands::dep_gate::DepOp::List,
+            crate::commands::dep_gate::DepOp::Resolve,
+            crate::commands::dep_gate::DepOp::Lock,
+            crate::commands::dep_gate::DepOp::Fetch,
+            crate::commands::dep_gate::DepOp::Verify,
+            crate::commands::dep_gate::DepOp::Store,
+            crate::commands::dep_gate::DepOp::Materialize,
+            crate::commands::dep_gate::DepOp::FrozenInstall,
+            crate::commands::dep_gate::DepOp::OfflineReinstall,
+        ] {
             let cell = &row["dependency_ownership"][op.as_str()];
-            if cell["owner"] == "mgc-native" {
-                assert_eq!(
-                    cell["requires"],
-                    "package.json; embedded MGC JavaScript engine"
-                );
-            }
+            assert_eq!(cell["owner"], "mgc-native", "{framework}/{}", op.as_str());
+            assert_eq!(
+                cell["requires"],
+                "package.json; embedded MGC JavaScript engine"
+            );
         }
     }
     let cloud_rows = qualification_json("clo");

@@ -185,7 +185,9 @@ pub fn command_to_dispatch(
         Commands::Registry { cmd } => Some(CommonCommand::Registry { cmd }),
         Commands::Model { cmd } => Some(CommonCommand::Model { cmd }),
         Commands::Mcp => Some(CommonCommand::Mcp),
-        Commands::Capabilities => Some(CommonCommand::Capabilities),
+        // Capabilities has one canonical format (JSON); the explicit CLI
+        // flag is normalized here so both spellings share one handler.
+        Commands::Capabilities { json: _ } => Some(CommonCommand::Capabilities),
         Commands::Store { cmd } => Some(CommonCommand::Store { cmd }),
         Commands::Bench { args } => Some(CommonCommand::Bench { args }),
         Commands::Network { cmd } => Some(CommonCommand::Network { cmd }),
@@ -344,10 +346,12 @@ pub fn command_to_dispatch(
             packages,
             compat_runtime,
             frozen,
+            offline,
         } => Some(CoreCommand::InstallLib {
             packages,
             compat_runtime,
             frozen,
+            offline,
         }),
         Commands::InstallHardware {
             packages,
@@ -701,9 +705,10 @@ pub fn command_to_dispatch(
         return Ok(SomeCore(cmd));
     }
 
-    let ecosystem = core
-        .map(|s| s.to_string())
-        .or_else(|| detect_ecosystem().ok().flatten());
+    let ecosystem = match core {
+        Some(core) => Some(core.to_string()),
+        None => detect_ecosystem()?,
+    };
 
     let dispatch = match command {
         Commands::Install { .. }

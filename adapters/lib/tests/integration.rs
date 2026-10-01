@@ -15,6 +15,36 @@ fn tmp(tag: &str) -> PathBuf {
     dir
 }
 
+#[cfg(unix)]
+#[test]
+fn language_detection_does_not_follow_external_mgc_config_symlink() {
+    let project = tmp("external-mgc-config-link");
+    let external = tmp("external-mgc-config-target");
+    std::fs::write(external.join("mgc.toml"), "[lib]\nlanguage = 'go'\n").unwrap();
+    std::os::unix::fs::symlink(external.join("mgc.toml"), project.join("mgc.toml")).unwrap();
+
+    assert_eq!(mgc_lib_adapter::detect_language(&project), None);
+    let _ = std::fs::remove_dir_all(project);
+    let _ = std::fs::remove_dir_all(external);
+}
+
+#[cfg(unix)]
+#[test]
+fn language_detection_does_not_follow_external_cargo_manifest_symlink() {
+    let project = tmp("external-cargo-link");
+    let external = tmp("external-cargo-target");
+    std::fs::write(
+        external.join("Cargo.toml"),
+        "[package]\nname='outside'\nversion='1.0.0'\n",
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(external.join("Cargo.toml"), project.join("Cargo.toml")).unwrap();
+
+    assert_eq!(mgc_lib_adapter::detect_language(&project), None);
+    let _ = std::fs::remove_dir_all(project);
+    let _ = std::fs::remove_dir_all(external);
+}
+
 // ── adapter_for — detect languages ─────────────────────────────────────────
 
 #[test]

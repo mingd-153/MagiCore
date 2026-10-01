@@ -46,6 +46,38 @@ fn missing_file_or_table_is_no_opinion() {
     assert!(load_file_scripts_policy(&no_table).unwrap().is_none());
 }
 
+#[tokio::test]
+async fn lifecycle_failure_does_not_return_before_sibling_tasks_finish() {
+    use crate::install::drain_lifecycle_tasks;
+    use mgc_types::MgError;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    use tokio::task::JoinSet;
+
+    let sibling_finished = Arc::new(AtomicBool::new(false));
+    let mut tasks = JoinSet::new();
+    tasks.spawn(async { Err::<(), _>(MgError::Other("injected lifecycle failure".into())) });
+
+    let finished = sibling_finished.clone();
+    tasks.spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        finished.store(true, Ordering::SeqCst);
+        Ok::<(), MgError>(())
+    });
+
+    let error = drain_lifecycle_tasks(&mut tasks)
+        .await
+        .expect("the first lifecycle failure must be returned after draining siblings");
+
+    assert!(error.contains("injected lifecycle failure"));
+    assert!(
+        sibling_finished.load(Ordering::SeqCst),
+        "rollback must not start while a sibling lifecycle task can still mutate the tree"
+    );
+}
+
 /// Nợ 2-RED: stale snapshot dirs (`.mgc-snap-*`, left by SIGKILLed
 /// installs — TempDir never cleans on kill) must be swept at the next
 /// install start. Safe: the project install lock forbids concurrent
@@ -120,10 +152,14 @@ fn sweep_never_follows_hostile_snapshot_symlink() {
 /// Guard take/rollback/commit + Drop tự khôi phục; recovery dựng backup.
 #[test]
 fn restore_prior_lock_roundtrips() {
-    use crate::install::restore_prior_lock_result;
+    use crate::install::{restore_prior_lock_result, snapshot_prior_lock};
     let dir = tmp("restore");
     let path = dir.join("mgc.lock");
     std::fs::write(&path, b"v1-bytes").unwrap();
+    assert_eq!(
+        snapshot_prior_lock(&dir).unwrap(),
+        Some(b"v1-bytes".to_vec())
+    );
     restore_prior_lock_result(&dir, &Some(b"v0-bytes".to_vec())).unwrap();
     assert_eq!(std::fs::read(&path).unwrap(), b"v0-bytes");
     restore_prior_lock_result(&dir, &None).unwrap();
@@ -132,6 +168,35 @@ fn restore_prior_lock_roundtrips() {
         "no prior lock means the failed write is removed"
     );
     restore_prior_lock_result(&dir, &None).unwrap();
+}
+
+#[test]
+fn prior_lock_snapshot_distinguishes_missing_from_invalid_or_unreadable_paths() {
+    use crate::install::snapshot_prior_lock;
+
+    let missing = tmp("snapshot-missing");
+    assert_eq!(snapshot_prior_lock(&missing).unwrap(), None);
+
+    let directory_lock = tmp("snapshot-directory");
+    std::fs::create_dir(directory_lock.join("mgc.lock")).unwrap();
+    assert!(
+        snapshot_prior_lock(&directory_lock).is_err(),
+        "a directory named mgc.lock must not be treated as an absent lock"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn prior_lock_snapshot_refuses_symlink_without_reading_target() {
+    use crate::install::snapshot_prior_lock;
+
+    let project = tmp("snapshot-symlink");
+    let outside = tmp("snapshot-outside").join("precious.lock");
+    std::fs::write(&outside, b"external-lock-bytes").unwrap();
+    std::os::unix::fs::symlink(&outside, project.join("mgc.lock")).unwrap();
+
+    assert!(snapshot_prior_lock(&project).is_err());
+    assert_eq!(std::fs::read(&outside).unwrap(), b"external-lock-bytes");
 }
 
 #[test]
@@ -198,7 +263,7 @@ fn recover_interrupted_install_restores_and_sweeps() {
     #[cfg(unix)]
     std::os::unix::fs::symlink("/etc", dir.join(".mgc-prev-evil")).unwrap();
 
-    let out = recover_interrupted_install(&dir, &live, &dir);
+    let out = recover_interrupted_install(&dir, &live, &dir).unwrap();
     assert!(out.restored_backup, "backup must restore");
     assert_eq!(out.removed_staging, 1, "staging litter swept");
     assert_eq!(
@@ -207,7 +272,7 @@ fn recover_interrupted_install_restores_and_sweeps() {
     );
     assert!(!staging.exists());
     // Second run is a no-op (idempotent).
-    let out2 = recover_interrupted_install(&dir, &live, &dir);
+    let out2 = recover_interrupted_install(&dir, &live, &dir).unwrap();
     assert!(!out2.restored_backup);
     assert_eq!(out2.removed_staging, 0);
 }
@@ -246,4 +311,70 @@ fn tree_backup_skips_empty_live_dir() {
     std::fs::write(live.join("new.txt"), b"n").unwrap();
     drop(guard);
     assert_eq!(std::fs::read(live.join("new.txt")).unwrap(), b"n");
+}
+
+#[test]
+fn multiple_backup_candidates_fail_closed_without_deleting_them() {
+    use crate::install::recover_interrupted_install;
+
+    let dir = tmp("recover-preserve-backups");
+    let live = dir.join("node_modules");
+    let candidate_one = dir.join(".mgc-prev-one");
+    let candidate_two = dir.join(".mgc-prev-two");
+    std::fs::create_dir_all(candidate_one.join("pkg")).unwrap();
+    std::fs::write(
+        candidate_one.join("pkg").join("state.txt"),
+        b"first-recovery-candidate",
+    )
+    .unwrap();
+    std::fs::create_dir_all(candidate_two.join("pkg")).unwrap();
+    std::fs::write(
+        candidate_two.join("pkg").join("state.txt"),
+        b"second-recovery-candidate",
+    )
+    .unwrap();
+
+    // Multiple backups have ambiguous history. Recovery must not choose by
+    // timestamp or delete either candidate, regardless of the live path.
+    std::fs::write(&live, b"unexpected-live-file").unwrap();
+    let error = recover_interrupted_install(&dir, &live, &dir)
+        .expect_err("unrecoverable live path must stop install recovery");
+
+    assert!(
+        error
+            .to_string()
+            .contains("refusing to choose by timestamp")
+    );
+    assert!(
+        candidate_one.is_dir(),
+        "first candidate must survive ambiguity"
+    );
+    assert!(
+        candidate_two.is_dir(),
+        "second candidate must survive ambiguity"
+    );
+    assert_eq!(std::fs::read(&live).unwrap(), b"unexpected-live-file");
+}
+
+#[test]
+fn failed_single_backup_restore_is_reported_and_backup_is_preserved() {
+    use crate::install::recover_interrupted_install;
+
+    let dir = tmp("recover-preserve-single");
+    let live = dir.join("node_modules");
+    let backup = dir.join(".mgc-prev-single");
+    std::fs::create_dir_all(backup.join("pkg")).unwrap();
+    std::fs::write(backup.join("pkg").join("state.txt"), b"recoverable-state").unwrap();
+    std::fs::write(&live, b"unexpected-live-file").unwrap();
+
+    let error = recover_interrupted_install(&dir, &live, &dir)
+        .expect_err("failed restore must prevent the install from continuing");
+
+    assert!(
+        error
+            .to_string()
+            .contains("cannot clear interrupted install path")
+    );
+    assert!(backup.is_dir(), "failed restore must preserve its backup");
+    assert_eq!(std::fs::read(&live).unwrap(), b"unexpected-live-file");
 }

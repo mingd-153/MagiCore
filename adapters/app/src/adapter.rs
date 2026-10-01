@@ -24,17 +24,13 @@ use std::path::{Path, PathBuf};
 
 pub struct AppAdapter {
     pub language: AppLanguage,
-    // Root captured at detection — the RN layered resolve needs the
-    // project's tier files (gradle.lockfile / Podfile.lock) which the
-    // `resolve(&manifest)` signature does not carry.
-    // (Gốc bắt lúc detect — resolve phân tầng RN cần các file tier của
-    // project (gradle.lockfile / Podfile.lock) mà chữ ký
-    // `resolve(&manifest)` không mang theo.)
+    // Root captured at detection for project-specific resolver configuration.
+    // (Giữ gốc project để dùng cấu hình resolver theo project.)
     pub project_root: PathBuf,
-    // Native-resolve lock entries (Swift/RN lanes) carried from
+    // Native-resolve lock entries (Swift lane) carried from
     // `DependencyResolver::resolve` to `install` — the same pending-lock
     // pattern the lib adapter uses (same-instance CLI flow).
-    // (Entry lock từ resolve native (lane Swift/RN) chuyển từ
+    // (Entry lock từ resolve native (lane Swift) chuyển từ
     // `DependencyResolver::resolve` sang `install` — cùng pattern
     // pending-lock của lib adapter (flow CLI cùng instance).)
     pending_lock: std::sync::Mutex<Vec<mgc_lockfile::Package>>,
@@ -42,11 +38,9 @@ pub struct AppAdapter {
 
 impl AppAdapter {
     /// Public constructor for direct-language use (tests, CLI lanes) —
-    /// the pending lock starts empty and the project root is unknown
-    /// (RN tier files resolve against an empty root → honest skips).
+    /// the pending lock starts empty and the project root is unknown.
     /// (Constructor public cho dùng trực tiếp theo ngôn ngữ (test, lane
-    /// CLI) — pending lock khởi tạo rỗng và gốc project không biết (file
-    /// tier RN resolve theo gốc rỗng → skip trung thực).)
+    /// CLI) — pending lock khởi tạo rỗng và gốc project không biết.)
     pub fn new(language: AppLanguage) -> Self {
         Self {
             language,
@@ -60,7 +54,7 @@ impl AppAdapter {
     /// DependencyResolver claim overclaims for Kotlin/ObjC, which fail
     /// closed). `CAPABILITIES` (used by `mgc capabilities`) is the BASE
     /// set every language shares; the instance method below adds
-    /// DependencyResolver exactly for Flutter/Swift/RN, and the
+    /// DependencyResolver exactly for Flutter/Swift, and the
     /// capabilities test enforces both directions.
     pub const CAPABILITIES: &'static [Capability] = Self::CAPABILITIES_BASE;
 
@@ -130,7 +124,12 @@ impl LifecycleRunner for AppAdapter {
 impl ContentStoreProvider for AppAdapter {
     fn probe_content_store(&self) -> MgResult<()> {
         match self.language {
-            AppLanguage::Flutter | AppLanguage::Swift | AppLanguage::ReactNative => Ok(()),
+            AppLanguage::Flutter | AppLanguage::Swift => Ok(()),
+            AppLanguage::ReactNative => Err(mgc_types::capabilities::unsupported_capability(
+                "app",
+                "content_store",
+                "React Native install is not available until JS, Android and iOS artifacts can be committed atomically",
+            )),
             AppLanguage::Kotlin | AppLanguage::ObjC | AppLanguage::Multi => {
                 Err(mgc_types::capabilities::unsupported_capability(
                     "app",
@@ -147,10 +146,7 @@ impl ContentStoreProvider for AppAdapter {
         project_root: &Path,
         opts: InstallOptions,
     ) -> MgResult<InstallSummary> {
-        if !matches!(
-            self.language,
-            AppLanguage::Flutter | AppLanguage::Swift | AppLanguage::ReactNative
-        ) {
+        if !matches!(self.language, AppLanguage::Flutter | AppLanguage::Swift) {
             return Err(mgc_types::capabilities::unsupported_capability(
                 "app",
                 "install",
@@ -179,7 +175,12 @@ impl ContentStoreProvider for AppAdapter {
 impl LockfileProvider for AppAdapter {
     fn probe_lockfile_provider(&self) -> MgResult<()> {
         match self.language {
-            AppLanguage::Flutter | AppLanguage::Swift | AppLanguage::ReactNative => Ok(()),
+            AppLanguage::Flutter | AppLanguage::Swift => Ok(()),
+            AppLanguage::ReactNative => Err(mgc_types::capabilities::unsupported_capability(
+                "app",
+                "lockfile_provider",
+                "React Native install is not available until all ecosystem lock entries can be committed atomically",
+            )),
             AppLanguage::Kotlin | AppLanguage::ObjC | AppLanguage::Multi => {
                 Err(mgc_types::capabilities::unsupported_capability(
                     "app",
@@ -191,10 +192,7 @@ impl LockfileProvider for AppAdapter {
     }
 
     async fn write_manifest(&self, project_root: &Path, manifest: &Manifest) -> MgResult<()> {
-        if !matches!(
-            self.language,
-            AppLanguage::Flutter | AppLanguage::Swift | AppLanguage::ReactNative
-        ) {
+        if !matches!(self.language, AppLanguage::Flutter | AppLanguage::Swift) {
             return Err(mgc_types::capabilities::unsupported_capability(
                 "app",
                 "write_manifest",
@@ -256,9 +254,8 @@ impl PackageAdapter for AppAdapter {
     fn capabilities(&self) -> &'static [Capability] {
         // Per-language truth: only lanes with a native resolver claim it.
         match self.language {
-            AppLanguage::Flutter | AppLanguage::Swift | AppLanguage::ReactNative => {
-                Self::CAPABILITIES_RESOLVER
-            }
+            AppLanguage::Flutter | AppLanguage::Swift => Self::CAPABILITIES_RESOLVER,
+            AppLanguage::ReactNative => Self::CAPABILITIES_BASE,
             AppLanguage::Kotlin | AppLanguage::ObjC | AppLanguage::Multi => Self::CAPABILITIES_BASE,
         }
     }
@@ -347,12 +344,17 @@ impl DependencyResolver for AppAdapter {
     /// Swift resolve qua engine SwiftPM native (Phase 2); ngôn ngữ app
     /// khác vẫn do toolchain giữ (gradle/pod) và fail-closed.
     fn probe_dependency_resolver(&self) -> MgResult<()> {
-        // Executable per-language truth (not a blanket claim): native
-        // engines resolve Flutter/Swift/RN; Kotlin/ObjC/Multi fail closed
-        // here exactly as resolve() does below.
-        // (Probe theo language, khớp resolve() bên dưới.)
+        // React Native's internal tier resolver is not exposed as a usable
+        // dependency operation until the complete install can commit all
+        // tiers atomically. Keep the public capability fail-closed.
+        // (Chưa expose resolve RN khi install ba tier chưa atomic.)
         match self.language {
-            AppLanguage::Flutter | AppLanguage::Swift | AppLanguage::ReactNative => Ok(()),
+            AppLanguage::Flutter | AppLanguage::Swift => Ok(()),
+            AppLanguage::ReactNative => Err(mgc_types::capabilities::unsupported_capability(
+                "app",
+                "resolve",
+                "React Native dependency resolution is not exposed until JS, Android and iOS can be installed and committed atomically",
+            )),
             AppLanguage::Kotlin | AppLanguage::ObjC | AppLanguage::Multi => {
                 Err(mgc_types::MgError::Unsupported {
                     core: "app",
@@ -399,39 +401,22 @@ impl DependencyResolver for AppAdapter {
                     resolution.lock_packages;
                 Ok(resolution.graph)
             }
-            // RN layered engine (Phase 2): the JS tier delegates to the web
-            // adapter's npm pipeline; gradle.lockfile pins resolve through
-            // the native Maven engine (ecosystem=maven) and Podfile.lock
-            // pods are verified against the CocoaPods CDN sha1 checksums
-            // (ecosystem=cocoapods) — per-tier entries in mgc.lock.
-            // (Engine phân tầng RN (Phase 2): tier JS ủy quyền cho pipeline
-            // npm của adapter web; pin gradle.lockfile resolve qua engine
-            // Maven native (ecosystem=maven) và pod Podfile.lock được xác
-            // minh theo checksum sha1 của CDN CocoaPods
-            // (ecosystem=cocoapods) — entry riêng theo tier trong mgc.lock.)
-            AppLanguage::ReactNative => {
-                let resolution =
-                    crate::native::rn_layers::resolve_rn_layers(manifest, &self.project_root)
-                        .await?;
-                *self.pending_lock.lock().expect("app pending lock poisoned") =
-                    resolution.lock_packages;
-                Ok(resolution.graph)
-            }
-            // Kotlin/ObjC/Multi: no native engine yet — toolchain-owned,
-            // fail closed (never an empty-graph false success).
-            // (Kotlin/ObjC/Multi: chưa có engine native — toolchain sở
-            // hữu, fail-closed (không thành công giả graph rỗng).)
-            AppLanguage::Kotlin | AppLanguage::ObjC | AppLanguage::Multi => {
-                Err(mgc_types::MgError::Unsupported {
-                    core: "app",
-                    capability: "resolve",
-                    guidance: format!(
-                        "{} dependency resolution is owned by its toolchain; mgc-native \
-                         resolution lands with the native engine (Phase 2/3)",
-                        self.language.as_str()
-                    ),
-                })
-            }
+            // RN has internal per-tier experiments, but none is exposed as
+            // a supported resolve operation until install/lock commit is
+            // atomic across ecosystems. Kotlin/ObjC/Multi remain unsupported.
+            // (RN chưa expose resolve khi chưa atomic; Kotlin/ObjC/Multi unsupported.)
+            AppLanguage::ReactNative
+            | AppLanguage::Kotlin
+            | AppLanguage::ObjC
+            | AppLanguage::Multi => Err(mgc_types::MgError::Unsupported {
+                core: "app",
+                capability: "resolve",
+                guidance: format!(
+                    "{} does not yet expose a complete MagiCore-owned dependency lifecycle; \
+                         install and lock publication must be implemented before resolve is advertised",
+                    self.language.as_str(),
+                ),
+            }),
         }
     }
 }

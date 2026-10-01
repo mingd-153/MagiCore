@@ -514,6 +514,40 @@ fn audit_unavailable_non_strict_exits_0_with_warning() {
     );
 }
 
+#[test]
+fn verify_rejects_unverified_app_audit_even_when_local_audit_is_open() {
+    // Verify is a release gate: a local audit override cannot make an unverified core pass.
+    // Verify là cổng phát hành: cờ audit local không được làm core chưa xác minh thành pass.
+    let mgc = find_mgc_binary();
+    let sandbox = TempDir::new().unwrap();
+    std::fs::write(
+        sandbox.path().join("mgc.toml"),
+        "name = \"verify-unavailable\"\necosystem = \"app\"\n\n[cicd]\nverify = [\"audit\"]\n",
+    )
+    .unwrap();
+    std::fs::write(
+        sandbox.path().join("pubspec.yaml"),
+        "name: test\nenvironment:\n  sdk: ^3.0.0\n",
+    )
+    .unwrap();
+
+    let output = Command::new(mgc)
+        .arg("verify")
+        .current_dir(sandbox.path())
+        .env("MGC_AUDIT_STRICT", "0")
+        .env("CI", "false")
+        .output()
+        .expect("run mgc verify");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.status.code(), Some(2), "{text}");
+    assert!(text.contains("UNVERIFIED"), "{text}");
+    assert!(!text.contains("Verify chain OK"), "{text}");
+}
+
 // ---------------------------------------------------------------------------
 // Go lane E2E (P1 matrix row "Lib Go govulncheck") — real binary, real
 // scanner, real vulnerable fixture.

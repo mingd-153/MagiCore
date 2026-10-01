@@ -67,24 +67,39 @@ impl OutputFormat {
 /// Entry: detect core (via ProjectContext) → dispatch per-core → finisher.
 /// Điểm vào: detect core qua ProjectContext → dispatch per-core → finisher.
 pub async fn run(core: Option<&str>, fix: bool, format: Option<&str>) -> Result<()> {
+    run_with_strictness(core, fix, format, StrictMode::from_env()).await
+}
+
+/// Run an audit with incomplete scanner coverage treated as a hard failure.
+/// Chạy audit với coverage scanner chưa đầy đủ được xem là lỗi cứng.
+pub(crate) async fn run_strict(core: Option<&str>, fix: bool, format: Option<&str>) -> Result<()> {
+    run_with_strictness(core, fix, format, StrictMode::required()).await
+}
+
+async fn run_with_strictness(
+    core: Option<&str>,
+    fix: bool,
+    format: Option<&str>,
+    strict: StrictMode,
+) -> Result<()> {
     let fmt = OutputFormat::from_flag(format)?;
     let ctx = ProjectContext::load_with_core(core)?;
     match ctx.adapter().name() {
-        "web" => web::audit(ctx.adapter(), ctx.root(), fix, fmt).await,
-        "game" => game::audit(&ctx, fmt).await,
-        "ai" => ai::audit(&ctx, fmt).await,
+        "web" => web::audit(ctx.adapter(), ctx.root(), fix, fmt, strict).await,
+        "game" => game::audit(&ctx, fmt, strict).await,
+        "ai" => ai::audit(&ctx, fmt, strict).await,
         // The cloud adapter's name() is "cloud"; the CLI core id is
         // "clo" — accept BOTH (the adapter name is the runtime truth,
         // the short id is the user-facing core key).
         // name() của adapter cloud là "cloud"; id core CLI là "clo" —
         // nhận cả hai (tên adapter là sự thật runtime, id ngắn là khóa
         // core phía người dùng).
-        "clo" | "cloud" => clo::audit(&ctx, fmt).await,
-        "cicd" => cicd::audit(&ctx, fmt).await,
-        "iot" => iot::audit(&ctx, fmt).await,
-        "app" => app::audit(&ctx, fmt).await,
-        "lib" => lib::audit(&ctx, fmt).await,
-        "hardware" => hardware::audit(&ctx, fmt).await,
+        "clo" | "cloud" => clo::audit(&ctx, fmt, strict).await,
+        "cicd" => cicd::audit(&ctx, fmt, strict).await,
+        "iot" => iot::audit(&ctx, fmt, strict).await,
+        "app" => app::audit(&ctx, fmt, strict).await,
+        "lib" => lib::audit(&ctx, fmt, strict).await,
+        "hardware" => hardware::audit(&ctx, fmt, strict).await,
         other => Err(crate::error::unknown_core(other)),
     }
 }
@@ -287,6 +302,10 @@ fn print_machine_payload(report: &AuditReport, fmt: OutputFormat) -> Result<()> 
 pub(crate) struct StrictMode(bool);
 
 impl StrictMode {
+    pub(crate) fn required() -> Self {
+        Self(true)
+    }
+
     pub(crate) fn from_env() -> Self {
         // Explicit beats implicit: a SET MGC_AUDIT_STRICT always decides
         // ("1"/"true" strict, anything else — including "0" — open), so

@@ -20,7 +20,7 @@ use std::process::Command;
 // env_loader are exercised exactly as production uses them.
 use mgc::commands::optimizer::adapters::OptimizerAdapter;
 use mgc::commands::optimizer::adapters::pytorch::PyTorchAdapter;
-use mgc::commands::optimizer::detect::{HardwareInfo, SystemProfile};
+use mgc::commands::optimizer::detect::{GpuDetectionStatus, HardwareInfo, SystemProfile};
 use mgc::commands::optimizer::env_loader::load_optimizer_env;
 use mgc::commands::optimizer::runtime_detect::DetectedRuntime;
 
@@ -53,12 +53,13 @@ fn pytorch_env_reaches_real_child_process() {
     //    SINH: adapter PyTorch production với HardwareInfo giả cố định
     //    ghi file env (đúng đường dẫn production dùng).
     let hw = HardwareInfo {
-        cpu_cores: 4,
+        cpu_cores: Some(4),
         arch: "x86_64".to_string(),
         os: "macos".to_string(),
         total_memory_gb: Some(16),
         profile: SystemProfile::Standard,
         gpus: vec![],
+        gpu_detection_status: GpuDetectionStatus::Unavailable,
     };
     let files = PyTorchAdapter.generate(&hw);
     let env_file = files

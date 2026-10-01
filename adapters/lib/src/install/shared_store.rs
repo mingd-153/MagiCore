@@ -31,6 +31,15 @@ fn shared_root(eco: &str) -> MgResult<PathBuf> {
     Ok(root)
 }
 
+/// Resolve an ecosystem root without creating it. Offline preflight uses this
+/// to prove every required artifact exists before it creates the CAS/store.
+/// (Tìm root mà không tạo thư mục — dùng cho preflight offline.)
+fn shared_root_path(eco: &str) -> MgResult<PathBuf> {
+    let globals = mgc_platform::paths::GlobalPaths::new()
+        .map_err(|e| MgError::Other(format!("cannot resolve mgc home: {e}")))?;
+    Ok(globals.store.join(eco))
+}
+
 impl SharedStoreRun {
     /// Return the MagiCore-owned Cargo-layout materialization root.
     /// Trả gốc materialize theo layout Cargo do MagiCore quản lý.
@@ -45,6 +54,14 @@ impl SharedStoreRun {
     pub fn pypi() -> MgResult<Self> {
         Ok(Self {
             install_root: shared_root("pypi")?,
+        })
+    }
+
+    /// Return the Python store path without creating directories.
+    /// Trả đường dẫn store Python nhưng không tạo thư mục.
+    pub fn pypi_path() -> MgResult<Self> {
+        Ok(Self {
+            install_root: shared_root_path("pypi")?,
         })
     }
 

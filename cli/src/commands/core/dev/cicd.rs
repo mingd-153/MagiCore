@@ -39,13 +39,9 @@ pub fn ci_generate() -> Result<()> {
     Ok(())
 }
 
-/// Install source used by generated CI templates: the latest GitHub Release
-/// instead of a mutable branch. Update this constant on every release tag.
-/// (Pinned actions + release-tagged install: Tech Lead P0-3, 2026-09-12.)
-///
-/// Nguồn cài đặt cho template CI sinh ra: GitHub Release mới nhất thay vì
-/// branch mutable. Cập nhật hằng số này ở mỗi release tag.
-const MGC_RELEASE_TAG: &str = "v1.1.0-rc.6";
+/// Pin generated CI to the exact version of the MagiCore binary generating it.
+/// (Workflow mới ghim đúng version binary MagiCore đang sinh ra nó.)
+const MGC_RELEASE_TAG: &str = concat!("v", env!("CARGO_PKG_VERSION"));
 
 /// Install source used by generated CI templates: the latest GitHub Release
 /// installer downloaded from an IMMUTABLE commit SHA — never from the
@@ -55,7 +51,7 @@ const MGC_RELEASE_TAG: &str = "v1.1.0-rc.6";
 /// (P0-E: installer trong template CI được tải từ commit SHA BẤT BIẾN —
 /// không bao giờ từ branch `main` mutable. Cập nhật SHA theo commit cuối
 /// chạm `scripts/install-from-gh.sh` mỗi khi MGC_RELEASE_TAG dịch chuyển.)
-const MGC_INSTALLER_SHA: &str = "285fd62d2dbf4693cb0675425dc52861b6327c5a";
+const MGC_INSTALLER_SHA: &str = "80a383763377413c4a50d8de3bd815a0f8f01284";
 
 /// Embedded SHA-256 of `scripts/install-from-gh.sh` at `MGC_INSTALLER_SHA`.
 /// Contract (P0-E/T0.5):
@@ -69,7 +65,7 @@ const MGC_INSTALLER_SHA: &str = "285fd62d2dbf4693cb0675425dc52861b6327c5a";
 /// pipeline in WARNING rõ ràng rồi vẫn chạy; file `.sha256` cạnh installer
 /// được verify khi có (lệch → fail); khi đặt giá trị → lệch checksum FAIL.)
 const MGC_INSTALLER_SHA256: &str =
-    "74821b9a70d1aaf2bb1896344f777ec0ca8038b66385a8a46e3c83fc63442dc6";
+    "2e722bbebdccad1f00719da21f56963d44ff519d3868538f9abdc2e03a27ef56";
 
 /// Render a CI template: release tag + immutable installer pin (P0-E).
 /// Every placeholder substitution lives in ONE helper so a half-rendered
@@ -251,21 +247,14 @@ pub async fn verify() -> Result<()> {
     for step in &chain {
         match step.as_str() {
             "audit" => {
-                // Real audit for every core — strict mode (CI) fails on an
-                // UNVERIFIED result; local mode warns loudly (escape hatch).
-                // Audit thật cho mọi core — strict (CI) fail khi UNVERIFIED;
-                // local cảnh báo to (escape hatch).
-                crate::commands::audit::run(None, false, None).await?;
+                // A verify chain is a release gate: incomplete scanner coverage fails locally and in CI.
+                // Chuỗi verify là cổng phát hành: scanner thiếu coverage phải lỗi cả local lẫn CI.
+                crate::commands::audit::run_strict(None, false, None).await?;
             }
             "test" => run_test_step(&root, &core).await?,
             "build" => {
-                if core == "cicd" {
-                    mgc_ui::warning(
-                        "cicd core has no build (07 §4) — pipelines run via `mgc ci generate`",
-                    );
-                } else {
-                    crate::commands::build::run(None, None, None).await?;
-                }
+                ensure_build_step_supported(&core)?;
+                crate::commands::build::run(None, None, None).await?;
             }
             // Unreachable (chain validated above) — kept fail-closed anyway.
             // Không thể tới đây (chain đã validate) — vẫn giữ fail-closed.
@@ -276,9 +265,23 @@ pub async fn verify() -> Result<()> {
     Ok(())
 }
 
+/// Reject a configured build step for CI/CD projects, which produce pipeline configuration rather than a build artifact.
+/// Từ chối bước build được cấu hình cho project CI/CD vì đầu ra là pipeline config, không phải build artifact.
+fn ensure_build_step_supported(core: &str) -> Result<()> {
+    if core == "cicd" {
+        return Err(crate::error::build_not_supported(
+            core,
+            "CI/CD projects have no build artifact; remove `build` from `[cicd].verify` or define a project-specific build command",
+        ));
+    }
+    Ok(())
+}
+
 /// Chain từ mgc.toml `[cicd] verify` — default ["audit", "test", "build"].
 fn verify_chain(root: &std::path::Path) -> Result<Vec<String>> {
-    let content = std::fs::read_to_string(root.join("mgc.toml"))?;
+    let content =
+        mgc_config::project::read_regular_project_text(&root.join("mgc.toml"), "project config")?
+            .ok_or_else(|| anyhow::anyhow!("project config mgc.toml is missing"))?;
     let v: toml::Value = toml::from_str(&content)?;
     let chain = v
         .get("cicd")
@@ -293,43 +296,13 @@ fn verify_chain(root: &std::path::Path) -> Result<Vec<String>> {
     Ok(chain)
 }
 
-/// Test step theo core: rust → cargo test; web → package.json scripts.test (không PM wrapper).
+/// Run the shared `mgc test` policy for this project root; never report a skipped step as success.
+/// Dùng chung chính sách `mgc test` trên project root; không bao giờ báo thành công khi đã skip.
 async fn run_test_step(root: &std::path::Path, core: &str) -> Result<()> {
-    if core == "web" {
-        let pkg = std::fs::read_to_string(root.join("package.json"))
-            .map_err(|_| crate::error::web_missing_package_json())?;
-        let v: serde_json::Value = serde_json::from_str(&pkg)?;
-        let has_test = v
-            .get("scripts")
-            .and_then(|s| s.get("test"))
-            .and_then(|s| s.as_str())
-            .is_some();
-        if !has_test {
-            return Err(crate::error::package_json_missing_test_script());
-        }
-        crate::commands::run::run("test".to_string(), vec![], Some("web"), None).await?;
-    } else if core == "lib" {
-        if root.join("Cargo.toml").exists() {
-            let opts = mgc_exec::prelude::ExecOptions {
-                cwd: Some(root.to_path_buf()),
-                log_path: Some(root.join(".magicore").join("exec.log")),
-                clean_env: true,
-                ..Default::default()
-            };
-            mgc_exec::prelude::run_inherited(
-                "cargo",
-                &["test".into(), "--locked".into(), "--offline".into()],
-                &opts,
-            )?;
-            return Ok(());
-        }
-        return Err(crate::error::lib_no_test_runner());
-    } else {
-        mgc_ui::warning(&format!(
-            "test step for core '{core}' is not P1 yet — skipping (cargo test for rust, scripts.test for web)"
-        ));
-    }
-    Ok(())
+    let core_override = (!core.is_empty()).then_some(core);
+    crate::commands::test::test_at(root, Vec::new(), core_override, None)
+        .await
+        .map_err(|error| crate::error::cicd_test_step_failed(core, &error))
 }
 
 fn provider_config() -> Result<mgc_cicd_adapter::CicdProvider> {
@@ -357,9 +330,13 @@ struct DeployTarget {
 
 /// Đọc `[deploy] targets` từ mgc.toml — None = không có target, dùng provider detect.
 fn deploy_targets(root: &std::path::Path) -> Result<Option<Vec<DeployTarget>>> {
-    let content = match std::fs::read_to_string(root.join("mgc.toml")) {
-        Ok(c) => c,
-        Err(_) => return Ok(None),
+    let content = match mgc_config::project::read_regular_project_text(
+        &root.join("mgc.toml"),
+        "project config",
+    ) {
+        Ok(Some(content)) => content,
+        Ok(None) => return Ok(None),
+        Err(error) => return Err(error),
     };
     let v: toml::Value = toml::from_str(&content)?;
     let targets = v

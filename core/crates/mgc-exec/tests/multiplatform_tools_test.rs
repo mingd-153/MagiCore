@@ -183,8 +183,8 @@ fn test_error_193_scenario() {
 
         // Create test .bat
         let mut bat = NamedTempFile::with_suffix(".bat").expect("create .bat");
-        writeln!(bat, "@echo Test").unwrap();
-        bat.flush().unwrap();
+        writeln!(bat, "@echo Test").expect("write batch test script");
+        bat.flush().expect("flush batch test script");
 
         let bat_path = bat.path();
 

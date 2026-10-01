@@ -409,7 +409,6 @@ fn capability_map_matches_audited_contract() {
             &[
                 Capability::ProjectDetector,
                 Capability::ScaffoldProvider,
-                Capability::DeployProvider,
                 Capability::AuditProvider,
             ],
         ),

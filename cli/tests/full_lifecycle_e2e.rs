@@ -174,6 +174,7 @@ fn test_lib_full_lifecycle() {
     let project_name = "test-lib-full";
     let project_path = temp.path().join(project_name);
     let mgc = find_mgc_binary();
+    let cargo_target_dir = project_path.join(".mgc-test-target");
 
     // === STEP 1: CREATE ===
     println!("\n=== STEP 1: mgc create-lib ===");
@@ -204,6 +205,7 @@ fn test_lib_full_lifecycle() {
     println!("\n=== STEP 2: mgc build ===");
     let build_output = Command::new(&mgc)
         .arg("build")
+        .env("CARGO_TARGET_DIR", &cargo_target_dir)
         .current_dir(&project_path)
         .output()
         .expect("mgc build failed to execute");
@@ -214,16 +216,17 @@ fn test_lib_full_lifecycle() {
         String::from_utf8_lossy(&build_output.stderr)
     );
 
-    // VERIFY: target/ directory exists (cargo build artifact)
+    // VERIFY: Cargo honors the isolated target directory set for this E2E.
     assert!(
-        project_path.join("target").exists(),
-        "target/ directory not created after build"
+        cargo_target_dir.exists(),
+        "configured Cargo target directory not created after build"
     );
 
     // === STEP 3: TEST ===
     println!("\n=== STEP 3: mgc test ===");
     let test_output = Command::new(&mgc)
         .arg("test")
+        .env("CARGO_TARGET_DIR", &cargo_target_dir)
         .current_dir(&project_path)
         .output()
         .expect("mgc test failed to execute");
@@ -367,8 +370,11 @@ fn test_ai_full_lifecycle() {
         String::from_utf8_lossy(&install_output.stderr)
     );
     assert!(
-        install_combined.contains("COMPATIBILITY MODE"),
-        "compat install must announce itself:\n{install_combined}"
+        install_combined.contains("Using mgc.lock for install state.")
+            && install_combined.contains("cache source: shared mgc store")
+            && install_combined.contains("All dependencies installed")
+            && !install_combined.contains("COMPATIBILITY MODE"),
+        "native install must prove mgc.lock/store ownership and must not claim compatibility mode:\n{install_combined}"
     );
 
     println!("INSTALL verified");

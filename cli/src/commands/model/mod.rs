@@ -15,6 +15,8 @@ use std::path::{Path, PathBuf};
 const DEFAULT_REGISTRY: &str = "http://127.0.0.1:4315";
 
 const MODEL_MEDIA_TYPE: &str = "application/vnd.magicore.model.layer.v1+file";
+/// Default guard for remote model pulls; larger artifacts require an explicit limit.
+const DEFAULT_MODEL_PULL_MAX_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 
 /* ─── Local model manifest (CAS AI core, Q11) ─────────────────────── */
 
@@ -41,8 +43,71 @@ struct ModelManifest {
     pulled_at: String,
 }
 
-fn model_manifest_path(name: &str) -> PathBuf {
-    model_manifest_dir().join(format!("{name}.json"))
+fn model_manifest_path(name: &str) -> Result<PathBuf> {
+    let dir = model_manifest_dir();
+    Ok(dir.join(existing_or_encoded_manifest_path(&dir, name)?))
+}
+
+fn model_manifest_relative_path(name: &str) -> Result<PathBuf> {
+    validate_model_name(name)?;
+    let mut parts = name.split('/').collect::<Vec<_>>();
+    let leaf = parts
+        .pop()
+        .ok_or_else(|| crate::error::invalid_model_name(name))?;
+    let mut relative = PathBuf::new();
+    for part in parts {
+        relative.push(encode_model_path_segment(part));
+    }
+    relative.push(format!("{}.json", encode_model_path_segment(leaf)));
+    Ok(relative)
+}
+
+fn existing_or_encoded_manifest_path(dir: &Path, name: &str) -> Result<PathBuf> {
+    let encoded = model_manifest_relative_path(name)?;
+    let mut legacy_parts = name.split('/').collect::<Vec<_>>();
+    let leaf = legacy_parts
+        .pop()
+        .ok_or_else(|| crate::error::invalid_model_name(name))?;
+    let mut legacy = PathBuf::new();
+    for part in legacy_parts {
+        legacy.push(part);
+    }
+    legacy.push(format!("{leaf}.json"));
+    if legacy == encoded {
+        return Ok(encoded);
+    }
+    match std::fs::symlink_metadata(dir.join(&legacy)) {
+        Ok(metadata) if metadata.file_type().is_file() => Ok(legacy),
+        Ok(_) => Err(crate::error::unsafe_model_manifest_path()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(encoded),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn encode_model_path_segment(segment: &str) -> String {
+    let mut encoded = String::with_capacity(segment.len());
+    for byte in segment.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.') {
+            encoded.push(char::from(byte));
+        } else {
+            use std::fmt::Write;
+            let _ = write!(encoded, "%{byte:02X}");
+        }
+    }
+    encoded
+}
+
+fn validate_model_name(name: &str) -> Result<()> {
+    if name.is_empty()
+        || name.contains(['\\', '\0'])
+        || name
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
+        || Path::new(name).is_absolute()
+    {
+        return Err(crate::error::invalid_model_name(name));
+    }
+    Ok(())
 }
 
 fn save_manifest(m: &ModelManifest) -> Result<()> {
@@ -50,26 +115,81 @@ fn save_manifest(m: &ModelManifest) -> Result<()> {
 }
 
 fn save_manifest_in(dir: PathBuf, m: &ModelManifest) -> Result<()> {
-    let path = dir.join(format!("{}.json", m.name));
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
+    let relative = existing_or_encoded_manifest_path(&dir, &m.name)?;
+    std::fs::create_dir_all(&dir)?;
+    if !std::fs::symlink_metadata(&dir)?.file_type().is_dir() {
+        return Err(crate::error::unsafe_model_manifest_path());
     }
-    std::fs::write(path, serde_json::to_string_pretty(m)?)?;
-    Ok(())
+    let mut parent = dir.clone();
+    for component in relative.parent().into_iter().flat_map(Path::components) {
+        parent.push(component);
+        match std::fs::symlink_metadata(&parent) {
+            Ok(metadata) if metadata.file_type().is_dir() => {}
+            Ok(_) => return Err(crate::error::unsafe_model_manifest_path()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                match std::fs::create_dir(&parent) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                        if !std::fs::symlink_metadata(&parent)?.file_type().is_dir() {
+                            return Err(crate::error::unsafe_model_manifest_path());
+                        }
+                    }
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    let path = dir.join(relative);
+    let staging = path.with_file_name(format!(
+        ".{}.mgc-manifest-{}",
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("model.json"),
+        uuid::Uuid::new_v4()
+    ));
+    let mut staging_created = false;
+    let result = (|| -> Result<()> {
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&staging)?;
+        staging_created = true;
+        file.write_all(&serde_json::to_vec_pretty(m)?)?;
+        file.sync_all()?;
+        drop(file);
+        mgc_lockfile::atomic::atomic_replace_file(&staging, &path)?;
+        #[cfg(unix)]
+        if let Some(parent) = path.parent() {
+            std::fs::File::open(parent)?.sync_all()?;
+        }
+        Ok(())
+    })();
+    if result.is_err() && staging_created {
+        let _ = std::fs::remove_file(&staging);
+    }
+    result
 }
 
 fn read_manifests_in(dir: PathBuf) -> Vec<ModelManifest> {
     let mut out = Vec::new();
     let mut stack = vec![dir];
     while let Some(d) = stack.pop() {
+        if !std::fs::symlink_metadata(&d).is_ok_and(|metadata| metadata.file_type().is_dir()) {
+            continue;
+        }
         let Ok(entries) = std::fs::read_dir(&d) else {
             continue;
         };
         for e in entries.flatten() {
             let p = e.path();
-            if p.is_dir() {
+            let Ok(metadata) = std::fs::symlink_metadata(&p) else {
+                continue;
+            };
+            if metadata.file_type().is_dir() {
                 stack.push(p);
-            } else if p.extension().is_some_and(|x| x == "json") {
+            } else if metadata.file_type().is_file() && p.extension().is_some_and(|x| x == "json") {
                 // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
                 if let Ok(s) = std::fs::read_to_string(&p)
                     && let Ok(m) = serde_json::from_str(&s)
@@ -90,12 +210,27 @@ fn now_iso() -> String {
 }
 
 /// CAS pull — tải nguồn ngoài (HF/OCI) vào CAS store + manifest.
-async fn cas_pull(source: &str) -> Result<()> {
+async fn cas_pull(
+    source: &str,
+    revision: Option<&str>,
+    sha256: Option<&str>,
+    max_bytes: Option<u64>,
+) -> Result<()> {
     let store = mgc_store::cas::ContentStore::new(store_root())?;
-    let (name, blobs, total) = if let Some(hf) = source.strip_prefix("hf://") {
-        pull_hf(&store, hf).await?
+    let (name, blobs, total, recorded_source) = if let Some(hf) = source.strip_prefix("hf://") {
+        let max_bytes = max_bytes.unwrap_or(DEFAULT_MODEL_PULL_MAX_BYTES);
+        if max_bytes == 0 {
+            bail!("--max-bytes must be greater than zero");
+        }
+        let (name, blobs, total, pinned_source) =
+            pull_hf(&store, hf, revision, sha256, max_bytes).await?;
+        (name, blobs, total, pinned_source)
     } else if let Some(oci) = source.strip_prefix("oci://") {
-        pull_oci(&store, oci).await?
+        if revision.is_some() || sha256.is_some() || max_bytes.is_some() {
+            return Err(crate::error::model_pull_flags_require_hf());
+        }
+        let (name, blobs, total) = pull_oci(&store, oci).await?;
+        (name, blobs, total, source.to_string())
     } else {
         bail!(
             "unsupported model source '{source}' — use `hf://org/model/file` or `oci://registry/repo:tag`"
@@ -104,7 +239,7 @@ async fn cas_pull(source: &str) -> Result<()> {
 
     let manifest = ModelManifest {
         name,
-        source: source.to_string(),
+        source: recorded_source,
         total_bytes: total,
         pulled_at: now_iso(),
         blobs,
@@ -114,7 +249,7 @@ async fn cas_pull(source: &str) -> Result<()> {
         "pulled {} → CAS ({} bytes, manifest at {})",
         manifest.name,
         manifest.total_bytes,
-        model_manifest_path(&manifest.name).display()
+        model_manifest_path(&manifest.name)?.display()
     );
     Ok(())
 }
@@ -127,43 +262,128 @@ fn cas_import(store: &mgc_store::cas::ContentStore, src: &Path) -> Result<(Strin
     Ok((hash.as_hex().to_string(), len))
 }
 
-/// hf://org/model/file → https://huggingface.co/{org}/{model}/resolve/main/{file}
+/// Pull a revision-pinned Hugging Face artifact and verify its SHA-256 before CAS import.
+/// Tải artifact Hugging Face đã ghim revision và xác minh SHA-256 trước khi nhập CAS.
 async fn pull_hf(
     store: &mgc_store::cas::ContentStore,
     hf: &str,
-) -> Result<(String, Vec<String>, u64)> {
-    let mut parts = hf.split('/');
-    let org = parts.next().unwrap_or_default();
-    let model = parts.next().unwrap_or_default();
-    let file = parts.next();
-    if org.is_empty() || model.is_empty() {
-        bail!("invalid hf source '{hf}' — use `hf://org/model/file`");
-    }
-    let Some(file) = file.filter(|f| !f.is_empty()) else {
-        bail!(
-            "missing model file in '{hf}' — specify a file: `hf://{org}/{model}/<file>` (branch mặc định: main)"
-        );
-    };
-
-    let url = format!("https://huggingface.co/{org}/{model}/resolve/main/{file}");
-    let resp = reqwest::get(&url)
+    revision: Option<&str>,
+    sha256: Option<&str>,
+    max_bytes: u64,
+) -> Result<(String, Vec<String>, u64, String)> {
+    let (name, url, revision, expected_sha256) = parse_hf_locator(hf, revision, sha256)?;
+    let response = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(20))
+        .timeout(std::time::Duration::from_secs(2 * 60 * 60))
+        .build()?
+        .get(url.as_str())
+        .send()
         .await
         .with_context(crate::error::hf_request_failed)?;
-    if !resp.status().is_success() {
+    if !response.status().is_success() {
         bail!(
-            "HF download failed: {} ({url}) — unknown source, not written to store",
-            resp.status()
+            "HF download failed: {} ({url}) — artifact was not written to the store",
+            response.status()
         );
     }
-    let data = resp.bytes().await?;
+    let declared_length = response.content_length();
+    if declared_length.is_some_and(|declared| declared > max_bytes) {
+        bail!("HF artifact exceeds --max-bytes ({max_bytes}); no artifact was written");
+    }
+    let tmp = std::env::temp_dir().join(format!(
+        "mgc-hf-{}-{}.part",
+        std::process::id(),
+        uuid::Uuid::new_v4()
+    ));
+    let result = async {
+        use sha2::Digest;
+        use tokio::io::AsyncWriteExt;
 
-    let tmp = std::env::temp_dir().join(format!("mgc-hf-{}-{}", std::process::id(), now_iso()));
-    std::fs::write(&tmp, &data)?;
-    let (hash, len) = cas_import(store, &tmp)?;
-    let _ = std::fs::remove_file(&tmp);
+        let mut file = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
+            .await?;
+        let mut response = response;
+        let mut hasher = sha2::Sha256::new();
+        let mut total = 0_u64;
+        while let Some(chunk) = response.chunk().await? {
+            total = next_hf_download_total(total, chunk.len(), max_bytes)?;
+            hasher.update(&chunk);
+            file.write_all(&chunk).await?;
+        }
+        if declared_length.is_some_and(|declared| declared != total) {
+            return Err(crate::error::hf_content_length_mismatch(
+                declared_length.unwrap_or_default(),
+                total,
+            ));
+        }
+        file.sync_all().await?;
+        drop(file);
+        let actual = hex::encode(hasher.finalize());
+        if !actual.eq_ignore_ascii_case(&expected_sha256) {
+            return Err(crate::error::hf_sha256_mismatch(&expected_sha256, &actual));
+        }
+        let (hash, imported_len) = cas_import(store, &tmp)?;
+        if imported_len != total {
+            return Err(crate::error::hf_artifact_changed_during_import());
+        }
+        let pinned_source = format!("hf://{hf}@{revision}#sha256={expected_sha256}");
+        Ok((name, vec![hash], total, pinned_source))
+    }
+    .await;
+    let _ = tokio::fs::remove_file(&tmp).await;
+    result
+}
 
-    let name = format!("{org}/{model}/{file}");
-    Ok((name, vec![hash], len))
+fn next_hf_download_total(current: u64, chunk_len: usize, max_bytes: u64) -> Result<u64> {
+    let next = current
+        .checked_add(chunk_len as u64)
+        .ok_or_else(crate::error::hf_size_overflow)?;
+    if next > max_bytes {
+        return Err(crate::error::hf_download_limit_exceeded(max_bytes));
+    }
+    Ok(next)
+}
+
+fn parse_hf_locator(
+    hf: &str,
+    revision: Option<&str>,
+    sha256: Option<&str>,
+) -> Result<(String, url::Url, String, String)> {
+    let revision = revision.ok_or_else(crate::error::hf_revision_required)?;
+    if revision.len() != 40 || !revision.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(crate::error::invalid_hf_revision());
+    }
+    let sha256 = sha256.ok_or_else(crate::error::hf_sha256_required)?;
+    if sha256.len() != 64 || !sha256.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(crate::error::invalid_hf_sha256());
+    }
+    let segments = hf.split('/').collect::<Vec<_>>();
+    if segments.len() < 3
+        || segments.iter().any(|part| {
+            part.is_empty() || matches!(*part, "." | "..") || part.contains(['\\', '\0', ':'])
+        })
+    {
+        return Err(crate::error::invalid_hf_source());
+    }
+    let name = segments.join("/");
+    validate_model_name(&name)?;
+    let mut url = url::Url::parse("https://huggingface.co/")?;
+    {
+        let mut path = url
+            .path_segments_mut()
+            .map_err(|_| anyhow::anyhow!("unable to construct HF artifact URL"))?;
+        path.pop_if_empty()
+            .push(segments[0])
+            .push(segments[1])
+            .push("resolve")
+            .push(revision);
+        for segment in &segments[2..] {
+            path.push(segment);
+        }
+    }
+    Ok((name, url, revision.to_string(), sha256.to_ascii_lowercase()))
 }
 
 /// oci://registry/repo:tag → pull manifest + layers → CAS (P1 cơ bản).
@@ -238,12 +458,17 @@ fn list_local() -> Result<()> {
 
 /// Xoá model local — manifest + blob CAS chỉ khi không còn manifest nào trỏ (refcount).
 fn remove_local(name: &str) -> Result<()> {
-    let path = model_manifest_path(name);
-    if !path.exists() {
-        bail!(
-            "model '{name}' not found locally (manifest: {})",
-            path.display()
-        );
+    let path = model_manifest_path(name)?;
+    match std::fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.file_type().is_file() => {}
+        Ok(_) => return Err(crate::error::unsafe_model_manifest_path()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            bail!(
+                "model '{name}' not found locally (manifest: {})",
+                path.display()
+            );
+        }
+        Err(error) => return Err(error.into()),
     }
     let manifest: ModelManifest = serde_json::from_str(&std::fs::read_to_string(&path)?)
         .with_context(crate::error::parse_manifest_failed)?;
@@ -314,6 +539,15 @@ pub enum ModelCmd {
         registry: String,
         #[arg(long, default_value = ".")]
         output: String,
+        /// Immutable 40-hex Hugging Face commit revision (required for hf://).
+        #[arg(long)]
+        revision: Option<String>,
+        /// Trusted SHA-256 of the exact Hugging Face artifact (required for hf://).
+        #[arg(long)]
+        sha256: Option<String>,
+        /// Maximum Hugging Face download size in bytes (default: 64 GiB).
+        #[arg(long)]
+        max_bytes: Option<u64>,
         #[arg(long, env = "MAGICORE_REGISTRY_ADMIN_TOKEN")]
         token: Option<String>,
     },
@@ -358,11 +592,17 @@ pub async fn run(args: ModelArgs) -> Result<()> {
             tag,
             registry,
             output,
+            revision,
+            sha256,
+            max_bytes,
             token,
         } => {
             if repo.starts_with("hf://") || repo.starts_with("oci://") {
-                cas_pull(&repo).await
+                cas_pull(&repo, revision.as_deref(), sha256.as_deref(), max_bytes).await
             } else {
+                if revision.is_some() || sha256.is_some() || max_bytes.is_some() {
+                    return Err(crate::error::model_pull_flags_require_hf());
+                }
                 pull(&repo, &tag, &registry, &output, token).await
             }
         }
@@ -474,10 +714,18 @@ async fn push(
 }
 
 async fn digest_of(path: &Path) -> Result<String> {
-    let data = tokio::fs::read(path).await?;
+    use tokio::io::AsyncReadExt;
+    let mut file = tokio::fs::File::open(path).await?;
     use sha2::{Digest, Sha256};
     let mut h = Sha256::new();
-    h.update(&data);
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer).await?;
+        if read == 0 {
+            break;
+        }
+        h.update(&buffer[..read]);
+    }
     Ok(format!("sha256:{:x}", h.finalize()))
 }
 

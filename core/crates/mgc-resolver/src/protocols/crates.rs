@@ -214,7 +214,12 @@ impl RegistryProtocol for CratesProtocol {
                     .filter(|c| c.len() == 64 && c.chars().all(|ch| ch.is_ascii_hexdigit()))
             })
             .map(|c| c.to_ascii_lowercase())
-            .unwrap_or_default();
+            .ok_or_else(|| {
+                MgError::Integrity(format!(
+                    "crates.io index entry for {}@{} has no valid cksum; refusing to resolve an unverifiable artifact",
+                    entry.name, entry.vers
+                ))
+            })?;
 
         let mut resolved = ResolvedEntry {
             name: name.to_string(),

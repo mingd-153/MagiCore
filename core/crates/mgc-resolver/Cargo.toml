@@ -23,6 +23,7 @@ anyhow = { workspace = true }
 # giữ reqwest) + JSON/NDJSON + BLAKE3 CAS + tar.gz.)
 serde = { workspace = true }
 serde_json = { workspace = true }
+quick-xml = { workspace = true }
 mgc-http = { workspace = true }
 url = { workspace = true }
 blake3 = { workspace = true }
@@ -43,6 +44,7 @@ criterion = { workspace = true }
 tempfile = { workspace = true }
 mockito.workspace = true
 mgc-store = { workspace = true }
+zip = { workspace = true }
 
 # Windows atomic replacement for extracted archive files.
 # Thay file giải nén nguyên tử trên Windows.

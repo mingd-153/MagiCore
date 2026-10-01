@@ -22,7 +22,8 @@ pub async fn remove(packages: Vec<String>, compat_runtime: Option<String>) -> Re
                 Some("bevy"),
                 None,
                 crate::commands::dep_gate::DepOp::Remove,
-            ),
+            )
+            .with_manifest_format(Some("cargo-toml")),
             None,
             &compat,
             Some(&root.join(".magicore").join("exec.log")),

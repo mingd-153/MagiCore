@@ -1,8 +1,7 @@
-//! P1.2 Stress Suite - 100 concurrent installs + edge cases
-//! Comprehensive stress tests for MagiCore v1.1.0-RC public beta readiness
+//! Stress suite for concurrent installs and dependency-state edge cases.
 //!
 //! Test scenarios:
-//! 1. 100 concurrent installs (parallelism stress)
+//! 1. 10 concurrent installs (parallelism stress)
 //! 2. Process kill mid-install (graceful recovery)
 //! 3. Corrupted CAS entries (integrity check)
 //! 4. Lockfile tamper (detect + reject)
@@ -29,16 +28,69 @@ fn find_mgc_binary() -> String {
         .expect("CARGO_BIN_EXE_mgc not set — run via `cargo test -p mgc`")
 }
 
-fn create_minimal_web_project(root: &Path) {
+/// Run a CLI child with an isolated per-test home and CAS root.
+/// (Chạy CLI con với HOME và CAS riêng cho từng test.)
+fn isolated_command(mgc: &str, home: &Path) -> Command {
+    // Keep all child CLI state out of the developer's real global store.
+    // (Cô lập state tiến trình con khỏi store thật của developer.)
+    fs::create_dir_all(home).expect("create isolated test home");
+    let mut command = Command::new(mgc);
+    command
+        .env("HOME", home)
+        .env("USERPROFILE", home)
+        .env("MAGICORE_STORE_ROOT", home.join(".magicore/store/v3"));
+    command
+}
+
+/// Find a regular CAS blob without following symlinks.
+/// (Tìm blob CAS thường mà không đi theo symlink.)
+fn first_regular_blob(root: &Path) -> Option<std::path::PathBuf> {
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(directory).ok()? {
+            let entry = entry.ok()?;
+            let path = entry.path();
+            let metadata = fs::symlink_metadata(&path).ok()?;
+            if metadata.file_type().is_symlink() {
+                continue;
+            }
+            if metadata.is_file() {
+                return Some(path);
+            }
+            if metadata.is_dir() {
+                pending.push(path);
+            }
+        }
+    }
+    None
+}
+
+/// Assert that a CAS blob's actual digest matches its address.
+/// (Xác nhận digest nội dung blob khớp địa chỉ CAS.)
+fn assert_blob_matches_address(blob: &Path) {
+    let bytes = fs::read(blob).expect("CAS blob must be readable");
+    let expected_hash = blob
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("CAS blob filename must contain its digest");
+    assert_eq!(
+        blake3::hash(&bytes).to_hex().as_str(),
+        expected_hash,
+        "CAS bytes must match their content-addressed path"
+    );
+}
+
+/// Create a deterministic project that depends only on the in-process
+/// registry fixture. (Tạo project tất định chỉ phụ thuộc registry fixture.)
+fn create_fixture_web_project(root: &Path, dependency_range: &str) {
     fs::write(
         root.join("package.json"),
-        r#"{
-  "name": "stress-test",
-  "version": "1.0.0",
-  "dependencies": {
-    "lodash": "^4.17.21"
-  }
-}"#,
+        serde_json::json!({
+            "name": "stress-fixture",
+            "version": "1.0.0",
+            "dependencies": { "is-odd": dependency_range }
+        })
+        .to_string(),
     )
     .unwrap();
     fs::write(root.join(".mgc.core"), "web\n").unwrap();
@@ -46,33 +98,35 @@ fn create_minimal_web_project(root: &Path) {
 
 #[test]
 fn test_10_concurrent_installs() {
-    // P1.2 STRESS: 10 concurrent installs (reduced from 100 for CI speed)
+    // P1.2 STRESS: 10 concurrent installs for bounded local/CI runtime.
     // Tests: parallelism, cache safety, no deadlocks
-    // Full 100-concurrent test available with: cargo test test_100_concurrent_installs -- --ignored
 
     println!("\n=== 10 Concurrent Installs Stress Test ===");
 
     let mgc = find_mgc_binary();
     let temp_base = TempDir::new().unwrap();
+    let registry = RegistryFixture::new();
+    let isolated_home = temp_base.path().join("isolated-home");
     let results = Arc::new(Mutex::new(Vec::new()));
 
     let handles: Vec<_> = (0..10)
         .map(|i| {
             let mgc = mgc.clone();
             let temp_base = temp_base.path().to_path_buf();
+            let registry_url = registry.url.clone();
+            let isolated_home = isolated_home.clone();
             let results = Arc::clone(&results);
 
             thread::spawn(move || {
                 let project_dir = temp_base.join(format!("project_{}", i));
                 fs::create_dir_all(&project_dir).unwrap();
-                create_minimal_web_project(&project_dir);
+                create_fixture_web_project(&project_dir, "3.0.1");
 
                 let start = std::time::Instant::now();
-                let output = Command::new(&mgc)
-                    .arg("install")
-                    .current_dir(&project_dir)
-                    .output()
-                    .expect("Failed to run mgc install");
+                let output =
+                    install_cmd_with_home(&mgc, &project_dir, &registry_url, &isolated_home)
+                        .output()
+                        .expect("Failed to run mgc install");
 
                 let duration = start.elapsed();
                 let success = output.status.success();
@@ -110,10 +164,9 @@ fn test_10_concurrent_installs() {
         println!("Average duration: {:?}", avg_duration);
     }
 
-    // Assert: At least 90% success rate (9/10 - allow 1 transient failure)
     assert!(
-        successful >= 9,
-        "Less than 90% success rate: {}/10",
+        successful == 10,
+        "all hermetic concurrent installs must succeed: {}/10",
         successful
     );
 
@@ -134,14 +187,17 @@ fn test_corrupted_cas_detection() {
     let temp = TempDir::new().unwrap();
     let project = temp.path().join("project");
     fs::create_dir_all(&project).unwrap();
-    create_minimal_web_project(&project);
-
+    let registry = RegistryFixture::new();
+    fs::write(
+        project.join("package.json"),
+        r#"{"name":"cas-corruption-test","version":"1.0.0","dependencies":{"is-odd":"3.0.1"}}"#,
+    )
+    .unwrap();
+    fs::write(project.join(".mgc.core"), "web\n").unwrap();
     let mgc = find_mgc_binary();
 
     // Step 1: Normal install to populate CAS
-    let output1 = Command::new(&mgc)
-        .arg("install")
-        .current_dir(&project)
+    let output1 = install_cmd(&mgc, &project, &registry.url)
         .output()
         .expect("Failed to run mgc install");
 
@@ -153,81 +209,83 @@ fn test_corrupted_cas_detection() {
 
     println!("Initial install successful");
 
-    // Step 2: Corrupt CAS (find and corrupt a file in store)
-    let store_dir = dirs::home_dir()
-        .unwrap()
-        .join(".magicore")
-        .join("store")
-        .join("v3");
+    // Step 2: Corrupt one blob in this project's isolated CAS, never the
+    // developer's global store. (Làm hỏng blob trong CAS cô lập của project.)
+    let cas_blobs = project.join(".magicore/cache/web/cas/files/blake3");
+    let blob = first_regular_blob(&cas_blobs)
+        .expect("install must produce a regular CAS blob for the fixture package");
+    fs::write(&blob, b"CORRUPTED_DATA").expect("corrupt isolated CAS blob");
+    println!("Corrupted isolated CAS blob: {:?}", blob);
 
-    if !store_dir.exists() {
-        println!("WARN: SKIPPED: Store dir not found (may use different cache location)");
-        return;
-    }
-
-    // Find first file in store and corrupt it
-    let mut corrupted = false;
-    if let Ok(entries) = fs::read_dir(&store_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_file() {
-                // Corrupt by writing garbage
-                if fs::write(&path, b"CORRUPTED_DATA").is_ok() {
-                    println!("Corrupted CAS file: {:?}", path);
-                    corrupted = true;
-                    break;
-                }
-            }
-        }
-    }
-
-    if !corrupted {
-        println!("WARN: SKIPPED: No CAS files found to corrupt");
-        return;
-    }
+    // Force the next install to consume the cache instead of taking an
+    // already-materialized node_modules fast path. (Bắt buộc install sau
+    // phải dùng cache, không được đi đường tắt node_modules có sẵn.)
+    fs::remove_dir_all(project.join("node_modules"))
+        .expect("remove project materialization before cache-reuse check");
 
     // Step 3: Try install again with corrupted CAS
-    let output2 = Command::new(&mgc)
-        .arg("install")
-        .current_dir(&project)
+    let output2 = install_cmd(&mgc, &project, &registry.url)
         .output()
         .expect("Failed to run mgc install");
 
-    // Should either: detect corruption and re-fetch OR fail with clear error
     if output2.status.success() {
-        println!("Recovered from corrupted CAS (re-fetched)");
+        let repaired =
+            fs::read(&blob).expect("CAS blob should exist after successful install recovery");
+        assert_ne!(
+            repaired, b"CORRUPTED_DATA",
+            "successful install must not leave corrupted bytes in the CAS"
+        );
+        assert_blob_matches_address(&blob);
+        println!("Corrupt CAS blob was rejected and repaired from verified data");
     } else {
         let stderr = String::from_utf8_lossy(&output2.stderr);
-        // Should mention integrity or corruption
         assert!(
             stderr.contains("integrity")
                 || stderr.contains("checksum")
-                || stderr.contains("corrupt"),
-            "Error message doesn't mention integrity issue:\n{}",
-            stderr
+                || stderr.contains("corrupt")
+                || stderr.contains("hash mismatch"),
+            "failed install must report the cache-integrity cause:\n{stderr}"
         );
-        println!("Detected corrupted CAS with clear error");
+        assert!(
+            !project.join("node_modules/is-odd/index.js").exists(),
+            "failed reinstall must not materialize the corrupted package"
+        );
+        println!("Corrupt CAS blob was rejected; reinstall failed closed without materialization");
+
+        // The first attempt quarantines the bad blob. A clean retry must
+        // recover from verified package data and restore the CAS address.
+        // (Lần đầu cách ly blob lỗi; retry sạch phải khôi phục từ dữ liệu
+        // package đã xác minh và phục hồi đúng địa chỉ CAS.)
+        let retry = install_cmd(&mgc, &project, &registry.url)
+            .output()
+            .expect("retry mgc install after corrupt blob quarantine");
+        assert!(
+            retry.status.success(),
+            "install retry should succeed after corrupt blob quarantine:\n{}",
+            String::from_utf8_lossy(&retry.stderr)
+        );
+        assert_blob_matches_address(&blob);
+        assert!(project.join("node_modules/is-odd/index.js").is_file());
+        println!("Retry repaired the quarantined CAS blob from verified data");
     }
 }
 
 #[test]
-fn test_lockfile_tamper_detection() {
-    // P1.2 STRESS: Lockfile tamper detection
-    // Tests: checksum verify, reject tampered lockfile
-
-    println!("\n=== Lockfile Tamper Detection Test ===");
+fn test_extra_web_lock_entry_cannot_drive_install() {
+    // An orphan package injected into mgc.lock must not make install fetch or
+    // materialize a package absent from the project manifest.
 
     let temp = TempDir::new().unwrap();
     let project = temp.path().join("project");
     fs::create_dir_all(&project).unwrap();
-    create_minimal_web_project(&project);
+    let registry = RegistryFixture::new();
+    create_fixture_web_project(&project, "3.0.1");
+    let isolated_home = temp.path().join("isolated-home");
 
     let mgc = find_mgc_binary();
 
     // Step 1: Normal install to create lockfile
-    let output1 = Command::new(&mgc)
-        .arg("install")
-        .current_dir(&project)
+    let output1 = install_cmd_with_home(&mgc, &project, &registry.url, &isolated_home)
         .output()
         .expect("Failed to run mgc install");
 
@@ -242,152 +300,161 @@ fn test_lockfile_tamper_detection() {
 
     println!("Initial install + lockfile created");
 
-    // Step 2: Tamper lockfile (inject fake package)
+    // Step 2: Add an orphan Web-owned entry pointing at a local tripwire.
     let lock_content = fs::read_to_string(&lockfile).unwrap();
-
-    // Inject fake package entry at end
-    let tampered = format!(
-        "{}\n\n[[package]]\nname = \"__tampered__\"\nversion = \"1.0.0\"\nresolved = \"https://fake.url\"\nintegrity = \"sha512-fake\"\ndependencies = []\n",
-        lock_content
+    let mut lock = mgc_lockfile::parser::parse_lockfile(&lock_content).unwrap();
+    let mut orphan = mgc_lockfile::Package::new(
+        "__tampered__".to_string(),
+        "1.0.0".to_string(),
+        format!("{}/__tampered__/-/__tampered__-1.0.0.tgz", registry.url),
+        "sha512-fake".to_string(),
     );
-
+    orphan.ecosystem = mgc_lockfile::EcosystemTag::Web;
+    orphan.owner_core = Some("web".to_string());
+    lock.packages.push(orphan);
+    let tampered = mgc_lockfile::writer::serialize_lockfile(&lock).unwrap();
     fs::write(&lockfile, &tampered).unwrap();
 
-    println!("Tampered lockfile (injected fake package)");
-
-    // Step 3: Try install with tampered lockfile
-    let output2 = Command::new(&mgc)
-        .arg("install")
-        .current_dir(&project)
+    // Step 3: Install must use only the manifest's reachable dependency graph.
+    let output2 = install_cmd_with_home(&mgc, &project, &registry.url, &isolated_home)
         .output()
         .expect("Failed to run mgc install");
+    assert!(
+        output2.status.success(),
+        "orphan lock entry must not poison an otherwise valid install:\n{}",
+        String::from_utf8_lossy(&output2.stderr)
+    );
+    registry.tampered_tarball.assert();
+    let repaired = mgc_lockfile::parser::load_lockfile(&lockfile).unwrap();
+    assert!(
+        !repaired
+            .packages
+            .iter()
+            .any(|package| package.name == "__tampered__"),
+        "unreachable package must be removed from the MGC-owned Web lock slice"
+    );
+    assert!(project.join("node_modules/is-odd/index.js").is_file());
+}
 
-    if !output2.status.success() {
-        // Detected tamper - either via lockfile check OR download failure
-        let stderr = String::from_utf8_lossy(&output2.stderr);
+#[test]
+fn test_remove_last_dependency_prunes_lock() {
+    // Removing the last root dependency must update the manifest, lock,
+    // and materialized tree as one coherent result.
+    let temp = TempDir::new().unwrap();
+    let project = temp.path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    let registry = RegistryFixture::new();
+    create_fixture_web_project(&project, "3.0.1");
+    let home = temp.path().join("isolated-home");
+    let mgc = find_mgc_binary();
 
-        // Should fail somehow (lockfile check, download fail, etc)
-        assert!(
-            stderr.contains("lockfile")
-                || stderr.contains("checksum")
-                || stderr.contains("integrity")
-                || stderr.contains("404")  // Fake package not found
-                || stderr.contains("download failed"),
-            "Error doesn't indicate tamper detection:\n{}",
-            stderr
-        );
-        println!(
-            "Lockfile tamper detected (via: {})",
-            if stderr.contains("404") || stderr.contains("download") {
-                "download failure"
-            } else {
-                "integrity check"
-            }
-        );
-    } else {
-        // Silent fix: regenerated lockfile
-        let new_content = fs::read_to_string(&lockfile).unwrap();
-        assert_ne!(
-            new_content, tampered,
-            "Lockfile not regenerated after tamper"
-        );
-        println!("Lockfile tamper handled by regeneration");
-    }
+    let install = install_cmd_with_home(&mgc, &project, &registry.url, &home)
+        .output()
+        .expect("run initial fixture install");
+    assert!(
+        install.status.success(),
+        "initial install failed:\n{}",
+        String::from_utf8_lossy(&install.stderr)
+    );
+    assert!(project.join("node_modules/is-odd/index.js").is_file());
+
+    let remove = web_command_with_home(&mgc, &project, &registry.url, &home)
+        .arg("remove")
+        .arg("is-odd")
+        .output()
+        .expect("run native mgc remove");
+    assert!(
+        remove.status.success(),
+        "remove last dependency failed:\n{}",
+        String::from_utf8_lossy(&remove.stderr)
+    );
+
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(project.join("package.json")).unwrap()).unwrap();
+    assert!(manifest["dependencies"].get("is-odd").is_none());
+    let lock = mgc_lockfile::parser::load_lockfile(&project.join("mgc.lock")).unwrap();
+    assert!(
+        !lock.packages.iter().any(|package| {
+            package.ecosystem == mgc_lockfile::EcosystemTag::Web && package.name == "is-odd"
+        }),
+        "removing the final dependency must remove its stale mgc.lock entry"
+    );
+    assert!(
+        !project.join("node_modules/is-odd").exists(),
+        "removing the final dependency must remove its materialized package"
+    );
 }
 
 #[test]
 fn test_race_condition_add_remove() {
-    // P1.2 STRESS: Concurrent add/remove race condition
-    // Tests: manifest lock, no corruption
-
+    // Race both operations from an empty project. Whichever acquires the
+    // project lock first, the successful serialized operations must leave
+    // manifest, lock, and materialized tree in agreement.
     println!("\n=== Race Condition: Concurrent Add/Remove ===");
 
     let temp = TempDir::new().unwrap();
     let project = temp.path().join("project");
     fs::create_dir_all(&project).unwrap();
-    create_minimal_web_project(&project);
-
+    let registry = RegistryFixture::new();
+    create_fixture_web_project(&project, "*");
+    let home = temp.path().join("isolated-home");
     let mgc = find_mgc_binary();
+    let barrier = Arc::new(std::sync::Barrier::new(2));
 
-    // Initial install
-    let output = Command::new(&mgc)
-        .arg("install")
-        .current_dir(&project)
-        .output()
-        .expect("Failed to run mgc install");
-
-    assert!(output.status.success(), "Initial install failed");
-
-    println!("Initial install successful");
-
-    // Spawn 2 threads: one adds axios, one removes lodash
     let mgc1 = mgc.clone();
     let mgc2 = mgc.clone();
-    let proj1 = project.clone();
-    let proj2 = project.clone();
+    let project1 = project.clone();
+    let project2 = project.clone();
+    let url1 = registry.url.clone();
+    let url2 = registry.url.clone();
+    let home1 = home.clone();
+    let home2 = home.clone();
+    let barrier1 = Arc::clone(&barrier);
+    let barrier2 = Arc::clone(&barrier);
 
-    let handle1 = thread::spawn(move || {
-        Command::new(&mgc1)
+    let add = thread::spawn(move || {
+        barrier1.wait();
+        web_command_with_home(&mgc1, &project1, &url1, &home1)
             .arg("add")
-            .arg("axios")
-            .current_dir(&proj1)
+            .arg("is-odd@3.0.1")
             .output()
     });
-
-    let handle2 = thread::spawn(move || {
-        Command::new(&mgc2)
+    let remove = thread::spawn(move || {
+        barrier2.wait();
+        web_command_with_home(&mgc2, &project2, &url2, &home2)
             .arg("remove")
-            .arg("lodash")
-            .current_dir(&proj2)
+            .arg("is-odd")
             .output()
     });
 
-    let result1 = handle1.join().unwrap();
-    let result2 = handle2.join().unwrap();
-
-    println!(
-        "Add result: {:?}",
-        result1.as_ref().map(|o| o.status.success())
+    let add = add.join().unwrap().expect("add process must spawn");
+    let remove = remove.join().unwrap().expect("remove process must spawn");
+    assert!(
+        add.status.success(),
+        "serialized add failed:\n{}",
+        String::from_utf8_lossy(&add.stderr)
     );
-    println!(
-        "Remove result: {:?}",
-        result2.as_ref().map(|o| o.status.success())
+    assert!(
+        remove.status.success(),
+        "serialized remove failed:\n{}",
+        String::from_utf8_lossy(&remove.stderr)
     );
 
-    // At least one should succeed (or both fail with lock error)
-    let both_failed = result1.as_ref().map_or(true, |o| !o.status.success())
-        && result2.as_ref().map_or(true, |o| !o.status.success());
-
-    if both_failed {
-        // Both failed - should be file system error or concurrent modification
-        let err1 = result1.unwrap().stderr;
-        let err2 = result2.unwrap().stderr;
-        let stderr_combined = format!(
-            "{}\n{}",
-            String::from_utf8_lossy(&err1),
-            String::from_utf8_lossy(&err2)
-        );
-
-        // Accept lock error OR file system race errors (reflink, directory not empty)
-        assert!(
-            stderr_combined.contains("lock")
-                || stderr_combined.contains("concurrent")
-                || stderr_combined.contains("in use")
-                || stderr_combined.contains("reflink")
-                || stderr_combined.contains("Directory not empty")
-                || stderr_combined.contains("No such file"),
-            "No expected race/lock error mentioned:\n{}",
-            stderr_combined
-        );
-        println!("Race condition handled with error (lock or file system race)");
-    } else {
-        // Verify package.json not corrupted
-        let pkg_json = fs::read_to_string(project.join("package.json")).unwrap();
-        serde_json::from_str::<serde_json::Value>(&pkg_json)
-            .expect("package.json corrupted by race condition");
-
-        println!("Race condition handled - manifest not corrupted");
-    }
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(project.join("package.json")).unwrap())
+            .expect("package.json must remain valid after concurrent mutation");
+    let declared = manifest["dependencies"].get("is-odd").is_some();
+    let lock = mgc_lockfile::parser::load_lockfile(&project.join("mgc.lock"))
+        .expect("mgc.lock must remain valid after concurrent mutation");
+    let locked = lock.packages.iter().any(|package| {
+        package.ecosystem == mgc_lockfile::EcosystemTag::Web && package.name == "is-odd"
+    });
+    let materialized = project.join("node_modules/is-odd/index.js").is_file();
+    assert_eq!(declared, locked, "manifest and lock must agree after race");
+    assert_eq!(
+        declared, materialized,
+        "manifest and node_modules must agree after race"
+    );
 }
 
 #[test]
@@ -419,40 +486,40 @@ fn test_network_timeout_offline_mode() {
     let temp = TempDir::new().unwrap();
     let project = temp.path().join("project");
     fs::create_dir_all(&project).unwrap();
-    create_minimal_web_project(&project);
+    let isolated_home = temp.path().join("isolated-home");
 
     let mgc = find_mgc_binary();
+    let registry = RegistryFixture::new();
+    create_fixture_web_project(&project, "3.0.1");
 
-    // Step 1: Online install to populate cache + lockfile
-    let output1 = Command::new(&mgc)
-        .arg("install")
-        .current_dir(&project)
+    // Step 1: Install from the hermetic registry to populate cache + lock.
+    let output1 = install_cmd_with_home(&mgc, &project, &registry.url, &isolated_home)
         .output()
         .expect("Failed to run mgc install");
 
-    assert!(output1.status.success(), "Initial install failed");
-    println!("Initial online install successful");
+    assert!(
+        output1.status.success(),
+        "Initial fixture install failed:\n{}",
+        String::from_utf8_lossy(&output1.stderr)
+    );
+    println!("Initial fixture install successful");
 
-    // Step 2: Offline install with existing lockfile
-    let output2 = Command::new(&mgc)
-        .arg("install")
+    // Step 2: Point at an unreachable registry and prove the warm offline
+    // install succeeds without depending on public network state.
+    // (Trỏ sang registry không thể truy cập và chứng minh offline install
+    // chạy được từ cache ấm, không phụ thuộc mạng công cộng.)
+    let output2 = install_cmd_with_home(&mgc, &project, "http://127.0.0.1:9", &isolated_home)
         .arg("--offline")
-        .current_dir(&project)
         .output()
         .expect("Failed to run mgc install --offline");
 
-    if output2.status.success() {
-        println!("Offline install successful with cached data");
-    } else {
-        let stderr = String::from_utf8_lossy(&output2.stderr);
-        // Should mention network/offline/cache
-        assert!(
-            stderr.contains("offline") || stderr.contains("network") || stderr.contains("cache"),
-            "Error doesn't explain offline failure:\n{}",
-            stderr
-        );
-        println!("Offline mode error is clear");
-    }
+    assert!(
+        output2.status.success(),
+        "warm offline reinstall should succeed with unreachable registry:\n{}",
+        String::from_utf8_lossy(&output2.stderr)
+    );
+    assert!(project.join("node_modules/is-odd/index.js").is_file());
+    println!("Offline reinstall succeeded from verified warm cache");
 }
 
 // In-process mock npm registry — mirrors cli/tests/kill_injection_matrix.rs.
@@ -470,6 +537,7 @@ fn test_network_timeout_offline_mode() {
 struct RegistryFixture {
     _server: mockito::ServerGuard,
     _mocks: Vec<mockito::Mock>,
+    tampered_tarball: mockito::Mock,
     url: String,
 }
 
@@ -496,10 +564,16 @@ impl RegistryFixture {
             .with_body(package_tarball())
             .expect_at_least(1)
             .create();
+        let tampered_tarball = server
+            .mock("GET", "/__tampered__/-/__tampered__-1.0.0.tgz")
+            .with_status(500)
+            .expect(0)
+            .create();
 
         Self {
             _server: server,
             _mocks: vec![metadata_mock, tarball_mock],
+            tampered_tarball,
             url,
         }
     }
@@ -551,12 +625,27 @@ fn package_tarball() -> Vec<u8> {
 /// (Lệnh install ghim registry giả với cache nằm trong project tạm — kín
 /// hoàn toàn, cùng dạng kill_injection_matrix.)
 fn install_cmd(mgc: &str, project: &Path, registry_url: &str) -> Command {
-    let mut cmd = Command::new(mgc);
-    cmd.arg("--core").arg("web").arg("install");
-    cmd.current_dir(project);
+    let home = project.join(".test-home");
+    install_cmd_with_home(mgc, project, registry_url, &home)
+}
+
+/// Install through the hermetic web lane with an explicit HOME/store owner.
+/// (Install lane web kín với HOME/store owner tường minh.)
+fn install_cmd_with_home(mgc: &str, project: &Path, registry_url: &str, home: &Path) -> Command {
+    let mut command = web_command_with_home(mgc, project, registry_url, home);
+    command.arg("install");
+    command
+}
+
+/// Build a hermetic web command with explicit project and store roots.
+/// (Tạo web command kín với project/store root tường minh.)
+fn web_command_with_home(mgc: &str, project: &Path, registry_url: &str, home: &Path) -> Command {
+    let mut cmd = isolated_command(mgc, home);
+    cmd.arg("--core").arg("web");
     cmd.env("MAGICORE_WEB_REGISTRY_URL", registry_url);
     cmd.env("MAGICORE_WEB_ALLOWED_REGISTRIES", registry_url);
     cmd.env("MGC_CACHE_DIR", project.join(".magicore"));
+    cmd.current_dir(project);
     cmd
 }
 
@@ -761,26 +850,13 @@ fn test_frozen_mode_blocks_lockfile_mutation() {
     let mgc = find_mgc_binary();
     let temp = TempDir::new().unwrap();
     let project = temp.path();
-
-    // Create project with dependencies
-    fs::write(
-        project.join("package.json"),
-        r#"{
-  "name": "test-frozen",
-  "version": "1.0.0",
-  "dependencies": {
-    "lodash": "^4.17.21"
-  }
-}"#,
-    )
-    .unwrap();
-    fs::write(project.join(".mgc.core"), "web\n").unwrap();
+    let isolated_home = temp.path().join("isolated-home");
+    let registry = RegistryFixture::new();
+    create_fixture_web_project(project, "3.0.1");
 
     // Step 1: Initial install (creates lockfile)
     println!("Initial install to create lockfile...");
-    let install1 = Command::new(&mgc)
-        .arg("install")
-        .current_dir(project)
+    let install1 = install_cmd_with_home(&mgc, project, &registry.url, &isolated_home)
         .output()
         .expect("Failed mgc install");
 
@@ -794,27 +870,15 @@ fn test_frozen_mode_blocks_lockfile_mutation() {
         project.join("mgc.lock").exists(),
         "Lockfile should be created"
     );
+    let original_lock = fs::read(project.join("mgc.lock")).unwrap();
 
-    // Step 2: Modify manifest (add new dependency)
-    fs::write(
-        project.join("package.json"),
-        r#"{
-  "name": "test-frozen",
-  "version": "1.0.0",
-  "dependencies": {
-    "lodash": "^4.17.21",
-    "axios": "^1.0.0"
-  }
-}"#,
-    )
-    .unwrap();
+    // Step 2: Change the locked package's requirement beyond its pin.
+    create_fixture_web_project(project, "^4.0.0");
 
     // Step 3: Try install --frozen (should FAIL because lockfile outdated)
     println!("Attempting frozen install with modified manifest...");
-    let install2 = Command::new(&mgc)
-        .arg("install")
+    let install2 = install_cmd_with_home(&mgc, project, &registry.url, &isolated_home)
         .arg("--frozen")
-        .current_dir(project)
         .output()
         .expect("Failed mgc install --frozen");
 
@@ -822,7 +886,7 @@ fn test_frozen_mode_blocks_lockfile_mutation() {
     if install2.status.success() {
         panic!(
             "BUG: Frozen mode allowed lockfile mutation!\n\
-             Manifest added axios but frozen install succeeded.\n\
+             Manifest requirement changed but frozen install succeeded.\n\
              Frozen mode MUST fail when dependencies change."
         );
     }
@@ -834,6 +898,11 @@ fn test_frozen_mode_blocks_lockfile_mutation() {
     assert!(
         stderr.contains("frozen") || stderr.contains("lockfile") || stderr.contains("outdated"),
         "Error should mention frozen mode or lockfile mismatch"
+    );
+    assert_eq!(
+        fs::read(project.join("mgc.lock")).unwrap(),
+        original_lock,
+        "frozen install must not mutate the existing lockfile"
     );
 
     println!("Frozen mode correctly blocked lockfile mutation");

@@ -81,6 +81,50 @@ fn mgc_env_flag(key: &str) -> bool {
         .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
 }
 
+fn is_manifest_root_package(manifest: &Manifest, package_id: &PackageId) -> bool {
+    manifest.all_dependencies().any(|dependency| {
+        dependency.name == *package_id.name() && dependency.range.matches(package_id.version())
+    })
+}
+
+fn prune_unreachable_packages(graph: &mut ResolvedGraph) {
+    let indexes: std::collections::HashMap<_, _> = graph
+        .packages
+        .iter()
+        .enumerate()
+        .map(|(index, package)| (package.id.to_string(), index))
+        .collect();
+    let mut pending: Vec<_> = graph
+        .packages
+        .iter()
+        .filter(|package| package.direct)
+        .map(|package| package.id.to_string())
+        .collect();
+    let mut reachable = std::collections::HashSet::new();
+    while let Some(id) = pending.pop() {
+        if !reachable.insert(id.clone()) {
+            continue;
+        }
+        let Some(index) = indexes.get(&id).copied() else {
+            continue;
+        };
+        let package = &graph.packages[index];
+        pending.extend(package.deps.iter().map(ToString::to_string));
+        pending.extend(package.peer_deps.iter().map(ToString::to_string));
+    }
+    graph
+        .packages
+        .retain(|package| reachable.contains(&package.id.to_string()));
+}
+
+fn normalize_resolved_graph(manifest: &Manifest, mut graph: ResolvedGraph) -> ResolvedGraph {
+    for package in &mut graph.packages {
+        package.direct = is_manifest_root_package(manifest, &package.id);
+    }
+    prune_unreachable_packages(&mut graph);
+    graph
+}
+
 /// Return a package version only when a range denotes one exact version.
 /// A range's satisfying lower bound is not evidence that the registry chose it.
 fn exact_version_from_range(range: &VersionRange) -> Option<Version> {
@@ -633,6 +677,7 @@ impl WebAdapter {
             && lockfile_satisfies_manifest(&lockfile, manifest)
             && let Ok(Some(graph)) = build_graph_from_lockfile(&lockfile, manifest)
         {
+            let graph = normalize_resolved_graph(manifest, graph);
             profile.mark("lockfile_short_circuit", started_at);
             profile.flush(started_at.elapsed().as_millis() as u64);
             return Ok(graph);
@@ -648,6 +693,7 @@ impl WebAdapter {
             (self.shared_cache.as_ref(), resolution_cache_key.as_deref())
             && let Some(graph) = shared_cache.read_resolution(key, &self.registry_url)?
         {
+            let graph = normalize_resolved_graph(manifest, graph);
             profile.mark("shared_resolution_cache_hit", started_at);
             profile.flush(started_at.elapsed().as_millis() as u64);
             return Ok(graph);
@@ -707,7 +753,15 @@ impl WebAdapter {
             .resolutions
             .iter()
             .map(|r| {
-                let is_direct = manifest.find_dep(r.package_id.name().as_str()).is_some();
+                // A package name can appear both as a root and as a peer
+                // instance at another version. Name-only matching marked
+                // every instance as a root, producing invalid owner-scoped
+                // lock roots and making a freshly written lock unusable in
+                // frozen mode. A root edge must satisfy the actual manifest
+                // range, not merely share its name.
+                // (Không chỉ so tên: peer instance khác version không phải
+                // root nếu không thỏa range manifest.)
+                let is_direct = is_manifest_root_package(manifest, &r.package_id);
                 let is_dev = manifest
                     .dev_dependencies
                     .iter()
@@ -810,7 +864,7 @@ impl WebAdapter {
                 registry_url,
             ));
         }
-        let graph = ResolvedGraph { packages };
+        let graph = normalize_resolved_graph(manifest, ResolvedGraph { packages });
         if let (Some(shared_cache), Some(key)) =
             (self.shared_cache.as_ref(), resolution_cache_key.as_deref())
         {

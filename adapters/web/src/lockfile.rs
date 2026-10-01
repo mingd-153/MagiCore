@@ -107,25 +107,19 @@ pub fn read_web_lockfile_checked(project_root: &Path) -> MgResult<Option<Lockfil
 /// (Chỉ writer đọc toàn bộ lock; reader nghiệp vụ phải dùng bản đã scope.)
 fn read_web_lockfile_document(project_root: &Path) -> MgResult<Option<Lockfile>> {
     let lock_path = project_root.join("mgc.lock");
-    match std::fs::symlink_metadata(&lock_path) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+    let bytes = match mgc_lockfile::read_lockfile_bytes(&lock_path) {
+        Ok(bytes) => bytes,
+        Err(mgc_lockfile::LockfileError::IoError(error))
+            if error.kind() == std::io::ErrorKind::NotFound =>
+        {
+            return Ok(None);
+        }
         Err(error) => {
-            return Err(MgError::Other(format!(
-                "cannot inspect lockfile '{}': {error}",
-                lock_path.display()
-            )));
+            return Err(MgError::Other(format!("Failed to read lockfile: {error}")));
         }
-        Ok(metadata) if metadata.file_type().is_file() => {}
-        Ok(_) => {
-            return Err(MgError::Other(format!(
-                "refusing non-regular lockfile '{}'",
-                lock_path.display()
-            )));
-        }
-    }
-
-    let content = std::fs::read_to_string(&lock_path)
-        .map_err(|e| MgError::Other(format!("Failed to read lockfile: {}", e)))?;
+    };
+    let content = String::from_utf8(bytes)
+        .map_err(|error| MgError::Other(format!("Lockfile is not valid UTF-8: {error}")))?;
 
     // Dual-format reader: TOML chuẩn v2 (import/migrate ghi) trước, JSON-flavoured
     // (add/install path cũ) fallback — cùng 1 kiểu Lockfile nên chuyển giá vô hình.
@@ -202,6 +196,7 @@ pub fn write_web_lockfile_with_state(
         // chân lý của root; root_dependencies giữ rỗng (P0 finding #6:
         // trường này dành cho IMPORTER, web để []).
         root_dependencies: Vec::new(),
+        root_dependencies_by_owner: Default::default(),
         packages: Vec::new(),
         workspace: None,
         optimizer_profile: None,
@@ -250,6 +245,8 @@ pub fn write_web_lockfile_with_state(
                 resolved: pkg.tarball_url.clone(),
                 integrity,
                 dependencies: pkg.deps.iter().map(ToString::to_string).collect(),
+                peers: (!pkg.peer_deps.is_empty())
+                    .then(|| pkg.peer_deps.iter().map(ToString::to_string).collect()),
                 ecosystem: mgc_lockfile::EcosystemTag::Web,
                 // Web is the one MGC-native engine — every entry records its
                 // registry source and CAS ref so the lock owns the graph.
@@ -268,6 +265,18 @@ pub fn write_web_lockfile_with_state(
             || (legacy_v2 && package.ecosystem == mgc_lockfile::EcosystemTag::Other))
     });
     lockfile.packages.extend(next_web_packages);
+    let direct_roots: Vec<String> = graph
+        .packages
+        .iter()
+        .filter(|package| package.direct)
+        .map(|package| package.id.to_string())
+        .collect();
+    mgc_lockfile::update_owner_root_pins(
+        &mut lockfile,
+        &owner_core,
+        mgc_lockfile::EcosystemTag::Web,
+        direct_roots,
+    );
     lockfile.version = LOCKFILE_SCHEMA_VERSION.to_string();
 
     // Write lockfile — CANONICAL TOML v2 (một format duy nhất cho mọi đường ghi;

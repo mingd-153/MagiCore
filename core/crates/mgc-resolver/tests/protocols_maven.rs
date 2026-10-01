@@ -3,17 +3,16 @@
 
 #![allow(clippy::unwrap_used)]
 
+use mgc_resolver::protocols::maven::collect_pom_dependencies;
 use mgc_resolver::protocols::sha256_hex;
 use mgc_resolver::protocols::{MavenProtocol, RegistryProtocol};
 
 async fn mock_server() -> Option<mockito::ServerGuard> {
     match std::net::TcpListener::bind("127.0.0.1:0") {
         Ok(listener) => drop(listener),
-        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
-            eprintln!("warning: skipping maven mock test because localhost bind is blocked");
-            return None;
-        }
-        Err(error) => panic!("failed to probe localhost bind: {error}"),
+        Err(error) => panic!(
+            "Maven mock tests require localhost; refusing to report skipped tests as passing: {error}"
+        ),
     }
     Some(mockito::Server::new_async().await)
 }
@@ -70,6 +69,22 @@ const POM: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
     </dependency>
   </dependencies>
 </project>"#;
+
+#[test]
+fn maven_pom_rejects_dependency_with_incomplete_coordinates() {
+    for dependency in [
+        "<dependency><artifactId>missing-group</artifactId><version>1.0</version></dependency>",
+        "<dependency><groupId>com.example</groupId><version>1.0</version></dependency>",
+    ] {
+        let pom = format!("<project><dependencies>{dependency}</dependencies></project>");
+        let error = collect_pom_dependencies(&pom)
+            .expect_err("incomplete dependency coordinates must not be silently dropped");
+        assert!(
+            error.to_string().contains("groupId") || error.to_string().contains("artifactId"),
+            "error must identify the missing coordinate field: {error}"
+        );
+    }
+}
 
 #[tokio::test]
 async fn maven_resolves_graph_filters_scopes_and_materializes_m2_layout() {

@@ -9,52 +9,102 @@ use std::path::Path;
 
 /// Ghi file nguyên tử (Atomic write) — tránh lỗi hỏng file khi crash giữa chừng
 pub fn atomic_write(path: &Path, data: &[u8]) -> MgResult<()> {
-    let dir = path.parent().unwrap_or(Path::new("."));
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_file() => {
+            mgc_adapter_base::project_file::atomic_write_regular(path, data)
+        }
+        Ok(_) => Err(MgError::Other(format!(
+            "refusing to atomically write non-regular or linked path: {}",
+            path.display()
+        ))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => atomic_create_new(path, data),
+        Err(error) => Err(MgError::Other(format!(
+            "inspect atomic-write destination {}: {error}",
+            path.display()
+        ))),
+    }
+}
 
-    let tmp_path = dir.join(format!(
-        ".mgc-tmp-{}-{}",
+/// Publish a previously absent file through a unique same-directory staging file.
+/// File mới được publish từ staging duy nhất cùng thư mục.
+fn atomic_create_new(path: &Path, data: &[u8]) -> MgResult<()> {
+    use std::io::Write;
+
+    let parent = path.parent().unwrap_or(Path::new("."));
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| MgError::Other(format!("invalid write path: {}", path.display())))?;
+    let temp = parent.join(format!(
+        ".{}.mgc-tmp-{}-{}",
+        file_name.to_string_lossy(),
         std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos()
+        uuid::Uuid::new_v4()
     ));
-
-    if path.exists() {
-        let backup_path = path.with_extension("bak");
-        let _ = std::fs::copy(path, &backup_path);
+    let result = (|| {
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o644).custom_flags(libc::O_NOFOLLOW);
+        }
+        let mut file = options
+            .open(&temp)
+            .map_err(|error| MgError::Other(format!("create atomic staging file: {error}")))?;
+        file.write_all(data)
+            .and_then(|()| file.sync_all())
+            .map_err(|error| MgError::Other(format!("sync atomic staging file: {error}")))?;
+        match std::fs::symlink_metadata(path) {
+            Ok(_) => {
+                return Err(MgError::Other(format!(
+                    "atomic-write destination appeared during publication: {}",
+                    path.display()
+                )));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(MgError::Other(format!(
+                    "recheck atomic-write destination {}: {error}",
+                    path.display()
+                )));
+            }
+        }
+        mgc_lockfile::atomic::atomic_replace_file(&temp, path)
+            .map_err(|error| MgError::Other(format!("publish atomic file: {error}")))?;
+        #[cfg(unix)]
+        std::fs::File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| MgError::Other(format!("sync atomic-write directory: {error}")))?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
     }
-
-    std::fs::write(&tmp_path, data).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp_path);
-        MgError::Other(format!("failed to write temp file: {e}"))
-    })?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&tmp_path)
-            .map(|m| m.permissions())
-            .unwrap_or_else(|_| std::fs::Permissions::from_mode(0o644));
-        perms.set_mode(0o644);
-        let _ = std::fs::set_permissions(&tmp_path, perms);
-    }
-
-    std::fs::rename(&tmp_path, path).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp_path);
-        MgError::Other(format!("failed to rename temp file: {e}"))
-    })?;
-
-    Ok(())
+    result
 }
 
 /// Chỉ ghi file nếu nội dung thay đổi (Atomic write if changed)
 pub fn atomic_write_if_changed(path: &Path, data: &[u8]) -> MgResult<bool> {
-    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
-    if let Ok(existing) = std::fs::read(path)
-        && existing == data
-    {
-        return Ok(false);
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_file() => {
+            let existing = mgc_adapter_base::project_file::read_regular_text(path, "package.json")?;
+            if existing.as_bytes() == data {
+                return Ok(false);
+            }
+        }
+        Ok(_) => {
+            return Err(MgError::Other(format!(
+                "refusing to update non-regular or linked path: {}",
+                path.display()
+            )));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(MgError::Other(format!(
+                "inspect update destination {}: {error}",
+                path.display()
+            )));
+        }
     }
 
     atomic_write(path, data)?;
@@ -98,7 +148,8 @@ impl PackageJson {
     }
 
     pub fn load(path: &Path) -> Result<Self, anyhow::Error> {
-        Ok(serde_json::from_str(&std::fs::read_to_string(path)?)?)
+        let content = mgc_adapter_base::project_file::read_regular_text(path, "package.json")?;
+        Ok(serde_json::from_str(&content)?)
     }
 
     pub fn save(&self, path: &Path) -> Result<(), anyhow::Error> {
@@ -175,8 +226,38 @@ pub fn write_manifest(project_root: &Path, manifest: &Manifest) -> MgResult<()> 
         .as_ref()
         .map(|v| v.to_string())
         .unwrap_or_else(|| "0.1.0".to_string());
-    let existing = PackageJson::load(&pkg_path)
-        .unwrap_or_else(|_| PackageJson::new(manifest.name.clone(), fallback_version));
+    let existing = match std::fs::symlink_metadata(&pkg_path) {
+        Ok(_) => PackageJson::load(&pkg_path)
+            .map_err(|error| MgError::Other(format!("read existing package.json: {error}")))?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            PackageJson::new(manifest.name.clone(), fallback_version)
+        }
+        Err(error) => {
+            return Err(MgError::Other(format!("inspect package.json: {error}")));
+        }
+    };
+    let merge_workspace = |deps: &[DependencySpec],
+                           old: Option<&std::collections::HashMap<String, String>>|
+     -> MgResult<Option<std::collections::HashMap<String, String>>> {
+        let mut entries = to_map(deps);
+        if let Some(old) = old {
+            for (name, range) in old {
+                if is_workspace_protocol_range(range) {
+                    if entries.contains_key(name) {
+                        return Err(MgError::Unsupported {
+                            core: "web",
+                            capability: "replace workspace dependency source",
+                            guidance: format!(
+                                "dependency '{name}' is currently workspace-owned; MagiCore refuses to silently replace its source with a registry pin"
+                            ),
+                        });
+                    }
+                    entries.entry(name.clone()).or_insert_with(|| range.clone());
+                }
+            }
+        }
+        Ok((!entries.is_empty()).then_some(entries))
+    };
     let pkg = PackageJson {
         name: manifest.name.clone(),
         version: manifest
@@ -185,26 +266,19 @@ pub fn write_manifest(project_root: &Path, manifest: &Manifest) -> MgResult<()> 
             .map(|v| v.to_string())
             .unwrap_or(existing.version),
         description: existing.description,
-        dependencies: if manifest.dependencies.is_empty() {
-            None
-        } else {
-            Some(to_map(&manifest.dependencies))
-        },
-        dev_dependencies: if manifest.dev_dependencies.is_empty() {
-            None
-        } else {
-            Some(to_map(&manifest.dev_dependencies))
-        },
-        peer_dependencies: if manifest.peer_dependencies.is_empty() {
-            None
-        } else {
-            Some(to_map(&manifest.peer_dependencies))
-        },
-        optional_dependencies: if manifest.optional_dependencies.is_empty() {
-            None
-        } else {
-            Some(to_map(&manifest.optional_dependencies))
-        },
+        dependencies: merge_workspace(&manifest.dependencies, existing.dependencies.as_ref())?,
+        dev_dependencies: merge_workspace(
+            &manifest.dev_dependencies,
+            existing.dev_dependencies.as_ref(),
+        )?,
+        peer_dependencies: merge_workspace(
+            &manifest.peer_dependencies,
+            existing.peer_dependencies.as_ref(),
+        )?,
+        optional_dependencies: merge_workspace(
+            &manifest.optional_dependencies,
+            existing.optional_dependencies.as_ref(),
+        )?,
         extra: existing.extra,
     };
     pkg.save(&pkg_path)?;

@@ -336,7 +336,8 @@ impl IotAdapter {
 
     pub fn board(&self, root: &Path) -> Option<String> {
         // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
-        if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml"))
+        if let Ok(Some(content)) =
+            mgc_config::project::read_regular_project_text(&root.join("mgc.toml"), "project config")
             && let Ok(v) = toml::from_str::<toml::Value>(&content)
         {
             return v

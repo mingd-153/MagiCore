@@ -50,7 +50,15 @@ pub async fn run(cli: Cli) -> Result<()> {
             dispatch_command(command, core, cli.recursive).await
         }
         Some(command) if cli.recursive => run_recursive(command, core, cli.filter.as_deref()).await,
-        Some(command) => dispatch_command(command, core, false).await,
+        Some(command) => {
+            if let Some(command_core) = explicit_dependency_core(&command) {
+                let cwd = std::env::current_dir()?;
+                let root =
+                    mgc_config::project::ProjectConfig::find_project_root(&cwd).unwrap_or(cwd);
+                validate_explicit_dependency_core(&root, command_core, core)?;
+            }
+            dispatch_command(command, core, false).await
+        }
         None => {
             let cores = crate::factory::available_cores();
             mgc_ui::help::print_custom_help(&cores);
@@ -66,6 +74,90 @@ fn workspace_package_name(project_root: &Path) -> Option<String> {
         .ok()
         .flatten()
         .map(|m| m.name)
+}
+
+/// Resolve a recursive workspace's core without allowing a global selector to
+/// contradict its persisted MGC identity.
+/// Xác định core workspace đệ quy, không cho cờ toàn cục trái identity đã lưu.
+fn resolve_recursive_workspace_core(
+    workspace: &Path,
+    requested: Option<&str>,
+) -> Result<Option<String>> {
+    let marker = mgc_config::project::ProjectConfig::read_core_marker(workspace)?;
+    let Some(requested) = requested else {
+        return Ok(marker);
+    };
+    // Marker reading already cross-checks mgc.toml; only load config separately
+    // for a legacy workspace that has config but no marker.
+    // (Marker reader đã đối chiếu mgc.toml; chỉ load riêng project legacy thiếu marker.)
+    let persisted = match marker.as_deref() {
+        Some(core) => Some(core.to_string()),
+        None => mgc_config::project::ProjectConfig::load(workspace)?.map(|config| config.ecosystem),
+    };
+
+    let requested_core = mgc_types::Ecosystem::from_str(requested)
+        .ok_or_else(|| crate::error::unknown_ecosystem(requested))?;
+    if let Some(persisted) = persisted {
+        let persisted_core = mgc_types::Ecosystem::from_str(&persisted)
+            .ok_or_else(|| crate::error::unknown_ecosystem(&persisted))?;
+        if requested_core != persisted_core {
+            bail!(
+                "recursive --core '{}' conflicts with workspace '{}' identity '{}'; refusing cross-core dispatch",
+                requested_core.as_str(),
+                workspace.display(),
+                persisted_core.as_str(),
+            );
+        }
+    }
+    Ok(Some(requested_core.as_str().to_string()))
+}
+
+/// Return the core selected by a core-specific dependency command.
+/// Lấy core được chọn bởi lệnh dependency định danh sẵn.
+fn explicit_dependency_core(command: &Commands) -> Option<&'static str> {
+    let (operation, core) = command_name(command).split_once('-')?;
+    matches!(operation, "install" | "add" | "remove" | "update" | "list")
+        .then(|| mgc_types::Ecosystem::from_str(core).map(|ecosystem| ecosystem.as_str()))
+        .flatten()
+}
+
+/// Refuse a core-specific dependency command that contradicts either the
+/// global selector or the workspace's persisted/detected owner.
+/// Từ chối lệnh dependency trái cờ toàn cục hoặc owner đã lưu của workspace.
+fn validate_explicit_dependency_core(
+    workspace: &Path,
+    command_core: &str,
+    global_core: Option<&str>,
+) -> Result<()> {
+    let command_core = mgc_types::Ecosystem::from_str(command_core)
+        .ok_or_else(|| crate::error::unknown_ecosystem(command_core))?;
+    if let Some(global_core) = global_core {
+        let global_core = mgc_types::Ecosystem::from_str(global_core)
+            .ok_or_else(|| crate::error::unknown_ecosystem(global_core))?;
+        if command_core != global_core {
+            return Err(crate::error::core_selector_conflicts_command(
+                command_core.as_str(),
+                global_core.as_str(),
+            ));
+        }
+    }
+
+    let Some(actual) = mgc_config::project::ProjectConfig::detect_core(workspace)? else {
+        return Err(crate::error::project_core_identity_missing(
+            workspace,
+            command_core.as_str(),
+        ));
+    };
+    let actual = mgc_types::Ecosystem::from_str(&actual)
+        .ok_or_else(|| crate::error::unknown_ecosystem(&actual))?;
+    if command_core != actual {
+        return Err(crate::error::project_core_identity_mismatch(
+            workspace,
+            command_core.as_str(),
+            actual.as_str(),
+        ));
+    }
+    Ok(())
 }
 
 /// Các lệnh workspace-aware khi chạy `--recursive` (pnpm -r parity).
@@ -138,14 +230,13 @@ async fn run_recursive(command: Commands, core: Option<&str>, filter: Option<&st
         std::collections::BTreeMap::new();
 
     for ws in &workspaces {
-        // T4 core-aware: nếu --core flag không có, đọc .mgc.core marker của workspace này.
-        // Ưu tiên: CLI --core > marker file > None.
-        let ws_core: Option<String> = if core.is_some() {
-            core.map(|s| s.to_string())
-        } else {
-            // Đọc marker .mgc.core trong workspace folder
-            read_core_marker(ws)
-        };
+        if let Some(command_core) = explicit_dependency_core(&command) {
+            validate_explicit_dependency_core(ws, command_core, core)?;
+        }
+        // An explicit selector may select only unclaimed workspaces; it must
+        // never override a workspace's persisted marker/config identity.
+        // (Cờ chỉ chọn workspace chưa claim, không được ghi đè owner đã lưu.)
+        let ws_core = resolve_recursive_workspace_core(ws, core)?;
         let ws_core_str = ws_core.as_deref();
 
         let ws_name = workspace_package_name(ws).unwrap_or_else(|| {
@@ -196,21 +287,6 @@ async fn run_recursive(command: Commands, core: Option<&str>, filter: Option<&st
         return Err(crate::error::workspace_failed(failed));
     }
     Ok(())
-}
-
-/// Đọc nội dung `.mgc.core` marker file trong thư mục `dir` — trả về tên core nếu hợp lệ.
-/// Format: 1 dòng plain text = tên core (có thể có comment `# ...` sau tên).
-fn read_core_marker(dir: &Path) -> Option<String> {
-    let marker = dir.join(mgc_config::project::ProjectConfig::CORE_MARKER_FILE);
-    let content = std::fs::read_to_string(marker).ok()?;
-    // Lấy dòng đầu, bỏ comment
-    let first_line = content.lines().next()?.trim();
-    let core_name = first_line.split('#').next()?.trim();
-    if core_name.is_empty() {
-        None
-    } else {
-        Some(core_name.to_string())
-    }
 }
 
 fn recursive_supported(command: &Commands) -> bool {
@@ -311,7 +387,7 @@ fn reject_unsupported_audit_strict(command: &Commands) -> Result<()> {
 fn command_name(command: &Commands) -> &'static str {
     match command {
         Commands::Init { .. } => "init",
-        Commands::Capabilities => "capabilities",
+        Commands::Capabilities { .. } => "capabilities",
         Commands::Info { .. } => "info",
         Commands::Search { .. } => "search",
         Commands::Outdated { .. } => "outdated",

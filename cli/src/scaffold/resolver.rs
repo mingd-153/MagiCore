@@ -168,6 +168,13 @@ impl MissingLayersReport {
         self.required.push(layer);
     }
 
+    /// Record a layer resolution failure without discarding its cause.
+    /// (Giữ nguyên nguyên nhân thật khi resolve layer thất bại.)
+    pub fn add_required_failure(&mut self, layer: &str, error: impl fmt::Display) {
+        self.required
+            .push(format!("{layer} (resolution failed: {error})"));
+    }
+
     pub fn add_optional(&mut self, layer: String) {
         self.optional.push(layer);
     }

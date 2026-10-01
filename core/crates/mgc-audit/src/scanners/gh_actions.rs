@@ -63,8 +63,7 @@ pub fn audit_github_actions(project_root: &Path) -> MgResult<AuditReport> {
             .and_then(|n| n.to_str())
             .unwrap_or("workflow.yml")
             .to_string();
-        let raw = std::fs::read_to_string(path)
-            .map_err(|e| MgError::Other(format!("read {}: {e}", path.display())))?;
+        let raw = super::read_bounded_project_input(path, "workflow file")?;
         findings.extend(scan_workflow_text(&file_name, &raw)?);
         scanned += 1;
     }

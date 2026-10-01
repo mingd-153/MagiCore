@@ -18,21 +18,36 @@ pub fn optimize_project(project_root: &Path, core: &str, force: bool) -> Result<
             "RAM size could not be detected on this machine — profile degraded to Constrained and memory-derived tuning is skipped (no fabricated values).",
         );
     }
+    if hw.cpu_cores.is_none() {
+        mgc_ui::warning(
+            "Logical CPU count could not be detected — CPU-derived tuning is omitted (no fabricated core count).",
+        );
+    }
     mgc_ui::info(&format!(
-        "Detected System: {} ({}), {} Cores, {} RAM -> Profile: {:?}",
+        "Detected System: {} ({}), {} Logical Cores, {} RAM -> Profile: {:?}",
         hw.os,
         hw.arch,
-        hw.cpu_cores,
+        hw.cpu_cores
+            .map(|cores| cores.to_string())
+            .unwrap_or_else(|| "unknown".to_string()),
         hw.total_memory_gb
             .map(|gb| format!("~{gb}GB"))
             .unwrap_or_else(|| "unknown".to_string()),
         hw.profile
     ));
     if hw.gpus.is_empty() {
-        // Empty means "no GPU claimed" (none present or detection
-        // unavailable) — never upgraded to a claim downstream.
-        // (Rỗng nghĩa là "không claim GPU" — không suy diễn thêm.)
-        mgc_ui::info("Detected GPUs: none claimed on this machine");
+        let message = match hw.gpu_detection_status {
+            detect::GpuDetectionStatus::Available => {
+                "GPU inventory complete: no PCI display device detected."
+            }
+            detect::GpuDetectionStatus::Partial => {
+                "GPU inventory is partial; no device was fully identified."
+            }
+            detect::GpuDetectionStatus::Unavailable => {
+                "GPU inventory unavailable on this platform; no hardware claim made."
+            }
+        };
+        mgc_ui::info(message);
     } else {
         let names: Vec<String> = hw
             .gpus

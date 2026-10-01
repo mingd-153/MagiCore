@@ -16,7 +16,8 @@ pub async fn install(packages: Vec<String>, compat_runtime: Option<String>) -> R
                 Some("bevy"),
                 None,
                 crate::commands::dep_gate::DepOp::Install,
-            ),
+            )
+            .with_manifest_format(Some("cargo-toml")),
             None,
             &compat,
             Some(&root.join(".magicore").join("exec.log")),

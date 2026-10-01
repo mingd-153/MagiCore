@@ -41,6 +41,7 @@ anyhow = { workspace = true }
 
 # Crypto
 sha2 = { workspace = true }
+zip = { workspace = true }
 hex = { workspace = true }
 
 # Utilities
@@ -48,6 +49,7 @@ semver = { workspace = true }
 dirs = { workspace = true }
 which = "6.0"
 reqwest = { version = "0.12", features = ["json"] }
+uuid = { workspace = true }
 
 [lints]
 workspace = true

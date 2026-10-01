@@ -27,6 +27,7 @@ use crate::install::materialize::{
     materialize_strict_layout, prune_root_install_dirs, repair_dangling_symlinks,
     reset_nested_node_modules, select_root_packages, strict_vstore_package_dir,
 };
+use crate::install::script_policy::{LifecyclePackage, decide_lifecycle_scripts};
 pub use crate::install::script_policy::{
     lifecycle_scripts_allowed, load_file_scripts_policy, load_trust_policies,
     should_run_lifecycle_scripts, trust_allows_script,
@@ -198,18 +199,88 @@ pub(crate) struct CrashRecovery {
     pub removed_snaps: usize,
 }
 
-/// Recover from SIGKILLed installs (P0-2): restore the newest backup
-/// (last-known-consistent tree), delete stale staging dirs and legacy
-/// snapshot litter. Runs under the project install lock, before any
-/// mutation. Deterministic: newest backup wins by mtime; anything else
-/// with our prefixes is garbage.
-/// (Phục hồi sau SIGKILL: dựng backup mới nhất, xóa staging/snapshot
-/// cũ — chạy dưới khóa install, trước mọi mutation.)
+/// Wait for every lifecycle worker before allowing the caller to roll back
+/// the install tree. Returning on the first error would drop the JoinSet while
+/// sibling workers may still be running synchronous child processes that can
+/// mutate the tree after rollback.
+/// (Chờ hết mọi lifecycle worker trước rollback; trả sớm có thể để tiến trình
+/// con còn chạy và ghi vào cây đã phục hồi.)
+pub(crate) async fn drain_lifecycle_tasks(tasks: &mut JoinSet<MgResult<()>>) -> Option<String> {
+    let mut first_error = None;
+    while let Some(result) = tasks.join_next().await {
+        let error = match result {
+            Ok(Ok(())) => continue,
+            Ok(Err(error)) => format!("lifecycle script failed — install aborted: {error}"),
+            Err(error) => format!("lifecycle script task panicked — install aborted: {error}"),
+        };
+        if first_error.is_none() {
+            first_error = Some(error);
+        }
+    }
+    first_error
+}
+
+/// Recover from SIGKILLed installs: restore one unambiguous backup and
+/// remove stale staging/snapshot litter under the project install lock.
+/// Multiple backups or a failed restore abort recovery without discarding
+/// candidate data.
+/// (Phục hồi sau SIGKILL: chỉ dựng khi có một backup rõ ràng; backup mơ hồ
+/// hoặc restore lỗi sẽ dừng mà không xóa dữ liệu dự phòng.)
 pub(crate) fn recover_interrupted_install(
     project_root: &Path,
     node_modules: &Path,
     staging_tmp: &Path,
-) -> CrashRecovery {
+) -> MgResult<CrashRecovery> {
+    // Discover recovery candidates before deleting staging or snapshots.
+    // More than one backup means the on-disk history is ambiguous; choosing
+    // by mtime and deleting the rest can destroy the only recoverable tree.
+    // Preserve every candidate and stop the install for explicit recovery.
+    // (Phát hiện backup trước khi dọn rác. Nhiều backup là lịch sử mơ hồ;
+    // không chọn theo mtime rồi xóa bản còn lại.)
+    let mut backups = Vec::new();
+    let entries = std::fs::read_dir(project_root).map_err(|e| {
+        MgError::Other(format!(
+            "cannot inspect interrupted-install backups in '{}': {e}",
+            project_root.display()
+        ))
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|e| {
+            MgError::Other(format!(
+                "cannot enumerate interrupted-install backups in '{}': {e}",
+                project_root.display()
+            ))
+        })?;
+        if !entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".mgc-prev-")
+        {
+            continue;
+        }
+        let path = entry.path();
+        let meta = std::fs::symlink_metadata(&path).map_err(|e| {
+            MgError::Other(format!(
+                "cannot inspect interrupted-install backup '{}': {e}",
+                path.display()
+            ))
+        })?;
+        // Never follow or remove an attacker-controlled symlink as a backup.
+        if meta.file_type().is_symlink() {
+            continue;
+        }
+        if meta.file_type().is_dir() {
+            backups.push(path);
+        }
+    }
+    if backups.len() > 1 {
+        return Err(MgError::Other(format!(
+            "found {} interrupted-install backups in '{}'; refusing to choose by timestamp and preserving all candidates. Inspect the .mgc-prev-* directories and recover node_modules manually before retrying",
+            backups.len(),
+            project_root.display()
+        )));
+    }
+
     let mut out = CrashRecovery {
         restored_backup: false,
         removed_staging: 0,
@@ -238,50 +309,26 @@ pub(crate) fn recover_interrupted_install(
             }
         }
     }
-    // Backups: newest by mtime wins; the rest is litter.
-    // (Backup: mới nhất theo mtime thắng.)
-    let mut backups: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(project_root) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !entry
-                .file_name()
-                .to_string_lossy()
-                .starts_with(".mgc-prev-")
-            {
-                continue;
-            }
-            // Refuse symlinks: only a real dir restores (P1 sweep rule).
-            // (Từ chối symlink: chỉ dir thật mới restore.)
-            let Ok(meta) = std::fs::symlink_metadata(&path) else {
-                continue;
-            };
-            if !meta.file_type().is_dir() {
-                continue;
-            }
-            let mtime = meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-            backups.push((mtime, path));
+    if let Some(backup) = backups.pop() {
+        if node_modules.exists() {
+            std::fs::remove_dir_all(node_modules).map_err(|e| {
+                MgError::Other(format!(
+                    "cannot clear interrupted install path '{}' while preserving backup '{}': {e}",
+                    node_modules.display(),
+                    backup.display()
+                ))
+            })?;
         }
+        std::fs::rename(&backup, node_modules).map_err(|e| {
+            MgError::Other(format!(
+                "cannot restore interrupted-install backup '{}' to '{}': {e}; backup preserved",
+                backup.display(),
+                node_modules.display()
+            ))
+        })?;
+        out.restored_backup = true;
     }
-    backups.sort_by_key(|(t, _)| *t);
-    let mut backups_iter = backups.into_iter();
-    // All but the newest are litter.
-    // (Mọi backup trừ mới nhất là rác.)
-    let mut newest: Option<PathBuf> = None;
-    for (_, path) in backups_iter.by_ref() {
-        if let Some(prev) = newest.replace(path) {
-            let _ = std::fs::remove_dir_all(prev);
-        }
-    }
-    if let Some(backup) = newest {
-        if node_modules.exists() && std::fs::remove_dir_all(node_modules).is_err() {
-            return out;
-        }
-        if std::fs::rename(&backup, node_modules).is_ok() {
-            out.restored_backup = true;
-        }
-    }
-    out
+    Ok(out)
 }
 
 /// Restore the pre-install lockfile (P0-1): `Some(bytes)` writes them
@@ -304,6 +351,28 @@ pub(crate) fn restore_prior_lock_result(
                 Err(e)
             }
         }),
+    }
+}
+
+/// Snapshot the lock bytes for lifecycle rollback without turning an I/O
+/// error, directory, or symlink into the semantic state "no lock existed".
+/// That distinction is security-critical: rollback with `None` removes the
+/// lock written by the current install.
+/// (Snapshot phân biệt NotFound với lỗi đọc, thư mục và symlink; None sẽ xóa
+/// lock mới khi rollback nên không được nuốt lỗi thành None.)
+pub(crate) fn snapshot_prior_lock(project_root: &Path) -> MgResult<Option<Vec<u8>>> {
+    let path = project_root.join("mgc.lock");
+    match mgc_lockfile::read_lockfile_bytes(&path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(mgc_lockfile::LockfileError::IoError(error))
+            if error.kind() == std::io::ErrorKind::NotFound =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(MgError::Other(format!(
+            "cannot safely snapshot pre-install lock '{}': {error}",
+            path.display()
+        ))),
     }
 }
 
@@ -355,6 +424,26 @@ pub async fn run_install(
     project_root: &Path,
     opts: InstallOptions,
 ) -> MgResult<InstallSummary> {
+    // Patch specs are currently integrity-managed but not applied by the
+    // production materializer. Refuse before creating stores or touching
+    // node_modules rather than silently installing the unpatched artifact.
+    // (Patch được ghi nhận nhưng materializer chưa áp dụng; từ chối trước
+    // khi tạo store hoặc đụng node_modules để không cài nhầm bản chưa vá.)
+    if let Some(project) =
+        mgc_config::project::ProjectConfig::load(project_root).map_err(|error| {
+            MgError::Other(format!(
+                "cannot inspect project patch configuration: {error}"
+            ))
+        })?
+        && !project.patches.is_empty()
+    {
+        return Err(MgError::Unsupported {
+            core: "web",
+            capability: "patched install",
+            guidance: "the configured patch is not yet applied by MagiCore's production install pipeline; remove the patch entry or use a build that supports patch materialization".to_string(),
+        });
+    }
+
     let start = std::time::Instant::now();
     let mut profile = InstallProfile::from_env();
     let registry = native::npm_registry::NpmRegistry::new_with_token(
@@ -443,7 +532,7 @@ pub async fn run_install(
     // any mutation): stale backups restore, staging/snapshot litter
     // goes. A crash between ANY two steps below resumes here.
     // (Phục hồi install đứt trước mọi mutation.)
-    let recovered = recover_interrupted_install(project_root, &node_modules, &layout.temp_dir());
+    let recovered = recover_interrupted_install(project_root, &node_modules, &layout.temp_dir())?;
     if recovered.restored_backup || recovered.removed_staging > 0 {
         eprintln!(
             "[magicore] recovered interrupted install (backup restored: {}, staging removed: {}, snaps swept: {})",
@@ -526,6 +615,12 @@ pub async fn run_install(
             installed_package_matches(&strict_vstore_package_dir(&node_modules, &pkg.id), &pkg.id)
         });
         if all_vstore_matched {
+            // Even a content no-op must reconcile the lock to the graph the
+            // caller actually accepted. Otherwise an orphan/tampered lock row
+            // can survive a successful warm install indefinitely.
+            // (Kể cả warm no-op vẫn phải đồng bộ lock với graph được chấp nhận;
+            // nếu không, entry lock mồ côi tiếp tục sống sau install thành công.)
+            write_web_lockfile_with_state(project_root, graph, registry_url)?;
             summary.duration_ms = start.elapsed().as_millis() as u64;
             return Ok(summary);
         }
@@ -542,7 +637,7 @@ pub async fn run_install(
         .iter()
         .map(|pkg| (pkg.id.clone(), pkg))
         .collect();
-    let mut packages_with_scripts: Vec<PathBuf> = Vec::new();
+    let mut packages_with_scripts: Vec<LifecyclePackage> = Vec::new();
 
     let already_materialized: std::collections::HashSet<PackageId> = if opts.incremental {
         root_packages
@@ -651,8 +746,15 @@ pub async fn run_install(
     // bytes snapshotted here are restored (or the file removed when
     // none existed), so no lock ever certifies a script-failed state.
     // (Ghi lock ý định resolve; script fail thì khôi phục bytes cũ.)
-    let prior_lock = std::fs::read(project_root.join("mgc.lock")).ok();
-    if !fetch_graph.is_empty() {
+    let prior_lock = snapshot_prior_lock(project_root)?;
+    // Lockfile ownership follows the resolved graph, not whether this run
+    // needed to download bytes. In particular, removing the final root
+    // dependency produces an empty graph/fetch_graph; skipping this write
+    // would leave the removed package recorded in mgc.lock while the
+    // manifest and materialized tree are empty.
+    // (Lock phản ánh graph đã resolve, không phụ thuộc có tải byte hay không;
+    // graph rỗng sau khi gỡ dependency cuối vẫn phải xóa pin cũ khỏi mgc.lock.)
+    if !graph.is_empty() || prior_lock.is_some() {
         write_web_lockfile_with_state(project_root, graph, registry_url).inspect_err(|_e| {
             if let Some(root) = &staging_root {
                 let _ = std::fs::remove_dir_all(root);
@@ -878,7 +980,7 @@ pub async fn run_install(
         for pkg in &root_packages {
             let package_dir = node_modules.join(pkg.id.name().as_str());
             reset_nested_node_modules(&package_dir)?;
-            packages_with_scripts.push(package_dir.clone());
+            packages_with_scripts.push(LifecyclePackage::new(pkg.id.clone(), package_dir.clone()));
             let mut visiting = std::collections::HashSet::new();
             let mut extracted_roots = std::collections::HashMap::new();
             materialize_nested_dependencies(
@@ -1043,70 +1145,40 @@ pub async fn run_install(
         let trust_map = load_trust_policies(&layout)?;
         let blanket_scripts = opts.allow_scripts || lifecycle_scripts_allowed();
         let mut scripted_packages = Vec::new();
-        for pkg_dir in &packages_with_scripts {
-            let package_json = pkg_dir.join("package.json");
-            // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
-            if package_json.exists()
-                && let Ok(contents) = std::fs::read_to_string(&package_json)
-                && let Ok(manifest) = serde_json::from_str::<serde_json::Value>(&contents)
-            {
-                let has_scripts = manifest
-                    .get("scripts")
-                    .and_then(|s| s.as_object())
-                    .map(|scripts| {
-                        scripts.contains_key("preinstall")
-                            || scripts.contains_key("install")
-                            || scripts.contains_key("postinstall")
-                    })
-                    .unwrap_or(false);
-                if has_scripts {
-                    let name = manifest
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or_default()
-                        .to_string();
-                    let version = manifest
-                        .get("version")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or_default();
-                    let policy = trust_map
-                        .get(&format!("{name}@{version}"))
-                        .or_else(|| trust_map.get(&name))
-                        .map(String::as_str);
-                    // ONE merged decision (mgc-config::decide_scripts):
-                    // deny wins from either source, then allow, then the
-                    // blanket default. No second implementation to drift.
-                    // (Một quyết định gộp duy nhất — deny luôn thắng.)
-                    match mgc_config::project::decide_scripts(
-                        &name,
-                        version,
-                        file_policy.as_ref().and_then(|o| o.as_ref()),
-                        policy,
-                        blanket_scripts,
-                    ) {
-                        mgc_config::project::ScriptVerdict::Deny(reason) => {
-                            eprintln!(
-                                "[magicore] DENIED lifecycle scripts for {name}@{version} ({reason})"
-                            );
-                            continue;
-                        }
-                        mgc_config::project::ScriptVerdict::Allow(_) => {
-                            scripted_packages.push(pkg_dir.clone());
-                        }
-                        mgc_config::project::ScriptVerdict::Undecided => {
-                            // No opinion anywhere: fall back to the
-                            // blanket default (historical behavior
-                            // preserved exactly).
-                            // (Không ý kiến: theo blanket default như cũ.)
-                            if blanket_scripts {
-                                scripted_packages.push(pkg_dir.clone());
-                            } else {
-                                eprintln!(
-                                    "[magicore] skipped lifecycle scripts for {name}@{version} — not approved. Approve with: mgc trust approve {name}"
-                                );
-                                continue;
-                            }
-                        }
+        for package in &packages_with_scripts {
+            let scripts = crate::lifecycle::load_package_scripts(&package.directory)?;
+            if !scripts.has_hooks() {
+                continue;
+            }
+            let name = package.package_id.name_str();
+            let version = package.package_id.version().to_string();
+            // One policy path keyed only by the resolved graph identity; the
+            // archive's package.json cannot rename itself to evade a deny.
+            // Policy duy nhất dùng ID từ graph; manifest không tự đổi khóa deny.
+            match decide_lifecycle_scripts(
+                &package.package_id,
+                file_policy.as_ref().and_then(|policy| policy.as_ref()),
+                &trust_map,
+                blanket_scripts,
+            ) {
+                mgc_config::project::ScriptVerdict::Deny(reason) => {
+                    eprintln!(
+                        "[magicore] DENIED lifecycle scripts for {name}@{version} ({reason})"
+                    );
+                }
+                mgc_config::project::ScriptVerdict::Allow(_) => {
+                    scripted_packages.push((package.directory.clone(), scripts));
+                }
+                mgc_config::project::ScriptVerdict::Undecided => {
+                    // No opinion anywhere: preserve the explicit blanket
+                    // default, but never infer identity from the archive.
+                    // (Không có policy: giữ blanket default, không tin identity trong archive.)
+                    if blanket_scripts {
+                        scripted_packages.push((package.directory.clone(), scripts));
+                    } else {
+                        eprintln!(
+                            "[magicore] skipped lifecycle scripts for {name}@{version} — not approved. Approve with: mgc trust approve {name}"
+                        );
                     }
                 }
             }
@@ -1114,7 +1186,7 @@ pub async fn run_install(
         let semaphore = Arc::new(Semaphore::new(8));
         let mut join_set = JoinSet::new();
 
-        for pkg_dir in scripted_packages {
+        for (pkg_dir, scripts) in scripted_packages {
             let project_root = project_root.to_path_buf();
             let Ok(permit) = semaphore.clone().acquire_owned().await else {
                 eprintln!("[magicore] warning: lifecycle semaphore closed");
@@ -1122,65 +1194,31 @@ pub async fn run_install(
             };
             join_set.spawn(async move {
                 let _permit = permit;
-                LifecycleRunner::run_scripts(&pkg_dir, &project_root)
+                LifecycleRunner::run_scripts_with_snapshot(&pkg_dir, &project_root, scripts)
             });
         }
 
-        while let Some(result) = join_set.join_next().await {
-            match result {
-                Ok(Ok(())) => {}
-                // A failed lifecycle script fails the install (npm parity:
-                // a red postinstall is never a green install). The escape
-                // hatch is --ignore-scripts, never silence by default.
-                // (Script lỗi thì install fail — escape là --ignore-scripts.)
-                Ok(Err(e)) => {
-                    // Lifecycle failure: restore the pre-install lock
-                    // (no lock certifies this state) AND roll back the
-                    // tree backup. Either rollback failing is reported
-                    // TOGETHER with the script error — never fake-safe.
-                    // (Script fail: khôi phục lock + cây, lỗi nào cũng báo.)
-                    //
-                    // Test-only park for SIGKILL-during-rollback E2E
-                    // (MGC_FAILPOINT=before-rollback-restore): no-op
-                    // unless armed.
-                    mgc_store::failpoint::hit("before-rollback-restore");
-                    let script_err = format!("lifecycle script failed — install aborted: {e}");
-                    let mut rb = Vec::new();
-                    if let Err(x) = restore_prior_lock_result(project_root, &prior_lock) {
-                        rb.push(format!("lock restore failed: {x}"));
-                    }
-                    if let Err(x) = tree_backup.rollback() {
-                        rb.push(format!("tree rollback failed: {x}"));
-                    }
-                    if rb.is_empty() {
-                        return Err(MgError::Other(format!(
-                            "{script_err} (lockfile rolled back to pre-install state; re-run with --ignore-scripts to skip lifecycle scripts)"
-                        )));
-                    }
-                    return Err(MgError::Other(format!(
-                        "{script_err} (ROLLBACK ALSO FAILED — project may be inconsistent, delete node_modules + mgc.lock and re-run install: {})",
-                        rb.join("; ")
-                    )));
-                }
-                Err(e) => {
-                    let panic_err =
-                        format!("lifecycle script task panicked — install aborted: {e}");
-                    let mut rb = Vec::new();
-                    if let Err(x) = restore_prior_lock_result(project_root, &prior_lock) {
-                        rb.push(format!("lock restore failed: {x}"));
-                    }
-                    if let Err(x) = tree_backup.rollback() {
-                        rb.push(format!("tree rollback failed: {x}"));
-                    }
-                    if rb.is_empty() {
-                        return Err(MgError::Other(panic_err));
-                    }
-                    return Err(MgError::Other(format!(
-                        "{panic_err} (ROLLBACK ALSO FAILED — project may be inconsistent, delete node_modules + mgc.lock and re-run install: {})",
-                        rb.join("; ")
-                    )));
-                }
+        if let Some(script_err) = drain_lifecycle_tasks(&mut join_set).await {
+            // Every sibling is finished before restoring the old tree, so no
+            // child process can continue mutating the restored installation.
+            // (Chỉ rollback sau khi toàn bộ script sibling đã dừng.)
+            mgc_store::failpoint::hit("before-rollback-restore");
+            let mut rb = Vec::new();
+            if let Err(x) = restore_prior_lock_result(project_root, &prior_lock) {
+                rb.push(format!("lock restore failed: {x}"));
             }
+            if let Err(x) = tree_backup.rollback() {
+                rb.push(format!("tree rollback failed: {x}"));
+            }
+            if rb.is_empty() {
+                return Err(MgError::Other(format!(
+                    "{script_err} (lockfile rolled back to pre-install state; re-run with --ignore-scripts to skip lifecycle scripts)"
+                )));
+            }
+            return Err(MgError::Other(format!(
+                "{script_err} (ROLLBACK ALSO FAILED — project may be inconsistent, delete node_modules + mgc.lock and re-run install: {})",
+                rb.join("; ")
+            )));
         }
     }
     // Scripts skipped or succeeded: the new tree stands — delete the

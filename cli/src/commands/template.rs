@@ -28,6 +28,42 @@ pub fn templates_cache_dir() -> PathBuf {
     home.join(".mgc").join("templates")
 }
 
+/// Serialize embedded-layer refreshes across MagiCore processes. Without this
+/// lock, concurrent first-run processes can each remove/extract the same
+/// shared cache directory and observe a partially materialized layer.
+/// (Tuần tự hóa refresh layer embedded giữa các process MagiCore.)
+fn lock_embedded_cache_layer(cache_root: &Path, rel: &str) -> Result<fs::File> {
+    let lock_dir = cache_root.join(".locks");
+    fs::create_dir_all(&lock_dir)?;
+    let lock_dir_metadata = fs::symlink_metadata(&lock_dir)?;
+    if lock_dir_metadata.file_type().is_symlink() || !lock_dir_metadata.is_dir() {
+        bail!("embedded template cache lock directory is not a real directory");
+    }
+    let key = blake3::hash(rel.as_bytes()).to_hex().to_string();
+    let lock_path = lock_dir.join(format!("embedded-{key}.lock"));
+    let mut options = fs::OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // FILE_FLAG_OPEN_REPARSE_POINT: open the lock object, not its target.
+        // (Mở chính lock, không đi theo reparse point trên Windows.)
+        options.custom_flags(0x0020_0000);
+    }
+    let file = options.open(&lock_path)?;
+    let metadata = fs::symlink_metadata(&lock_path)?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() || !file.metadata()?.is_file() {
+        bail!("embedded template cache lock is not a regular file");
+    }
+    fs2::FileExt::lock_exclusive(&file)?;
+    Ok(file)
+}
+
 /// Rel path của layer trong templates/ — name flat (react-vite → web/frontend/react-vite)
 /// hoặc full rel (backend/go/gin → giữ nguyên).
 /// Cache cũng nằm theo rel này để TemplateRoot::resolve thấy.
@@ -298,24 +334,65 @@ pub async fn ensure_layer(
     /// Record the extracted embedded version in the cache (best-effort —
     /// a missing marker just re-extracts next time).
     /// (Ghi marker version embedded vào cache.)
-    fn stamp_embedded_cache(cache_target: &std::path::Path, version: Option<&str>) {
+    fn stamp_embedded_cache(
+        cache_target: &std::path::Path,
+        version: Option<&str>,
+    ) -> anyhow::Result<()> {
         if let Some(version) = version {
-            let _ = std::fs::create_dir_all(cache_target);
-            let _ = std::fs::write(cache_target.join(".mgc-embedded-version"), version);
+            std::fs::create_dir_all(cache_target)?;
+            std::fs::write(cache_target.join(".mgc-embedded-version"), version)?;
+        }
+        Ok(())
+    }
+
+    /// Remove only a stale real directory. A symlink or non-directory cache
+    /// entry is an error; cleanup failures must not be followed by overlaying
+    /// new embedded files and stamping the result as fresh.
+    /// (Chỉ xóa thư mục cache cũ thật; lỗi dọn phải dừng, không ghi đè chồng.)
+    fn remove_stale_embedded_cache(cache_target: &std::path::Path) -> anyhow::Result<()> {
+        match std::fs::symlink_metadata(cache_target) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error.into()),
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+                anyhow::bail!(
+                    "refusing to replace non-directory or linked embedded cache '{}'",
+                    cache_target.display()
+                )
+            }
+            Ok(_) => {
+                std::fs::remove_dir_all(cache_target)?;
+                Ok(())
+            }
         }
     }
     // 1. Check embedded kernel first
     // Try full path first (web/shared/base), then short form (web/vanilla)
     if EmbeddedKernel::has_layer_path(rel) {
-        // Extract embedded to legacy cache location so processor can find it
-        let cache_target = crate::commands::template::templates_cache_dir().join(rel);
+        let cache_root = crate::commands::template::templates_cache_dir();
+        // Hold a per-layer OS lock across freshness check, replacement, and
+        // version stamping. The lock file lives outside the directory being
+        // refreshed, so another process cannot unlink the lock inode.
+        // (Giữ OS lock xuyên kiểm tra, thay cache và ghi version marker.)
+        let _cache_lock = lock_embedded_cache_layer(&cache_root, rel).map_err(|error| {
+            ScaffoldResolveError::Other(format!("Failed to lock embedded template cache: {error}"))
+        })?;
+        // Extract embedded to legacy cache location so processor can find it.
+        let cache_target = cache_root.join(rel);
         let version = EmbeddedKernel::layer_version_path(rel);
         if !embedded_cache_fresh(&cache_target, version) {
-            let _ = std::fs::remove_dir_all(&cache_target);
+            remove_stale_embedded_cache(&cache_target).map_err(|error| {
+                ScaffoldResolveError::Other(format!(
+                    "Failed to replace stale embedded template cache: {error}"
+                ))
+            })?;
             EmbeddedKernel::extract_layer_path(rel, &cache_target).map_err(|e| {
                 ScaffoldResolveError::Other(format!("Failed to extract embedded kernel: {}", e))
             })?;
-            stamp_embedded_cache(&cache_target, version);
+            stamp_embedded_cache(&cache_target, version).map_err(|error| {
+                ScaffoldResolveError::Other(format!(
+                    "Failed to stamp embedded template cache: {error}"
+                ))
+            })?;
         }
         return Ok(ScaffoldResolveStatus::Embedded {
             layer: rel.to_string(),
@@ -324,15 +401,28 @@ pub async fn ensure_layer(
 
     let base_name = name_segment.split('@').next().unwrap_or(name_segment);
     if EmbeddedKernel::has_layer(core_str, base_name) {
-        // Extract to cache
-        let cache_target = crate::commands::template::templates_cache_dir().join(rel);
+        let cache_root = crate::commands::template::templates_cache_dir();
+        // Short-form embedded entries use the same cross-process protection.
+        // (Layer embedded dạng rút gọn dùng cùng khóa liên-process.)
+        let _cache_lock = lock_embedded_cache_layer(&cache_root, rel).map_err(|error| {
+            ScaffoldResolveError::Other(format!("Failed to lock embedded template cache: {error}"))
+        })?;
+        let cache_target = cache_root.join(rel);
         let version = EmbeddedKernel::layer_version(core_str, base_name);
         if !embedded_cache_fresh(&cache_target, version) {
-            let _ = std::fs::remove_dir_all(&cache_target);
+            remove_stale_embedded_cache(&cache_target).map_err(|error| {
+                ScaffoldResolveError::Other(format!(
+                    "Failed to replace stale embedded template cache: {error}"
+                ))
+            })?;
             EmbeddedKernel::extract_layer(core_str, base_name, &cache_target).map_err(|e| {
                 ScaffoldResolveError::Other(format!("Failed to extract embedded kernel: {}", e))
             })?;
-            stamp_embedded_cache(&cache_target, version);
+            stamp_embedded_cache(&cache_target, version).map_err(|error| {
+                ScaffoldResolveError::Other(format!(
+                    "Failed to stamp embedded template cache: {error}"
+                ))
+            })?;
         }
         return Ok(ScaffoldResolveStatus::Embedded {
             layer: rel.to_string(),

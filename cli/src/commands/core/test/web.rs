@@ -9,6 +9,25 @@ fn v3_web_lockfile_is_written_with_current_schema_version() {
     assert_eq!(decoded.version, "3");
 }
 
+#[cfg(all(unix, feature = "lib"))]
+#[test]
+fn backend_language_ignores_external_mgc_toml_symlink() {
+    let root = tempfile::tempdir().unwrap();
+    let external = tempfile::tempdir().unwrap();
+    std::fs::write(
+        external.path().join("mgc.toml"),
+        "frameworks = ['django']\n",
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(
+        external.path().join("mgc.toml"),
+        root.path().join("mgc.toml"),
+    )
+    .unwrap();
+
+    assert_eq!(super::web_backend_language(root.path()), None);
+}
+
 /// Vite scripts launch MgDevServer (never the vite binary), so building
 /// the launch must NOT require node_modules/.bin/vite to exist — React
 /// runs straight through MGC with zero Vite dependence.
@@ -62,6 +81,40 @@ fn non_native_monorepo_members_are_classified_without_tool_mapping() {
     }
     let empty = tempfile::tempdir().unwrap();
     assert_eq!(non_native_member_ecosystem(empty.path()), None);
+}
+
+#[test]
+fn workspace_frontend_path_rejects_layout_escape() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("magicore.workspace.toml"),
+        "mode = \"monorepo\"\n[layout]\napps_dir = \"../outside\"\n",
+    )
+    .unwrap();
+
+    let error = super::workspace_frontend_dir(dir.path())
+        .expect_err("web workspace path must stay inside the project root");
+    assert!(error.to_string().contains("workspace layout path"));
+}
+
+#[cfg(unix)]
+#[test]
+fn workspace_frontend_path_rejects_symlinked_target() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("project");
+    let external_frontend = dir.path().join("external-frontend");
+    std::fs::create_dir_all(project.join("apps")).unwrap();
+    std::fs::create_dir(&external_frontend).unwrap();
+    std::os::unix::fs::symlink(external_frontend, project.join("apps/frontend")).unwrap();
+    std::fs::write(
+        project.join("magicore.workspace.toml"),
+        "mode = \"monorepo\"\n[layout]\napps_dir = \"apps\"\n",
+    )
+    .unwrap();
+
+    let error = super::workspace_frontend_dir(&project)
+        .expect_err("web workspace target must not follow a symlink");
+    assert!(error.to_string().contains("symlink"));
 }
 
 #[test]

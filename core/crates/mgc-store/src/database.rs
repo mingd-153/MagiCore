@@ -4,7 +4,9 @@ use mgc_types::{PackageId, Version};
 use rusqlite::Connection;
 use rusqlite::OptionalExtension;
 use rusqlite::params;
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 #[derive(Debug, Clone)]
 pub struct DatabaseEntry {
@@ -38,6 +40,28 @@ pub struct StagingLease {
 
 pub struct Database {
     conn: Connection,
+    claim_write_gate: Arc<Mutex<()>>,
+}
+
+const STORE_DB_SCHEMA_VERSION: i64 = 1;
+const STORE_DB_BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+fn shared_claim_write_gate(path: &Path) -> Result<Arc<Mutex<()>>> {
+    static GATES: OnceLock<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>> = OnceLock::new();
+
+    let key = path.canonicalize()?;
+    let gates = GATES.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut gates = gates
+        .lock()
+        .map_err(|_| anyhow::anyhow!("store claim-writer gate registry was poisoned"))?;
+    gates.retain(|_, gate| gate.strong_count() > 0);
+    if let Some(gate) = gates.get(&key).and_then(Weak::upgrade) {
+        return Ok(gate);
+    }
+
+    let gate = Arc::new(Mutex::new(()));
+    gates.insert(key, Arc::downgrade(&gate));
+    Ok(gate)
 }
 
 /// Typed generation-token errors (Gate 11-A, vòng-11 audit): every
@@ -68,21 +92,24 @@ pub enum CasGenerationError {
     Io(String),
 }
 
-/// Probe whether `cas_generations` already carries `column`. Idempotent
-/// re-open support — SQLite has no IF NOT EXISTS for ALTER ADD COLUMN, so
-/// the doctor probes table_info first (race-free under the schema batch).
-/// (Thăm dò cột đã tồn tại chưa — hỗ trợ mở lại idempotent, SQLite không
-/// có IF NOT EXISTS cho ALTER ADD COLUMN, nên thăm dò table_info trước
-/// (không race dưới batch schema).)
-fn has_lease_column(conn: &Connection, column: &str) -> Result<bool> {
+/// Read the lease-column shape with one SQLite schema query. These columns
+/// are checked when opening a store; probing separately for each one doubled
+/// schema I/O on this hot initialization path.
+/// (Đọc trạng thái cột lease bằng một truy vấn schema SQLite. Các cột này
+/// được kiểm tra khi mở store; thăm dò riêng từng cột làm gấp đôi I/O schema.)
+fn lease_columns_present(conn: &Connection) -> Result<(bool, bool)> {
     let mut stmt = conn.prepare("PRAGMA table_info(cas_generations)")?;
     let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    let mut lease_pid = false;
+    let mut lease_started_at = false;
     for name in rows {
-        if name? == column {
-            return Ok(true);
+        match name?.as_str() {
+            "lease_pid" => lease_pid = true,
+            "lease_started_at" => lease_started_at = true,
+            _ => {}
         }
     }
-    Ok(false)
+    Ok((lease_pid, lease_started_at))
 }
 
 /// Add a lease column, tolerating ONLY the "duplicate column" race from a
@@ -102,12 +129,99 @@ fn add_lease_column(conn: &Connection, column: &str, ddl: &str) -> Result<()> {
     }
 }
 
+fn ensure_lease_columns(conn: &mut Connection) -> Result<()> {
+    let (pid_present, started_present) = lease_columns_present(conn)?;
+    if pid_present && started_present {
+        return Ok(());
+    }
+
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    // Re-read after taking the schema write lock: another process may have
+    // completed the migration between the optimistic probe and this lock.
+    // (Đọc lại sau khi lấy schema write-lock vì process khác có thể migrate
+    // xong giữa lần thăm dò ban đầu và lúc lấy khóa.)
+    let (pid_present, started_present) = lease_columns_present(&tx)?;
+    if !pid_present {
+        add_lease_column(
+            &tx,
+            "lease_pid",
+            "ALTER TABLE cas_generations ADD COLUMN lease_pid INTEGER",
+        )?;
+    }
+    if !started_present {
+        add_lease_column(
+            &tx,
+            "lease_started_at",
+            "ALTER TABLE cas_generations ADD COLUMN lease_started_at INTEGER",
+        )?;
+    }
+    let (pid_present, started_present) = lease_columns_present(&tx)?;
+    if !pid_present || !started_present {
+        anyhow::bail!(
+            "store.db schema migration failed: lease columns missing after ALTER (lease_pid={pid_present}, lease_started_at={started_present})"
+        );
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+fn enable_wal_mode(conn: &Connection) -> Result<()> {
+    let deadline = std::time::Instant::now() + STORE_DB_BUSY_TIMEOUT;
+    let mut backoff = std::time::Duration::from_millis(5);
+    loop {
+        match conn.query_row("PRAGMA journal_mode=WAL", [], |row| row.get::<_, String>(0)) {
+            Ok(mode) if mode.eq_ignore_ascii_case("wal") => return Ok(()),
+            Ok(mode) => anyhow::bail!(
+                "store.db refused WAL mode (SQLite selected {mode:?}); concurrent store access requires WAL"
+            ),
+            Err(rusqlite::Error::SqliteFailure(error, _))
+                if matches!(
+                    error.code,
+                    rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+                ) && std::time::Instant::now() < deadline =>
+            {
+                std::thread::sleep(backoff);
+                backoff = (backoff * 2).min(std::time::Duration::from_millis(100));
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+}
+
 impl Database {
     pub fn open(path: &Path) -> Result<Self> {
-        let conn = Connection::open(path)?;
+        let mut conn = Connection::open(path)?;
+        conn.busy_timeout(STORE_DB_BUSY_TIMEOUT)?;
+        let claim_write_gate = shared_claim_write_gate(path)?;
+        let _schema_gate = claim_write_gate
+            .lock()
+            .map_err(|_| anyhow::anyhow!("store claim-writer gate was poisoned"))?;
 
-        conn.execute_batch(
-            "PRAGMA busy_timeout=5000;
+        let schema_version: i64 =
+            conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
+        if schema_version > STORE_DB_SCHEMA_VERSION {
+            anyhow::bail!(
+                "store.db schema version {schema_version} is newer than this MagiCore build supports ({STORE_DB_SCHEMA_VERSION})"
+            );
+        }
+        if schema_version < STORE_DB_SCHEMA_VERSION {
+            conn.pragma_update(None, "foreign_keys", false)?;
+            // WAL mode is a one-time store initialization step. Avoid asking
+            // SQLite to acquire schema/write locks on every package extraction.
+            enable_wal_mode(&conn)?;
+            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            let schema_version: i64 =
+                tx.pragma_query_value(None, "user_version", |row| row.get(0))?;
+            if schema_version > STORE_DB_SCHEMA_VERSION {
+                anyhow::bail!(
+                    "store.db schema version {schema_version} is newer than this MagiCore build supports ({STORE_DB_SCHEMA_VERSION})"
+                );
+            }
+            if schema_version >= STORE_DB_SCHEMA_VERSION {
+                tx.commit()?;
+            } else {
+                tx.execute_batch(
+                    "
             CREATE TABLE IF NOT EXISTS packages (
                 id TEXT NOT NULL,
                 version TEXT NOT NULL,
@@ -164,78 +278,76 @@ impl Database {
                 project_root TEXT PRIMARY KEY,
                 last_issued INTEGER NOT NULL DEFAULT 0
             );
-            PRAGMA journal_mode=WAL;
-            PRAGMA synchronous=NORMAL;",
-        )?;
+            ",
+                )?;
 
-        // Generation-token schema (P0-A, adversarial review vòng-9
-        // 2026-09-14): the OLD schema kept PRIMARY KEY (project_root, hash)
-        // while tagging rows with a generation column — an `INSERT OR
-        // IGNORE` claim for a hash already claimed at generation 0 was
-        // SILENTLY IGNORED, so the blob stayed at the OLD generation, and
-        // promote (deleting every row outside the new generation) removed
-        // the claim of a blob the NEW install still needed — even on a
-        // plain sequential reinstall, no concurrency, no crash, no
-        // attacker. The v2 schema keys rows by (project_root, generation,
-        // hash) and tracks per-generation state: a claim ALWAYS lands in
-        // its own generation and promote only retires rows this token no
-        // longer vouches for. Old tables (PK without generation, no state
-        // column) are migrated atomically below — rows keep their existing
-        // generation number, stamped 'promoted'.
-        //
-        // (Schema generation-token (P0-A): schema CŨ giữ PRIMARY KEY
-        // (project_root, hash) trong khi gắn tag row bằng cột generation —
-        // claim `INSERT OR IGNORE` cho hash đã claim ở generation 0 bị BỎ
-        // QUA ÂM THẦM, blob nằm lại generation CŨ, và promote (xóa mọi row
-        // ngoài generation mới) xóa claim của blob mà install MỚI vẫn cần
-        // — kể cả reinstall tuần tự, không cần concurrency/crash/attacker.
-        // Schema v2 khóa row theo (project_root, generation, hash) + state
-        // từng generation: claim LUÔN rơi vào generation của chính nó,
-        // promote chỉ nghỉ hưu row mà token này không còn bảo chứng. Bảng
-        // cũ được migrate nguyên tử bên dưới — row giữ số generation hiện
-        // có, đóng dấu 'promoted'.)
-        // Token-schema migration detection (P0-A): a store is CURRENT when
-        // cas_blob_refs keys rows by (project_root, generation, hash) —
-        // i.e. the `generation` column participates in the PRIMARY KEY.
-        // v0 stores lack the column entirely; v1 stores (vòng-7/8) carry
-        // it OUTSIDE the key. Probing the cas_generations state column is
-        // NOT enough: the fresh-schema batch above creates a v2-shaped
-        // cas_generations in a v0 store before this check runs.
-        // (Phát hiện cần migration: store là MỚI khi cas_blob_refs khóa row
-        // theo (project_root, generation, hash) — cột `generation` nằm
-        // TRONG PRIMARY KEY. Store v0 không có cột; store v1 có cột nhưng
-        // NGOÀI key. Thăm dò state của cas_generations KHÔNG đủ: batch
-        // schema mới phía trên đã tạo cas_generations hình v2 trong store
-        // v0 trước khi check này chạy.)
-        let legacy_token_migration_needed = {
-            let mut stmt = conn.prepare("PRAGMA table_info(cas_blob_refs)")?;
-            let rows = stmt.query_map([], |row| {
-                Ok((row.get::<_, String>(1)?, row.get::<_, i64>(5)?))
-            })?;
-            let mut generation_in_pk = false;
-            for col in rows {
-                let (name, pk) = col?;
-                if name == "generation" && pk > 0 {
-                    generation_in_pk = true;
-                }
-            }
-            !generation_in_pk
-        };
-        if legacy_token_migration_needed {
-            let legacy_has_generation_column = {
-                let mut stmt = conn.prepare("PRAGMA table_info(cas_blob_refs)")?;
-                let mut has = false;
-                let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
-                for name in rows {
-                    if name? == "generation" {
-                        has = true;
+                // Generation-token schema (P0-A, adversarial review vòng-9
+                // 2026-09-14): the OLD schema kept PRIMARY KEY (project_root, hash)
+                // while tagging rows with a generation column — an `INSERT OR
+                // IGNORE` claim for a hash already claimed at generation 0 was
+                // SILENTLY IGNORED, so the blob stayed at the OLD generation, and
+                // promote (deleting every row outside the new generation) removed
+                // the claim of a blob the NEW install still needed — even on a
+                // plain sequential reinstall, no concurrency, no crash, no
+                // attacker. The v2 schema keys rows by (project_root, generation,
+                // hash) and tracks per-generation state: a claim ALWAYS lands in
+                // its own generation and promote only retires rows this token no
+                // longer vouches for. Old tables (PK without generation, no state
+                // column) are migrated atomically below — rows keep their existing
+                // generation number, stamped 'promoted'.
+                //
+                // (Schema generation-token (P0-A): schema CŨ giữ PRIMARY KEY
+                // (project_root, hash) trong khi gắn tag row bằng cột generation —
+                // claim `INSERT OR IGNORE` cho hash đã claim ở generation 0 bị BỎ
+                // QUA ÂM THẦM, blob nằm lại generation CŨ, và promote (xóa mọi row
+                // ngoài generation mới) xóa claim của blob mà install MỚI vẫn cần
+                // — kể cả reinstall tuần tự, không cần concurrency/crash/attacker.
+                // Schema v2 khóa row theo (project_root, generation, hash) + state
+                // từng generation: claim LUÔN rơi vào generation của chính nó,
+                // promote chỉ nghỉ hưu row mà token này không còn bảo chứng. Bảng
+                // cũ được migrate nguyên tử bên dưới — row giữ số generation hiện
+                // có, đóng dấu 'promoted'.)
+                // Token-schema migration detection (P0-A): a store is CURRENT when
+                // cas_blob_refs keys rows by (project_root, generation, hash) —
+                // i.e. the `generation` column participates in the PRIMARY KEY.
+                // v0 stores lack the column entirely; v1 stores (vòng-7/8) carry
+                // it OUTSIDE the key. Probing the cas_generations state column is
+                // NOT enough: the fresh-schema batch above creates a v2-shaped
+                // cas_generations in a v0 store before this check runs.
+                // (Phát hiện cần migration: store là MỚI khi cas_blob_refs khóa row
+                // theo (project_root, generation, hash) — cột `generation` nằm
+                // TRONG PRIMARY KEY. Store v0 không có cột; store v1 có cột nhưng
+                // NGOÀI key. Thăm dò state của cas_generations KHÔNG đủ: batch
+                // schema mới phía trên đã tạo cas_generations hình v2 trong store
+                // v0 trước khi check này chạy.)
+                let legacy_token_migration_needed = {
+                    let mut stmt = tx.prepare("PRAGMA table_info(cas_blob_refs)")?;
+                    let rows = stmt.query_map([], |row| {
+                        Ok((row.get::<_, String>(1)?, row.get::<_, i64>(5)?))
+                    })?;
+                    let mut generation_in_pk = false;
+                    for col in rows {
+                        let (name, pk) = col?;
+                        if name == "generation" && pk > 0 {
+                            generation_in_pk = true;
+                        }
                     }
-                }
-                has
-            };
-            let tx = conn.unchecked_transaction()?;
-            tx.execute_batch(
-                "CREATE TABLE IF NOT EXISTS cas_generations_v2 (
+                    !generation_in_pk
+                };
+                if legacy_token_migration_needed {
+                    let legacy_has_generation_column = {
+                        let mut stmt = tx.prepare("PRAGMA table_info(cas_blob_refs)")?;
+                        let mut has = false;
+                        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+                        for name in rows {
+                            if name? == "generation" {
+                                has = true;
+                            }
+                        }
+                        has
+                    };
+                    tx.execute_batch(
+                        "CREATE TABLE IF NOT EXISTS cas_generations_v2 (
                     project_root TEXT NOT NULL,
                     generation INTEGER NOT NULL,
                     state TEXT NOT NULL DEFAULT 'staging'
@@ -251,18 +363,18 @@ impl Database {
                         REFERENCES cas_generations_v2 (project_root, generation)
                         ON DELETE CASCADE
                 );",
-            )?;
-            if legacy_has_generation_column {
-                // v1 (vòng-7/8 shape): rows keep their generation number;
-                // the v1 counter row maps to a 'staging' marker when it is
-                // a never-promoted install (>0 — v1 promote resets to 0) —
-                // over-retention until abort/doctor, never a lost blob.
-                // Gen-0 rows are completed baselines → 'promoted' marker.
-                // (v1: row giữ số generation; row counter v1 thành marker
-                // 'staging' khi là install chưa promote (>0 — promote v1
-                // reset về 0) — giữ thừa tới abort/doctor, không mất blob.
-                // Row gen-0 là baseline đã hoàn tất → marker 'promoted'.)
-                tx.execute_batch(
+                    )?;
+                    if legacy_has_generation_column {
+                        // v1 (vòng-7/8 shape): rows keep their generation number;
+                        // the v1 counter row maps to a 'staging' marker when it is
+                        // a never-promoted install (>0 — v1 promote resets to 0) —
+                        // over-retention until abort/doctor, never a lost blob.
+                        // Gen-0 rows are completed baselines → 'promoted' marker.
+                        // (v1: row giữ số generation; row counter v1 thành marker
+                        // 'staging' khi là install chưa promote (>0 — promote v1
+                        // reset về 0) — giữ thừa tới abort/doctor, không mất blob.
+                        // Row gen-0 là baseline đã hoàn tất → marker 'promoted'.)
+                        tx.execute_batch(
                     "INSERT OR IGNORE INTO cas_generations_v2 (project_root, generation, state)
                         SELECT project_root,
                                CASE WHEN generation = 0 THEN 0 ELSE generation END,
@@ -281,11 +393,11 @@ impl Database {
                     ALTER TABLE cas_blob_refs_v2 RENAME TO cas_blob_refs;
                     ALTER TABLE cas_generations_v2 RENAME TO cas_generations;",
                 )?;
-            } else {
-                // v0 (pre-generation): every claim becomes the generation-0
-                // PROMOTED baseline of its project.
-                // (v0: mọi claim thành baseline gen-0 PROMOTED của project.)
-                tx.execute_batch(
+                    } else {
+                        // v0 (pre-generation): every claim becomes the generation-0
+                        // PROMOTED baseline of its project.
+                        // (v0: mọi claim thành baseline gen-0 PROMOTED của project.)
+                        tx.execute_batch(
                     "INSERT OR IGNORE INTO cas_generations_v2 (project_root, generation, state)
                         SELECT DISTINCT project_root, 0, 'promoted' FROM cas_blob_refs;
                     INSERT OR IGNORE INTO cas_blob_refs_v2 (project_root, generation, hash)
@@ -295,80 +407,86 @@ impl Database {
                     ALTER TABLE cas_blob_refs_v2 RENAME TO cas_blob_refs;
                     ALTER TABLE cas_generations_v2 RENAME TO cas_generations;",
                 )?;
-            }
-            tx.commit()?;
-        }
+                    }
+                }
 
-        // Sequence bootstrap (Gate 11-A, P0-1): a legacy store's markers
-        // may already exceed 0 — the counter starts ABOVE the highest
-        // surviving marker so tokens are never reused across the
-        // migration. Fresh stores have no markers and skip this cheaply.
-        // (Khởi động sequence: marker của store cũ có thể đã lớn hơn 0 —
-        // bộ đếm khởi động TRÊN marker sống sót cao nhất để token không
-        // bao giờ tái sử dụng qua migration. Store mới không có marker,
-        // bỏ qua rẻ.)
-        conn.execute(
-            "INSERT INTO cas_generation_seq (project_root, last_issued)
+                // Sequence bootstrap (Gate 11-A, P0-1): a legacy store's markers
+                // may already exceed 0 — the counter starts ABOVE the highest
+                // surviving marker so tokens are never reused across the
+                // migration. Fresh stores have no markers and skip this cheaply.
+                // (Khởi động sequence: marker của store cũ có thể đã lớn hơn 0 —
+                // bộ đếm khởi động TRÊN marker sống sót cao nhất để token không
+                // bao giờ tái sử dụng qua migration. Store mới không có marker,
+                // bỏ qua rẻ.)
+                tx.execute(
+                    "INSERT INTO cas_generation_seq (project_root, last_issued)
              SELECT project_root, MAX(generation) FROM cas_generations
              GROUP BY project_root
              ON CONFLICT(project_root) DO UPDATE
              SET last_issued = MAX(last_issued, excluded.last_issued)",
-            [],
-        )?;
+                    [],
+                )?;
 
-        // Crash-recovery lease columns (Gate 11-B, vòng-11 verdict): the
-        // doctor's stale-staging GC must distinguish "an install is
-        // RUNNING (pid alive, lease fresh)" from "the install DIED (pid
-        // gone or lease ancient)" — age alone cannot. SQLite has no
-        // IF NOT EXISTS for ALTER ADD COLUMN; probe table_info first
-        // (idempotent across re-opens, race-free under the schema batch).
-        // (Cột lease phục hồi crash: GC stale-staging của doctor phải
-        // phân biệt "install đang CHẠY (pid sống, lease mới)" với
-        // "install đã CHẾT (pid mất hoặc lease quá cũ)" — chỉ tuổi
-        // không đủ. SQLite không có IF NOT EXISTS cho ALTER ADD COLUMN;
-        // thăm dò table_info trước (idempotent qua các lần mở lại, không
-        // race dưới batch schema).)
-        {
-            // P0-3 (Gate 11-B adversarial review 2026-09-15): the OLD code
-            // swallowed EVERY ALTER TABLE error (`let _ = ...`) — a locked,
-            // corrupt, or disk-full store silently opened with a MISSING
-            // lease schema. Now: only the "duplicate column name" race is
-            // tolerated; any other error propagates, and after migrating we
-            // REVALIDATE (fail-closed) that both columns are present.
-            // (P0-3: code CŨ nuốt MỌI lỗi ALTER TABLE (`let _ = ...`) —
-            // store bị khóa/hỏng/đầy đĩa mở im lặng với schema lease THIẾU.
-            // Giờ: chỉ race "duplicate column name" được dung thứ; lỗi khác
-            // propagate, và sau migrate REVALIDATE (fail-closed) rằng cả
-            // hai cột đã hiện diện.)
-            if !has_lease_column(&conn, "lease_pid")? {
-                add_lease_column(
-                    &conn,
-                    "lease_pid",
-                    "ALTER TABLE cas_generations ADD COLUMN lease_pid INTEGER",
-                )?;
-            }
-            if !has_lease_column(&conn, "lease_started_at")? {
-                add_lease_column(
-                    &conn,
-                    "lease_started_at",
-                    "ALTER TABLE cas_generations ADD COLUMN lease_started_at INTEGER",
-                )?;
-            }
-            // REVALIDATE (fail-closed): a swallowed/concurrent ALTER must
-            // never hand back a DB missing its lease schema — re-probe and
-            // error if either column is still absent.
-            // (REVALIDATE (fail-closed): ALTER bị nuốt/song song không bao
-            // giờ được trả DB thiếu schema lease — thăm dò lại và lỗi nếu
-            // cột nào vẫn thiếu.)
-            let lease_pid_present = has_lease_column(&conn, "lease_pid")?;
-            let lease_started_present = has_lease_column(&conn, "lease_started_at")?;
-            if !lease_pid_present || !lease_started_present {
-                return Err(anyhow::anyhow!(
-                    "store.db schema migration failed: lease columns missing after ALTER \
+                // Crash-recovery lease columns (Gate 11-B, vòng-11 verdict): the
+                // doctor's stale-staging GC must distinguish "an install is
+                // RUNNING (pid alive, lease fresh)" from "the install DIED (pid
+                // gone or lease ancient)" — age alone cannot. SQLite has no
+                // IF NOT EXISTS for ALTER ADD COLUMN; probe table_info first
+                // (idempotent across re-opens, race-free under the schema batch).
+                // (Cột lease phục hồi crash: GC stale-staging của doctor phải
+                // phân biệt "install đang CHẠY (pid sống, lease mới)" với
+                // "install đã CHẾT (pid mất hoặc lease quá cũ)" — chỉ tuổi
+                // không đủ. SQLite không có IF NOT EXISTS cho ALTER ADD COLUMN;
+                // thăm dò table_info trước (idempotent qua các lần mở lại, không
+                // race dưới batch schema).)
+                {
+                    // P0-3 (Gate 11-B adversarial review 2026-09-15): the OLD code
+                    // swallowed EVERY ALTER TABLE error (`let _ = ...`) — a locked,
+                    // corrupt, or disk-full store silently opened with a MISSING
+                    // lease schema. Now: only the "duplicate column name" race is
+                    // tolerated; any other error propagates, and after migrating we
+                    // REVALIDATE (fail-closed) that both columns are present.
+                    // (P0-3: code CŨ nuốt MỌI lỗi ALTER TABLE (`let _ = ...`) —
+                    // store bị khóa/hỏng/đầy đĩa mở im lặng với schema lease THIẾU.
+                    // Giờ: chỉ race "duplicate column name" được dung thứ; lỗi khác
+                    // propagate, và sau migrate REVALIDATE (fail-closed) rằng cả
+                    // hai cột đã hiện diện.)
+                    let (lease_pid_present, lease_started_present) = lease_columns_present(&tx)?;
+                    if !lease_pid_present {
+                        add_lease_column(
+                            &tx,
+                            "lease_pid",
+                            "ALTER TABLE cas_generations ADD COLUMN lease_pid INTEGER",
+                        )?;
+                    }
+                    if !lease_started_present {
+                        add_lease_column(
+                            &tx,
+                            "lease_started_at",
+                            "ALTER TABLE cas_generations ADD COLUMN lease_started_at INTEGER",
+                        )?;
+                    }
+                    // REVALIDATE (fail-closed): a swallowed/concurrent ALTER must
+                    // never hand back a DB missing its lease schema — re-probe and
+                    // error if either column is still absent.
+                    // (REVALIDATE (fail-closed): ALTER bị nuốt/song song không bao
+                    // giờ được trả DB thiếu schema lease — thăm dò lại và lỗi nếu
+                    // cột nào vẫn thiếu.)
+                    let (lease_pid_present, lease_started_present) = lease_columns_present(&tx)?;
+                    if !lease_pid_present || !lease_started_present {
+                        return Err(anyhow::anyhow!(
+                            "store.db schema migration failed: lease columns missing after ALTER \
                      (lease_pid={lease_pid_present}, lease_started_at={lease_started_present})"
-                ));
+                        ));
+                    }
+                }
+
+                tx.pragma_update(None, "user_version", STORE_DB_SCHEMA_VERSION)?;
+                tx.commit()?;
             }
         }
+        ensure_lease_columns(&mut conn)?;
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
 
         // Enable FK enforcement (Gate 11-A, P0-4): MUST run AFTER the
         // legacy migration above — PRAGMA foreign_keys is a no-op inside
@@ -383,7 +501,11 @@ impl Database {
         // thiếu marker — bảo đảm tầng schema sau cổng token của cas_claim.)
         conn.pragma_update(None, "foreign_keys", true)?;
 
-        Ok(Self { conn })
+        drop(_schema_gate);
+        Ok(Self {
+            conn,
+            claim_write_gate,
+        })
     }
 
     /// Raw connection — for StoreIndex full scans.
@@ -539,51 +661,116 @@ impl Database {
         generation: i64,
         hash: &str,
     ) -> std::result::Result<(), CasGenerationError> {
+        self.cas_claim_batch(project_root, generation, &[hash])
+    }
+
+    /// Validate a staging token and register a set of CAS claims atomically.
+    /// This batches a tarball's file claims into one SQLite writer transaction,
+    /// avoiding one connection-lock cycle per file while preserving all-or-none
+    /// token validation.
+    /// (Kiểm tra token staging và ghi một nhóm CAS claim nguyên tử. Gom claim
+    /// từng tarball vào một transaction SQLite, tránh lấy/nhả khóa mỗi file.)
+    pub fn cas_claim_batch(
+        &self,
+        project_root: &str,
+        generation: i64,
+        hashes: &[&str],
+    ) -> std::result::Result<(), CasGenerationError> {
+        // SQLite serializes writers for a database file. Multiple package
+        // extraction workers run in this process, so queue them explicitly
+        // by canonical DB path instead of making independent connections
+        // race through SQLite's busy handler. Other projects have a distinct
+        // gate; other processes remain protected by SQLite's own locking and
+        // busy timeout.
+        // (SQLite chỉ cho một writer trên mỗi file DB. Các worker giải nén
+        // chạy trong cùng process nên xếp hàng theo canonical DB path thay vì
+        // để nhiều connection đua vào busy handler. Project khác có gate riêng;
+        // process khác vẫn được bảo vệ bởi khóa SQLite và busy timeout.)
+        let _claim_writer = self
+            .claim_write_gate
+            .lock()
+            .map_err(|_| CasGenerationError::Io("local claim-writer gate was poisoned".into()))?;
+
         // Capability gate FIRST (P0-4, vòng-11 audit): the token MUST exist,
         // belong to THIS project, and still be 'staging' — forged/cross-
         // project/promoted/missing tokens get a typed error and ZERO rows
-        // written. The composite FK below is the schema-level backstop.
-        // (Cổng năng lực TRƯỚC (P0-4): token PHẢI tồn tại, thuộc project
-        // NÀY, còn 'staging' — token giả/sai project/đã promote/mất nhận
-        // lỗi có type, KHÔNG ghi row nào. FK composite bên dưới là lớp dự
-        // phòng ở tầng schema.)
-        // `optional()` (rusqlite::OptionalExtension): NoRows becomes
-        // None — the honest "token not found"; real I/O errors stay Err.
-        // (`optional()`: NoRows thành None — "không có token" trung
-        // thực; lỗi I/O thật giữ Err.)
-        let state: Option<String> = self
-            .conn
-            .query_row(
-                "SELECT state FROM cas_generations
-                 WHERE project_root = ?1 AND generation = ?2",
-                params![project_root, generation],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()
-            .map_err(|e| CasGenerationError::Io(e.to_string()))?;
-        match state.as_deref() {
-            Some("staging") => {}
-            Some(_) => {
-                return Err(CasGenerationError::AlreadyPromoted {
-                    project_root: project_root.to_string(),
-                    generation,
-                });
-            }
-            None => {
-                return Err(CasGenerationError::UnknownToken {
-                    project_root: project_root.to_string(),
-                    generation,
-                });
-            }
-        }
+        // written. The composite FK below remains the schema-level backstop.
+        // Taking the writer lock BEFORE reading the state prevents promote or
+        // abort from invalidating the check between SELECT and INSERT.
+        // (Cổng năng lực: token phải tồn tại, đúng project, còn staging;
+        // khóa writer trước khi đọc để promote/abort không chen giữa check và ghi.)
         self.conn
-            .execute(
-                "INSERT OR IGNORE INTO cas_blob_refs (project_root, generation, hash)
-                 VALUES (?1, ?2, ?3)",
-                params![project_root, generation, hash],
-            )
-            .map_err(|e| CasGenerationError::Io(e.to_string()))?;
-        Ok(())
+            .execute_batch("BEGIN IMMEDIATE")
+            .map_err(|e| CasGenerationError::Io(format!("begin claim batch transaction: {e}")))?;
+        let result = (|| {
+            let state: Option<String> = self
+                .conn
+                .query_row(
+                    "SELECT state FROM cas_generations
+                     WHERE project_root = ?1 AND generation = ?2",
+                    params![project_root, generation],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+                .map_err(|e| CasGenerationError::Io(format!("read generation state: {e}")))?;
+            match state.as_deref() {
+                Some("staging") => {}
+                Some(_) => {
+                    return Err(CasGenerationError::AlreadyPromoted {
+                        project_root: project_root.to_string(),
+                        generation,
+                    });
+                }
+                None => {
+                    return Err(CasGenerationError::UnknownToken {
+                        project_root: project_root.to_string(),
+                        generation,
+                    });
+                }
+            }
+
+            let mut statement = self
+                .conn
+                .prepare_cached(
+                    "INSERT OR IGNORE INTO cas_blob_refs (project_root, generation, hash)
+                     VALUES (?1, ?2, ?3)",
+                )
+                .map_err(|e| CasGenerationError::Io(format!("prepare claim insert: {e}")))?;
+            for (index, hash) in hashes.iter().enumerate() {
+                statement
+                    .execute(params![project_root, generation, hash])
+                    .map_err(|e| {
+                        CasGenerationError::Io(format!(
+                            "insert claim {}/{}: {e}",
+                            index + 1,
+                            hashes.len()
+                        ))
+                    })?;
+            }
+            Ok(())
+        })();
+
+        match result {
+            Ok(()) => match self.conn.execute_batch("COMMIT") {
+                Ok(()) => Ok(()),
+                Err(commit_error) => {
+                    let rollback_error = self.conn.execute_batch("ROLLBACK").err();
+                    let message = match rollback_error {
+                        Some(rollback_error) => format!(
+                            "commit claim batch: {commit_error}; rollback also failed: {rollback_error}"
+                        ),
+                        None => format!("commit claim batch: {commit_error}"),
+                    };
+                    Err(CasGenerationError::Io(message))
+                }
+            },
+            Err(error) => match self.conn.execute_batch("ROLLBACK") {
+                Ok(()) => Err(error),
+                Err(rollback_error) => Err(CasGenerationError::Io(format!(
+                    "{error}; rollback claim batch also failed: {rollback_error}"
+                ))),
+            },
+        }
     }
 
     /// Begin a NEW install generation for `project_root` and return its

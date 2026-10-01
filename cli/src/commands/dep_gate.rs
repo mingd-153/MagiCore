@@ -85,9 +85,8 @@ impl DepOp {
 }
 
 /// Full dependency-operation context — EVERY dependency lane MUST build
-/// one before calling `gate()`. There is no language-unaware shorthand:
-/// an undetermined ecosystem fails Unsupported, never falls back to a
-/// generic delegated lane.
+/// one before calling `gate()`. Ownership can additionally require a
+/// concrete manifest format; an undetermined ecosystem/format fails closed.
 /// (Context đầy đủ cho operation dependency — MỌI lane dependency PHẢI
 /// dựng một cái trước khi gọi `gate()`. Không có dạng gọn bỏ-ngôn-ngữ:
 /// ecosystem không xác định được thì fail Unsupported, không fallback
@@ -104,6 +103,10 @@ pub struct DepContext<'a> {
     pub framework: Option<&'a str>,
     /// Deploy/materialize target where the lane knows one (iot board).
     pub target: Option<&'a str>,
+    /// Concrete dependency manifest format where ownership differs within
+    /// one ecosystem (e.g. Java Maven POM vs executable Gradle scripts).
+    /// None means the format has not been proven; the gate fails closed.
+    pub manifest_format: Option<&'a str>,
     /// The invoked operation (verb or pipeline stage).
     pub op: DepOp,
 }
@@ -123,15 +126,22 @@ impl<'a> DepContext<'a> {
             ecosystem,
             framework,
             target,
+            manifest_format: None,
             op,
         }
     }
 
+    /// Attach a manifest format detected from the project root.
+    pub fn with_manifest_format(mut self, manifest_format: Option<&'a str>) -> Self {
+        self.manifest_format = manifest_format;
+        self
+    }
+
     /// Human/gate-log lane description: `core` plus the detected
-    /// ecosystem, framework and target when known
+    /// ecosystem, framework, target and manifest format when known
     /// (`iot[esp32-rust|board:esp32]`-style precision for audit lines and
     /// user-facing messages).
-    /// (Mô tả lane cho log: core kèm ecosystem/framework/target khi biết.)
+    /// (Mô tả lane cho log: core kèm ecosystem/framework/target/manifest khi biết.)
     pub fn describe(&self) -> String {
         let mut out = self.core.to_string();
         if let Some(eco) = self.ecosystem {
@@ -141,6 +151,9 @@ impl<'a> DepContext<'a> {
             }
             if let Some(target) = self.target {
                 out.push_str(&format!("|target:{target}"));
+            }
+            if let Some(format) = self.manifest_format {
+                out.push_str(&format!("|manifest:{format}"));
             }
             out.push(']');
         }
@@ -176,13 +189,13 @@ pub mod eco {
     pub const TERRAFORM: &str = "terraform";
 }
 
-/// Ownership of one (core, ecosystem, operation) cell — the ONLY source
-/// for gate decisions.
+/// Ownership of one (core, ecosystem, manifest format, operation) cell —
+/// the ONLY source for gate decisions.
 /// Capability matrices and docs must derive from this table, never
 /// hardcode their own copy.
-/// Quyền sở hữu của một ô (core, ecosystem, operation) — nguồn DUY NHẤT
-/// cho quyết định gate. Matrix capability và docs phải suy ra từ bảng
-/// này, không hardcode bản sao riêng.
+/// Quyền sở hữu của một ô (core, ecosystem, manifest format, operation) —
+/// nguồn DUY NHẤT cho quyết định gate. Matrix capability và docs phải suy
+/// ra từ bảng này, không hardcode bản sao riêng.
 pub enum DepOwner {
     /// MGC owns the full lifecycle — proceeds in every mode.
     Native,
@@ -196,9 +209,9 @@ pub enum DepOwner {
     Unsupported,
 }
 
-/// Static ownership table (V1.2 §6.3 evidence baseline, HEAD 030ee69b).
-/// Matched on (core, ecosystem, operation) — never on core alone, and
-/// never one label for a whole ecosystem: an operation WITHOUT a real
+/// Static ownership table (V1.2 evidence baseline, HEAD 030ee69b).
+/// Matched on (core, ecosystem, manifest format, operation) — never on
+/// core alone, and never one label for a whole ecosystem: an operation WITHOUT a real
 /// runner is Unsupported, not Delegated (a "delegated" cell for a command
 /// that does not exist is a false capability, not a cautious one).
 /// Every arm names an explicit ecosystem; the catch-all is Unsupported —
@@ -206,15 +219,91 @@ pub enum DepOwner {
 /// delegated lane.
 ///
 /// Pipeline stages (resolve/lock/fetch/verify/store/materialize/frozen/
-/// offline/gc) share their (core, ecosystem)'s INSTALL ownership: the
-/// engine/toolchain that owns install owns the pipeline. Only the five
-/// user verbs plus List keep distinct cells.
-/// Bảng sở hữu tĩnh (baseline §6.3). Khớp theo (core, ecosystem,
-/// operation) — operation không có runner thật là Unsupported, không
-/// phải Delegated.
+/// offline) share their (core, ecosystem, manifest format) INSTALL ownership.
+/// GC is a separate operation because its implementation is core/store-layout
+/// specific; it never inherits ownership from install.
+/// Bảng sở hữu tĩnh (baseline §6.3). Khớp theo (core, ecosystem, manifest
+/// format, operation) — operation không có runner thật là Unsupported,
+/// không phải Delegated.
 pub fn owner_for(ctx: &DepContext) -> DepOwner {
-    // Pipeline stages ride Install ownership; the verbs + List stay exact.
-    // (Stage pipeline đi theo ownership của Install.)
+    // AI/Python is native only for the explicit MGC-owned PEP 621 lane.
+    // A language-wide claim would mislabel existing uv/pip/requirements
+    // projects whose lock and installation state MGC does not own.
+    if ctx.core == "ai"
+        && ctx.ecosystem == Some(eco::PYTHON)
+        && ctx.manifest_format != Some("mgc-pyproject")
+    {
+        return DepOwner::Unsupported;
+    }
+    // Every Lib native lane requires the concrete manifest the adapter
+    // actually parses. A configured language alone must not advertise an
+    // empty, foreign, or unsupported project as native.
+    if ctx.core == "lib" {
+        let required_format = match ctx.ecosystem {
+            Some(eco::TS) => Some("package-json"),
+            Some(eco::RUST) => Some("cargo-toml"),
+            Some(eco::PYTHON) => Some("pep621-native"),
+            Some(eco::GO) => Some("go-mod"),
+            Some(eco::JAVA) => Some("maven-pom"),
+            Some(eco::DOTNET) => Some("csproj"),
+            _ => None,
+        };
+        if required_format.is_some() && ctx.manifest_format != required_format {
+            return DepOwner::Unsupported;
+        }
+    }
+    // Game/Bevy and IoT/ESP32-Rust reuse Lib/Rust, but the ecosystem label
+    // alone is not proof of a Cargo dependency manifest. Keep public
+    // capability claims and runtime gates on the same concrete evidence.
+    if matches!(
+        (ctx.core, ctx.ecosystem),
+        ("game", Some(eco::BEVY)) | ("iot", Some("esp32-rust"))
+    ) && ctx.manifest_format != Some("cargo-toml")
+    {
+        return DepOwner::Unsupported;
+    }
+    // Store GC has its own concrete Web-only implementation. It must not
+    // inherit from an ecosystem's install owner: doing so would advertise
+    // `mgc store prune` for cores whose store layout/GC is not implemented.
+    if ctx.op == DepOp::Gc
+        && !(ctx.core == "web"
+            && matches!(
+                ctx.ecosystem,
+                Some(eco::JS | eco::TS | "javascript" | "typescript")
+            ))
+    {
+        return DepOwner::Unsupported;
+    }
+    // Offline reinstall is an independent capability, not an install alias.
+    // Only lanes whose install path demonstrably consumes the MGC-managed
+    // cache without registry access may advertise it. Other native install
+    // lanes still call their protocol download path and must not be reported
+    // offline-capable merely because their online install is native.
+    let offline_supported = matches!(
+        (ctx.core, ctx.ecosystem, ctx.framework, ctx.manifest_format,),
+        (
+            "web",
+            Some(eco::JS | eco::TS | "javascript" | "typescript"),
+            _,
+            _,
+        ) | ("lib", Some(eco::TS), _, _)
+            | ("lib", Some(eco::PYTHON), _, _)
+            // CDK/Pulumi's CloudAdapter embeds WebAdapter, whose offline
+            // install consumes the verified MGC lock and local CAS only.
+            // (CDK/Pulumi nhúng WebAdapter; offline chỉ dùng lock/CAS của MGC.)
+            | (
+                "clo",
+                Some(eco::JS | eco::TS | "javascript" | "typescript"),
+                Some("cdk" | "pulumi"),
+                Some("package-json")
+            )
+    );
+    if ctx.op == DepOp::OfflineReinstall && !offline_supported {
+        return DepOwner::Unsupported;
+    }
+    // Resolver/install pipeline stages ride Install ownership; user verbs,
+    // List, and GC stay exact.
+    // (Stage resolve/install đi theo Install; verb, List và GC khớp riêng.)
     let op = match ctx.op {
         DepOp::Resolve
         | DepOp::Lock
@@ -222,9 +311,7 @@ pub fn owner_for(ctx: &DepContext) -> DepOwner {
         | DepOp::Verify
         | DepOp::Store
         | DepOp::Materialize
-        | DepOp::FrozenInstall
-        | DepOp::OfflineReinstall
-        | DepOp::Gc => DepOp::Install,
+        | DepOp::FrozenInstall => DepOp::Install,
         verb => verb,
     };
     match (ctx.core, ctx.ecosystem, op) {
@@ -235,23 +322,22 @@ pub fn owner_for(ctx: &DepContext) -> DepOwner {
         ("web", Some(eco::JS | eco::TS | "javascript" | "typescript"), _) => DepOwner::Native,
         // Lib TypeScript rides the embedded web engine end to end.
         ("lib", Some(eco::TS), _) => DepOwner::Native,
-        // Lib Remove AND Update run natively on mgc-written manifests
-        // (remove: in-memory edit + writer; update: resolve-latest +
-        // rewrite + native install tail; zero spawn — gradle projects
-        // fail closed in write_manifest/prepare_add).
-        // (Remove/Update native.)
+        // Lib Remove and Update run through the native mutation gateway:
+        // remove rewrites the MGC-owned manifest; update resolves latest,
+        // rewrites, and runs the native install tail. Java is gated to a
+        // Maven POM and .NET to one root csproj above. The release matrix
+        // has explicit zero-spawn update cells for these ecosystems.
+        // (Remove/Update qua gateway native; Java/.NET cần manifest phù hợp.)
         (
             "lib",
             Some(eco::RUST | eco::PYTHON | eco::GO | eco::DOTNET | eco::JAVA),
             DepOp::Remove | DepOp::Update,
         ) => DepOwner::Native,
-        // .NET Add/Remove run natively (NuGet resolve-first + mgc-side
-        // csproj edit, zero `dotnet` spawn); Update has NO runner —
-        // Unsupported. Java Add/Remove run natively for pom.xml projects
-        // (Maven resolve-first + mgc-side pom edit); gradle projects fail
-        // closed inside prepare_add/write_manifest (scripts are programs).
-        // Java Update stays Unsupported.
-        // (Add/Remove .NET/Java-pom native.)
+        // .NET Add is NuGet resolve-first + MGC csproj edit. Java Add is
+        // Maven resolve-first + MGC POM edit. Their Update cells are covered
+        // by the native update arm above; unsupported manifest formats were
+        // rejected before reaching this table.
+        // (.NET/Java-POM Add native; Update do native arm phía trên.)
         ("lib", Some(eco::DOTNET), DepOp::Add) => DepOwner::Native,
         ("lib", Some(eco::JAVA), DepOp::Add) => DepOwner::Native,
         // A native list needs verified installed-state evidence, not just
@@ -273,19 +359,17 @@ pub fn owner_for(ctx: &DepContext) -> DepOwner {
         // A framework name alone is insufficient: callers must detect a JS
         // manifest and pass the matching ecosystem before entering this arm.
         ("clo", Some(eco::JS | eco::TS | "javascript" | "typescript"), _)
-            if matches!(ctx.framework, Some("cdk" | "pulumi")) =>
+            if matches!(ctx.framework, Some("cdk" | "pulumi"))
+                && ctx.manifest_format == Some("package-json") =>
         {
             DepOwner::Native
         }
         ("clo", Some(eco::TERRAFORM | "cloudflare"), DepOp::List) => DepOwner::Unsupported,
-        // AI's typed PEP 621 lane uses the native resolver; CLI performs
-        // project-specific manifest validation before entering this table.
-        // Lane PEP 621 của AI dùng resolver native; CLI kiểm tra manifest trước.
-        ("ai", Some(eco::PYTHON), DepOp::Install | DepOp::Add | DepOp::Update) => DepOwner::Native,
-        // Project-specific native AI lanes are admitted by
-        // `gate_native_adapter`; this static fallback never opens a PM.
-        // Lane AI native được xét qua adapter; fallback tĩnh không mở PM.
-        ("ai", Some(eco::PYTHON), _) => DepOwner::Unsupported,
+        // AI/Python is native only after the manifest-format guard above
+        // proves an MGC-owned PEP 621 project. The same adapter owns all
+        // dependency verbs and internal pipeline stages in that lane.
+        // (AI/Python chỉ native sau khi guard xác nhận manifest MGC-owned.)
+        ("ai", Some(eco::PYTHON), _) => DepOwner::Native,
         // React Native has per-tier engines but NO install runner — the
         // invoked lane errors before any spawn, so no install lifecycle
         // exists to support (Phase C may add one).
@@ -345,9 +429,12 @@ pub fn owner_for(ctx: &DepContext) -> DepOwner {
         // toolchain command is not equivalent to adapter capability.
         // (ESP32-Rust dùng engine native Lib/Rust; PlatformIO/Zephyr chưa.)
         ("iot", Some("esp32-rust" | "platformio" | "zephyr"), _) => DepOwner::Unsupported,
-        // Cloud Terraform has no native dependency lifecycle. CDK/Pulumi ride the web
-        // engine (native — those lanes branch BEFORE the gate and never
-        // call it).
+        // Cloud Terraform has no native dependency lifecycle. CDK/Pulumi
+        // package.json lanes enter through `gate_cloud_project`, which
+        // supplies the detected JS ecosystem before routing to the embedded
+        // Web engine; this ownership table does not bypass the gate.
+        // (Terraform chưa có lifecycle dependency native. CDK/Pulumi có
+        // package.json đi qua `gate_cloud_project` trước khi vào Web engine.)
         ("clo", Some(eco::TERRAFORM), _) => DepOwner::Unsupported,
         // Hardware list is a REAL read-only inventory command over
         // optimizer/bench templates — no package lifecycle, so it is
@@ -361,6 +448,30 @@ pub fn owner_for(ctx: &DepContext) -> DepOwner {
         // Unknown core / ecosystem / combination: fail closed, never
         // default-open.
         _ => DepOwner::Unsupported,
+    }
+}
+
+/// Build the library-core gate context from the same root manifest probes
+/// used by the lib adapter. This prevents language-only capability claims
+/// from admitting unsupported manifest formats.
+/// Tạo context gate lib từ manifest thực tế, tránh capability chỉ dựa vào
+/// ngôn ngữ mà nhận nhầm format chưa được hỗ trợ.
+pub fn lib_project_context(root: &std::path::Path, op: DepOp) -> DepContext<'static> {
+    #[cfg(any(feature = "lib", feature = "ai"))]
+    {
+        let language = mgc_lib_adapter::detect_language(root);
+        let ecosystem = language.map(|language| language.ecosystem());
+        let manifest_format = language
+            .and_then(|language| mgc_lib_adapter::dependency_manifest_format(root, language));
+        DepContext::new("lib", ecosystem, None, None, op).with_manifest_format(manifest_format)
+    }
+    #[cfg(not(any(feature = "lib", feature = "ai")))]
+    {
+        // A per-core binary without Lib/AI must never advertise a lane it
+        // cannot execute; an unknown ecosystem fails closed in owner_for.
+        // Binary chỉ bật core khác không được quảng bá lane Lib không thể chạy.
+        let _ = root;
+        DepContext::new("lib", None, None, None, op)
     }
 }
 
@@ -425,7 +536,8 @@ pub fn gate_cloud_project(
         .then_some(eco::JS);
     let compat = from_dep_flag(compat_flag)?;
     gate(
-        &DepContext::new("clo", ecosystem, Some(framework), None, op),
+        &DepContext::new("clo", ecosystem, Some(framework), None, op)
+            .with_manifest_format(ecosystem.map(|_| "package-json")),
         None,
         &compat,
         Some(&root.join(".magicore").join("exec.log")),
@@ -476,11 +588,32 @@ pub fn gate(
             }
             Ok(())
         }
-        DepOwner::Unsupported => Err(crate::error::dep_gate_unsupported(
-            ctx.core,
-            ctx.op.as_str(),
-            ctx.ecosystem,
-        )),
+        DepOwner::Unsupported => {
+            let detail = match (ctx.core, ctx.ecosystem, ctx.manifest_format) {
+                ("lib", Some(eco::JAVA), Some("gradle")) => Some(
+                    "Gradle build scripts are not dependency manifests; native Java dependency operations require a root pom.xml.",
+                ),
+                ("lib", Some(eco::JAVA), Some("ambiguous")) => Some(
+                    "both Maven and Gradle manifests are present; select one build system before native Java dependency operations.",
+                ),
+                ("lib", Some(eco::JAVA), _) => Some(
+                    "native Java dependency operations require a root pom.xml; Gradle is unsupported.",
+                ),
+                ("lib", Some(eco::DOTNET), _) => Some(
+                    "native .NET dependency operations require exactly one root-level .csproj; multi-project selection is not implemented.",
+                ),
+                ("lib", Some(eco::PYTHON), Some("pyproject-unsupported")) => Some(
+                    "native Python dependency operations require a plain PEP 621 project without foreign lockfiles, dependency groups, or alternate package-manager sources.",
+                ),
+                _ => None,
+            };
+            let error =
+                crate::error::dep_gate_unsupported(ctx.core, ctx.op.as_str(), ctx.ecosystem);
+            match detail {
+                Some(detail) => Err(error.context(format!("{}: {detail}", ctx.describe()))),
+                None => Err(error),
+            }
+        }
     }
 }
 
@@ -514,16 +647,27 @@ pub fn gate_native_adapter(
             identity.language
         ));
     }
+    if ctx.core == "ai" && ctx.ecosystem == Some(eco::PYTHON) && identity.format != "pyproject.toml"
+    {
+        return Err(crate::error::dep_gate_unsupported(
+            ctx.core,
+            ctx.op.as_str(),
+            ctx.ecosystem,
+        ));
+    }
 
-    // Static native lanes remain governed by owner_for. The only dynamic
-    // exception is ai/python remove+list: these are native only when this
-    // verified adapter exposes the Python dependency/lock capabilities;
-    // foreign-lock CLI paths continue through normal `gate()` as delegated.
-    let dynamically_native = matches!(
-        (ctx.core, ctx.ecosystem, ctx.op),
-        ("ai", Some(eco::PYTHON), DepOp::Remove | DepOp::List)
-    );
-    if !matches!(owner_for(ctx), DepOwner::Native) && !dynamically_native {
+    // The validated AI Python adapter identity exists only after adapter
+    // construction selected the MGC-owned PEP 621 lane. Put that manifest
+    // fact into the same context consumed by owner_for and capabilities JSON.
+    let owner_context = if ctx.core == "ai" && ctx.ecosystem == Some(eco::PYTHON) {
+        DepContext {
+            manifest_format: Some("mgc-pyproject"),
+            ..*ctx
+        }
+    } else {
+        *ctx
+    };
+    if !matches!(owner_for(&owner_context), DepOwner::Native) {
         return Err(crate::error::dep_gate_unsupported(
             ctx.core,
             ctx.op.as_str(),

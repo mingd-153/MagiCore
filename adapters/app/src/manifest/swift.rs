@@ -1,6 +1,7 @@
 //! Swift Package.swift manifest parsing (Phase 2 — native SwiftPM lane).
 //! Parse manifest Package.swift của Swift (Phase 2 — lane SwiftPM native).
 
+use mgc_adapter_base::project_file::read_regular_text;
 use mgc_resolver::protocols::swift::{SwiftDep, parse_package_resolved, parse_swift_package_deps};
 use mgc_types::{
     DependencySpec, Ecosystem, Manifest, MgError, MgResult, PackageName, VersionRange,
@@ -15,8 +16,14 @@ use std::path::Path;
 /// mã manifest của project khi resolve. Cú pháp động/không hỗ trợ fail-closed.
 pub fn parse_package_swift(project_root: &Path) -> MgResult<Manifest> {
     let swift_path = project_root.join("Package.swift");
-    if !swift_path.exists() {
-        return Err(MgError::Other("Package.swift not found".to_string()));
+    match std::fs::symlink_metadata(&swift_path) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(MgError::Other("Package.swift not found".to_string()));
+        }
+        Err(error) => {
+            return Err(MgError::Other(format!("inspect Package.swift: {error}")));
+        }
     }
 
     let name = project_root
@@ -25,8 +32,7 @@ pub fn parse_package_swift(project_root: &Path) -> MgResult<Manifest> {
         .unwrap_or_else(|| "app".to_string());
     let mut manifest = Manifest::new(&name, Ecosystem::App);
 
-    let source = std::fs::read_to_string(&swift_path)
-        .map_err(|e| MgError::Other(format!("read Package.swift: {e}")))?;
+    let source = read_regular_text(&swift_path, "Package.swift")?;
     if !source.contains("Package(") {
         return Err(unsupported_static_swift_manifest(
             "no literal Package(...) declaration was found",
@@ -93,11 +99,14 @@ fn read_pins(
     project_root: &Path,
 ) -> MgResult<Vec<mgc_resolver::protocols::swift::SwiftResolvedPin>> {
     let path = project_root.join("Package.resolved");
-    if !path.exists() {
-        return Ok(Vec::new());
+    match std::fs::symlink_metadata(&path) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(MgError::Other(format!("inspect Package.resolved: {error}")));
+        }
     }
-    let text = std::fs::read_to_string(&path)
-        .map_err(|e| MgError::Other(format!("read Package.resolved: {e}")))?;
+    let text = read_regular_text(&path, "Package.resolved")?;
     parse_package_resolved(&text)
 }
 
@@ -187,15 +196,17 @@ fn pin_requirement(pin: &mgc_resolver::protocols::swift::SwiftResolvedPin) -> Op
 /// Write Manifest back to Package.swift.
 ///
 /// NOT IMPLEMENTED (honest): Package.swift is Swift SOURCE — mgc never
-/// rewrites it (unchanged no-op; the LockfileProvider claim for Swift rests
-/// on `Package.resolved`, written by the native install lane).
+/// rewrites it; calls fail explicitly instead of claiming a mutation worked.
 /// Viết Manifest trả về Package.swift.
 ///
 /// KHÔNG TRIỂN KHAI (trung thực): Package.swift là MÃ NGUỒN Swift — mgc
-/// không bao giờ viết lại (no-op giữ nguyên; claim LockfileProvider cho
-/// Swift dựa trên `Package.resolved` do lane install native ghi).
+/// không bao giờ viết lại; lời gọi báo Unsupported thay vì nhận thành công giả.
 pub fn write_package_swift(_project_root: &Path, _manifest: &Manifest) -> MgResult<()> {
-    Ok(())
+    Err(MgError::Unsupported {
+        core: "app",
+        capability: "write-swift-manifest",
+        guidance: "MagiCore does not rewrite executable Package.swift source; Swift dependency mutation is unsupported by this writer".to_string(),
+    })
 }
 
 /// Deps declared by a Package.swift TEXT (pure-text scan — diagnostics and

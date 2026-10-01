@@ -3,6 +3,20 @@
 
 use anyhow::{Error, anyhow};
 
+/// A v4 lock cannot be signed while a legacy detached signature is present.
+/// Không ký lock v4 khi sidecar chữ ký legacy vẫn tồn tại.
+pub fn lock_v4_legacy_signature_sidecar() -> Error {
+    anyhow!(
+        "v4 lockfile cannot use a legacy .lock.sig sidecar; remove or explicitly migrate the stale sidecar before signing"
+    )
+}
+
+/// Refuse to re-sign a v4 document whose existing integrity evidence fails.
+/// Từ chối ký lại v4 nếu bằng chứng toàn vẹn hiện hữu không hợp lệ.
+pub fn lock_v4_existing_signature_invalid() -> Error {
+    anyhow!("refusing to re-sign a v4 lockfile whose existing digest or signature is invalid")
+}
+
 /// `mgc remove-ai <pkg> [pkg...]` — name packages to remove
 pub fn remove_ai_usage() -> Error {
     anyhow!("mgc remove-ai <pkg> [pkg...] — name the packages to remove")
@@ -73,6 +87,18 @@ pub fn path_not_found(p: &std::path::Path) -> Error {
     anyhow!("path does not exist: {}", p.display())
 }
 
+/// Patch metadata contains a path outside the project-owned patch store.
+pub fn patch_path_rejected(reason: &str) -> Error {
+    anyhow!("patch verification refused the configured patch path: {reason}")
+}
+
+/// A package/version-range patch identity already exists in the project.
+pub fn patch_duplicate_identity() -> Error {
+    anyhow!(
+        "a patch already exists for this package and version range; remove it before adding a replacement"
+    )
+}
+
 /// directory has no files
 pub fn dir_has_no_files(p: &std::path::Path) -> Error {
     anyhow!("directory has no files: {}", p.display())
@@ -108,6 +134,12 @@ pub fn lib_no_test_runner() -> Error {
     anyhow!("lib core has no test runner for this language yet (07 §4 P1)")
 }
 
+/// CICD verification test step failed for a specific core.
+/// Bước test trong CICD verify thất bại cho một core cụ thể.
+pub fn cicd_test_step_failed(core: &str, reason: &dyn std::fmt::Display) -> Error {
+    anyhow!("test step for core '{core}' failed: {reason}")
+}
+
 /// deploy target missing `stack` in [deploy] targets
 pub fn deploy_target_missing_stack() -> Error {
     anyhow!("aws target is missing `stack` in [deploy] targets — example: stack = \"my-infra\"")
@@ -140,6 +172,12 @@ pub fn dotnet_build_failed(e: &dyn std::fmt::Display) -> Error {
     anyhow!("dotnet build failed: {e} — install the .NET SDK first")
 }
 
+/// Android device discovery or launch failed.
+/// Không thể truy vấn hoặc khởi chạy ứng dụng trên thiết bị Android.
+pub fn android_device_command_failed(e: impl std::fmt::Display) -> Error {
+    anyhow!("Android device command failed: {e}")
+}
+
 /// flash only supports esp32-rust currently
 pub fn flash_framework_unsupported(framework: &str) -> Error {
     anyhow!(
@@ -157,6 +195,111 @@ pub fn cloudflare_build_in_cicd_core() -> Error {
 /// unknown hardware package for add-hardware
 pub fn unknown_hardware_package(pkg: &str) -> Error {
     anyhow!("unknown hardware package '{pkg}' (optimizer | bench)")
+}
+
+/// `mgc trust pending` could not open the machine-local policy database.
+/// `mgc trust pending` không mở được database policy cục bộ.
+pub fn trust_policy_database_open_failed(path: &std::path::Path) -> Error {
+    anyhow!(
+        "failed to open trust policy database '{}': database access failed",
+        path.display()
+    )
+}
+
+/// `mgc trust pending` could not read the machine-local policy database.
+/// `mgc trust pending` không đọc được policy từ database cục bộ.
+pub fn trust_policy_database_read_failed(path: &std::path::Path) -> Error {
+    anyhow!(
+        "failed to read trust policies from '{}': database query failed",
+        path.display()
+    )
+}
+
+/// A trust-policy write or prune could not update its database.
+/// Không thể ghi hoặc dọn database trust policy.
+pub fn trust_policy_database_write_failed(
+    path: &std::path::Path,
+    reason: &dyn std::fmt::Display,
+) -> Error {
+    anyhow!(
+        "failed to update trust policy database '{}': {reason}",
+        path.display()
+    )
+}
+
+/// A trust-policy mutation could not obtain the project writer lock.
+/// Không lấy được khóa ghi project để sửa trust policy.
+pub fn trust_policy_lock_failed(root: &std::path::Path, reason: &dyn std::fmt::Display) -> Error {
+    anyhow!(
+        "cannot update trust policy in '{}' while project state is changing or unrecovered: {reason}",
+        root.display()
+    )
+}
+
+/// A package identifier is required for trust approval or denial.
+/// Cần package identifier để approve hoặc deny trust.
+pub fn trust_policy_package_empty() -> Error {
+    anyhow!("package name cannot be empty")
+}
+
+/// A trust-policy storage path is not a regular project-owned path.
+/// Đường dẫn lưu trust policy không thuộc cây thư mục project an toàn.
+pub fn trust_policy_path_invalid(path: &std::path::Path) -> Error {
+    anyhow!(
+        "refusing unsafe trust policy storage path '{}' (symlinks and non-regular paths are not allowed)",
+        path.display()
+    )
+}
+
+/// A project TOML update could not obtain the shared project writer lock.
+/// Không lấy được khóa project để cập nhật mgc.toml.
+pub fn config_project_lock_failed(root: &std::path::Path, reason: &dyn std::fmt::Display) -> Error {
+    anyhow!(
+        "cannot update project configuration in '{}' while project state is changing or unrecovered: {reason}",
+        root.display()
+    )
+}
+
+/// `mgc trust pending` found an unreadable or malformed committed script policy.
+/// `mgc trust pending` gặp policy script commit bị lỗi hoặc sai định dạng.
+pub fn trust_scripts_policy_invalid(reason: &dyn std::fmt::Display) -> Error {
+    anyhow!("failed to load [scripts] trust policy: {reason}")
+}
+
+/// `mgc trust pending` could not completely inspect installed packages.
+/// `mgc trust pending` không thể quét đầy đủ dữ liệu package đã cài.
+pub fn trust_pending_scan_failed(path: &std::path::Path, reason: &dyn std::fmt::Display) -> Error {
+    anyhow!(
+        "failed to inspect lifecycle-script package data at '{}': {reason}",
+        path.display()
+    )
+}
+
+/// An installed package manifest is valid JSON but has an invalid trust-relevant shape.
+/// Manifest đã cài có JSON hợp lệ nhưng sai cấu trúc liên quan đến trust.
+pub fn trust_pending_manifest_invalid(path: &std::path::Path, reason: &str) -> Error {
+    anyhow!(
+        "invalid lifecycle-script package manifest '{}': {reason}",
+        path.display()
+    )
+}
+
+/// An installed package manifest exceeds the bounded trust scan size.
+/// Manifest package cài đặt vượt giới hạn kích thước khi quét trust.
+pub fn trust_pending_manifest_too_large(path: &std::path::Path, limit: u64) -> Error {
+    anyhow!(
+        "lifecycle-script package manifest '{}' exceeds the {limit}-byte inspection limit",
+        path.display()
+    )
+}
+
+/// The trust-pending scan could not obtain a stable project snapshot.
+/// Không lấy được snapshot project ổn định khi quét trust pending.
+pub fn trust_pending_lock_failed(root: &std::path::Path, reason: &dyn std::fmt::Display) -> Error {
+    anyhow!(
+        "cannot scan trust-pending packages in '{}' while project state is changing or unrecovered: {reason}",
+        root.display()
+    )
 }
 
 // ===== chung (nhiều file dùng) =====
@@ -433,6 +576,19 @@ pub fn python3_failed(e: &dyn std::fmt::Display) -> Error {
     anyhow!("python3 failed: {e} — install Python 3.11+ and ensure `python3` is in PATH")
 }
 
+/// Python launcher failed — Python launcher đã thất bại.
+pub fn python_runtime_failed(launcher: &str, error: &dyn std::fmt::Display) -> Error {
+    anyhow!("Python launcher '{launcher}' failed: {error}")
+}
+
+/// Native Python path cannot be represented in the child environment.
+/// Không biểu diễn được native Python path trong môi trường tiến trình con.
+pub fn python_path_not_unicode() -> Error {
+    anyhow!(
+        "native Python dependency path is not valid Unicode and cannot be passed through this command environment"
+    )
+}
+
 // ===== dev.rs =====
 
 pub fn path_not_utf8() -> Error {
@@ -494,7 +650,9 @@ pub fn cicd_verify_empty_chain() -> Error {
 // ===== dev/clo.rs =====
 
 pub fn deploy_not_implemented(cloud: &str) -> Error {
-    anyhow!("'mgc deploy' for '{cloud}' cloud type is not implemented yet")
+    anyhow!(
+        "'mgc deploy' for '{cloud}' has no MagiCore-native provider engine yet; no external provider CLI was started"
+    )
 }
 
 pub fn tool_not_installed_project(tool: &str) -> Error {
@@ -557,6 +715,58 @@ pub fn join_paths(err: &std::env::JoinPathsError) -> Error {
 
 pub fn invalid_oci_source(oci: &str) -> Error {
     anyhow!("invalid oci source '{oci}' — use `oci://registry/repo:tag`")
+}
+
+pub fn invalid_model_name(name: &str) -> Error {
+    anyhow!("model name must be a safe relative path: '{name}'")
+}
+
+pub fn unsafe_model_manifest_path() -> Error {
+    anyhow!("model manifest path contains a symlink or non-directory component")
+}
+
+pub fn hf_revision_required() -> Error {
+    anyhow!("hf:// pulls require --revision with an immutable 40-hex commit SHA")
+}
+
+pub fn invalid_hf_revision() -> Error {
+    anyhow!("HF revision must be an immutable 40-hex commit SHA")
+}
+
+pub fn hf_sha256_required() -> Error {
+    anyhow!("hf:// pulls require --sha256 with the trusted 64-hex artifact digest")
+}
+
+pub fn invalid_hf_sha256() -> Error {
+    anyhow!("HF SHA-256 must contain exactly 64 hexadecimal characters")
+}
+
+pub fn invalid_hf_source() -> Error {
+    anyhow!("invalid hf source; expected hf://<org>/<model>/<file>")
+}
+
+pub fn hf_size_overflow() -> Error {
+    anyhow!("HF artifact size overflow")
+}
+
+pub fn hf_download_limit_exceeded(limit: u64) -> Error {
+    anyhow!("HF artifact exceeded --max-bytes ({limit}); download was not imported into CAS")
+}
+
+pub fn hf_content_length_mismatch(expected: u64, actual: u64) -> Error {
+    anyhow!("HF artifact Content-Length mismatch: expected {expected}, received {actual}")
+}
+
+pub fn hf_sha256_mismatch(expected: &str, actual: &str) -> Error {
+    anyhow!("HF artifact SHA-256 mismatch: expected {expected}, got {actual}")
+}
+
+pub fn hf_artifact_changed_during_import() -> Error {
+    anyhow!("HF artifact changed while being imported into CAS")
+}
+
+pub fn model_pull_flags_require_hf() -> Error {
+    anyhow!("--revision, --sha256, and --max-bytes apply only to hf:// model sources")
 }
 
 pub fn unsupported_quantize_target(target: &str) -> Error {
@@ -796,7 +1006,7 @@ pub fn dev_iot_framework_not_implemented(fw: &str) -> Error {
 /// dev chưa implement cho cloud type này
 pub fn dev_cloud_not_implemented(cloud: &str) -> Error {
     anyhow!(
-        "'mgc dev' for '{cloud}' cloud type is not implemented yet — supported: terraform (plan) | cdk (synth) | pulumi (preview)"
+        "'mgc dev' for '{cloud}' has no MagiCore-native provider engine yet; no external provider CLI was started"
     )
 }
 
@@ -872,6 +1082,13 @@ pub fn build_toolchain_missing(tool: &str) -> Error {
     )
 }
 
+pub fn java_build_backend_unavailable(root: &std::path::Path) -> Error {
+    anyhow!(
+        "Java build descriptor found in '{}', but MagiCore has no native Java build backend yet; refusing to route the project through TypeScript or invoke Maven/Gradle",
+        root.display()
+    )
+}
+
 /// Build has no supported artifact for the selected core — core này chưa có artifact build được hỗ trợ.
 pub fn build_not_supported(core: &str, guidance: &str) -> Error {
     anyhow!("`mgc build` is not supported for core '{core}': {guidance}")
@@ -881,6 +1098,47 @@ pub fn build_not_supported(core: &str, guidance: &str) -> Error {
 pub fn build_no_artifact() -> Error {
     anyhow!(
         "build produced no artifact; fix the project configuration or install the required toolchain"
+    )
+}
+
+/// Refuse to infer an App build target from a malformed `mgc.toml`.
+pub fn app_build_config_invalid(path: &std::path::Path, error: &dyn std::fmt::Display) -> Error {
+    anyhow!("invalid App build config '{}': {error}", path.display())
+}
+
+/// Report App config I/O errors instead of treating unreadable config as absent.
+pub fn app_build_config_read_failed(
+    path: &std::path::Path,
+    error: &dyn std::fmt::Display,
+) -> Error {
+    anyhow!("cannot read App build config '{}': {error}", path.display())
+}
+
+/// Explicit App language must have a build implementation.
+pub fn app_build_language_invalid(language: &str) -> Error {
+    anyhow!("unsupported or invalid App build language '{language}'")
+}
+
+/// Multiple App build runtimes require explicit project configuration.
+/// Nhiều runtime App cần được khai báo tường minh trong cấu hình dự án.
+pub fn app_build_language_ambiguous(languages: &[&str]) -> Error {
+    anyhow!(
+        "App build runtime is ambiguous ({}); set `app.language` explicitly",
+        languages.join(", ")
+    )
+}
+
+/// App multi-platform configuration must be explicit and well-formed.
+/// Cấu hình đa nền tảng của App phải tường minh và hợp lệ.
+pub fn app_build_platforms_invalid(reason: &str) -> Error {
+    anyhow!("invalid App build platforms configuration: {reason}")
+}
+
+/// A multi-platform App build is incomplete when any selected target was skipped.
+pub fn build_multi_platforms_incomplete(skipped: &[String]) -> Error {
+    anyhow!(
+        "multi-platform build incomplete; selected target(s) not built: {}",
+        skipped.join(", ")
     )
 }
 
@@ -901,7 +1159,7 @@ pub fn no_registry_configured() -> Error {
 pub fn cannot_detect_project_type(root: &std::path::Path) -> Error {
     anyhow!(
         "Cannot detect project type in '{}'. Run `mgc init --template <type>`, \
-         `mgc init --signature <core>`, or specify `--core <type>`",
+         `mgc init --signature <core>` to write a plain-text core marker, or specify `--core <type>`",
         root.display()
     )
 }
@@ -1083,6 +1341,57 @@ pub fn config_key_missing(key: &str) -> Error {
     anyhow!("config key '{key}' not found (checked env, project .npmrc, and ~/.npmrc)")
 }
 
+pub fn config_core_identity_managed_by_signature() -> Error {
+    anyhow!(
+        "the project core identity is immutable through `mgc config`; `mgc init --signature <core>` writes a plain-text marker and cannot reassign an existing project"
+    )
+}
+
+/// Refuse a per-core command when another core owns the project directory.
+/// Từ chối lệnh core nếu project do core khác sở hữu.
+pub fn project_core_identity_mismatch(
+    project_root: &std::path::Path,
+    expected: &str,
+    detected: &str,
+) -> Error {
+    anyhow!(
+        "project '{}' belongs to core '{}'; refusing to run the '{}' core command",
+        project_root.display(),
+        detected,
+        expected,
+    )
+}
+
+/// Refuse to route a per-core command when project identity cannot be proven.
+/// Không định tuyến lệnh core khi chưa xác minh được identity project.
+pub fn project_core_identity_missing(project_root: &std::path::Path, expected: &str) -> Error {
+    anyhow!(
+        "cannot prove project core identity for '{}'; refusing to run the '{}' core command",
+        project_root.display(),
+        expected,
+    )
+}
+
+pub fn core_selector_conflicts_command(command_core: &str, selected_core: &str) -> Error {
+    anyhow!(
+        "global --core '{}' conflicts with the explicit '{}' core command",
+        selected_core,
+        command_core,
+    )
+}
+
+pub fn config_project_file_symlink(path: &std::path::Path) -> Error {
+    anyhow!("project config '{}' must not be a symlink", path.display())
+}
+
+pub fn config_project_file_not_regular(path: &std::path::Path) -> Error {
+    anyhow!("project config '{}' must be a regular file", path.display())
+}
+
+pub fn config_project_file_invalid_path() -> Error {
+    anyhow!("configuration path has no file name")
+}
+
 // ===== global flags =====
 
 pub fn dir_missing(dir: &str, cause: String) -> Error {
@@ -1144,6 +1453,32 @@ pub fn dep_gate_unsupported(core: &str, op: &str, ecosystem: Option<&str>) -> Er
 pub fn native_dependency_engine_unavailable(core: &str, ecosystem: &str, op: &str) -> Error {
     anyhow!(
         "`{core}` {op} for `{ecosystem}` is unavailable: MagiCore does not yet own the complete native dependency lifecycle for this lane. No external package manager was invoked; use a supported native lane or wait for native resolver, lock, fetch, verify, store, and materializer support."
+    )
+}
+
+/// Store commands currently manipulate only the Web-owned store layout.
+pub fn store_requires_web_core(core: Option<&str>) -> Error {
+    match core {
+        Some(core) => anyhow!(
+            "MagiCore store commands currently support only Web projects; this project is marked as core '{core}'"
+        ),
+        None => anyhow!(
+            "MagiCore store commands require a valid .mgc.core core marker or mgc.toml core; the store is Web-only"
+        ),
+    }
+}
+
+/// Store commands require an explicit project core marker.
+pub fn store_core_signature_required() -> Error {
+    anyhow!(
+        "MagiCore store commands require a valid .mgc.core core marker; this plain-text marker is not a cryptographic signature, so confirm this is a Web project before running `mgc init --signature web`"
+    )
+}
+
+/// Refuse store access when the project signature and project config disagree.
+pub fn store_core_identity_conflict(marker: &str, configured: &str) -> Error {
+    anyhow!(
+        "project core identity conflict: .mgc.core says '{marker}' but mgc.toml says '{configured}'; refusing Web store access"
     )
 }
 
@@ -1256,6 +1591,14 @@ pub fn outdated_no_registry_response(failed: String) -> Error {
 /// `mgc migrate lock` found no mgc.lock to migrate.
 pub fn migrate_no_lockfile(root: &std::path::Path) -> Error {
     anyhow!("no mgc.lock in '{}' — nothing to migrate", root.display())
+}
+
+/// V4 cannot be written until every dependency lifecycle reader and writer
+/// consumes it without projecting away package identity.
+pub fn migrate_v4_runtime_unavailable() -> Error {
+    anyhow!(
+        "schema v4 migration is disabled: install, mutation, and audit runtime paths do not yet consume v4 without loss; the existing mgc.lock was left unchanged"
+    )
 }
 
 /// `mgc migrate lock` cannot start from this schema version.

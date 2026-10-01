@@ -164,6 +164,31 @@ fn duplicate_fallback_priority_is_ambiguous() {
 }
 
 #[test]
+fn unclaimed_sources_with_tied_fallback_priority_are_ambiguous() {
+    let sources = vec![
+        source("mirror-a", "https://a.example/simple", 10, &[], false),
+        source("mirror-b", "https://b.example/simple", 10, &[], false),
+    ];
+
+    assert_eq!(
+        select_source("requests", &sources).unwrap_err(),
+        SourceSelectionError::AmbiguousFallback {
+            package: "requests".to_string(),
+        }
+    );
+}
+
+#[test]
+fn unclaimed_source_with_unique_lowest_priority_is_selected() {
+    let sources = vec![
+        source("mirror", "https://mirror.example/simple", 10, &[], false),
+        source("backup", "https://backup.example/simple", 20, &[], false),
+    ];
+
+    assert_eq!(select_source("requests", &sources).unwrap().id, "mirror");
+}
+
+#[test]
 fn public_fallback_loses_to_any_trusted_match() {
     // Fallback-level anti-confusion: the public catch-all wins on
     // priority but a trusted catch-all also matches → misconfiguration,

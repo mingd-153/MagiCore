@@ -84,9 +84,7 @@ pub async fn audit_java(project_root: &Path) -> MgResult<AuditReport> {
         .join("gradle")
         .join("verification-metadata.xml");
     if verification.is_file() {
-        let raw = std::fs::read_to_string(&verification).map_err(|e| {
-            mgc_types::MgError::Other(format!("read verification-metadata.xml: {e}"))
-        })?;
+        let raw = super::read_bounded_project_input(&verification, "verification-metadata.xml")?;
         return query_maven_pins(&read_gradle_verification_metadata(&raw)).await;
     }
     // Maven/Spring lane: pom.xml dependencies carry exact versions for
@@ -95,8 +93,7 @@ pub async fn audit_java(project_root: &Path) -> MgResult<AuditReport> {
     // property/thiếu version skip có ghi nhận.
     let pom = project_root.join("pom.xml");
     if pom.is_file() {
-        let raw = std::fs::read_to_string(&pom)
-            .map_err(|e| mgc_types::MgError::Other(format!("read pom.xml: {e}")))?;
+        let raw = super::read_bounded_project_input(&pom, "pom.xml")?;
         let mut report = query_maven_pins(&read_pom_gavs(&raw)).await?;
         // P0-4: pom.xml lists DIRECT dependencies only — the transitive
         // graph (parents, BOMs, profiles, dependencyManagement) is NOT

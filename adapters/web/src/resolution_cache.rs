@@ -21,7 +21,10 @@ pub fn manifest_resolution_cache_key(manifest: &Manifest, registry_url: &str) ->
     entries.sort_unstable();
 
     let mut hasher = Sha256::new();
-    hasher.update(b"magicore-web-resolution-v1\0");
+    // v3 invalidates graphs built from metadata cache records that discarded
+    // peerDependenciesMeta before the metadata cache schema was versioned.
+    // v3 loại graph sinh từ metadata cache cũ đã làm rơi peerDependenciesMeta.
+    hasher.update(b"magicore-web-resolution-v3\0");
     hasher.update(registry_url.trim_end_matches('/').as_bytes());
     hasher.update(b"\0");
     for entry in entries {

@@ -62,6 +62,9 @@ uuid = { workspace = true }
 # Parallelism
 rayon = { workspace = true }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = ["Win32_Storage_FileSystem"] }
+
 [dev-dependencies]
 pretty_assertions = { workspace = true }
 criterion = { workspace = true, features = ["html_reports"] }

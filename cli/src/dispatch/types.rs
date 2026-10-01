@@ -271,6 +271,7 @@ pub enum CoreCommand {
         packages: Vec<String>,
         compat_runtime: Option<String>,
         frozen: bool,
+        offline: bool,
     },
     InstallHardware {
         packages: Vec<String>,
@@ -474,108 +475,102 @@ pub enum CoreCommand {
 
 pub fn detect_ecosystem() -> anyhow::Result<Option<String>> {
     let cwd = std::env::current_dir()?;
+    detect_ecosystem_at(&cwd)
+}
 
-    // 0. Try core signature marker (.mgc.core) — T9a, ưu tiên cao nhất
-    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
-    if let Some(root) = mgc_config::project::ProjectConfig::find_project_root(&cwd)
-        && let Ok(Some(core)) = mgc_config::project::ProjectConfig::read_core_marker(&root)
-    {
+#[cfg(test)]
+#[path = "test/types.rs"]
+mod tests;
+
+fn detect_ecosystem_at(cwd: &std::path::Path) -> anyhow::Result<Option<String>> {
+    use mgc_config::project::{ProjectConfig, read_regular_project_text};
+
+    let root = ProjectConfig::find_project_root(cwd).unwrap_or_else(|| cwd.to_path_buf());
+
+    // Explicit MGC identity always wins, but malformed/linked identity must
+    // fail closed rather than falling through to a native manifest guess.
+    if let Some(core) = ProjectConfig::read_core_marker(&root)? {
         return Ok(Some(core));
     }
-
-    // 1. Try mgc.toml
-    let mgc_toml = cwd.join("mgc.toml");
-    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
-    if mgc_toml.exists()
-        && let Ok(Some(cfg)) = mgc_config::project::ProjectConfig::load(&cwd)
-        && !cfg.ecosystem.is_empty()
+    if let Some(config) = ProjectConfig::load(&root)?
+        && !config.ecosystem.is_empty()
     {
-        return Ok(Some(cfg.ecosystem));
+        return Ok(Some(config.ecosystem));
     }
 
-    // 2. Try mgc.lock
-    let lock_path = cwd.join("mgc.lock");
-    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
-    if lock_path.exists()
-        && let Ok(content) = std::fs::read_to_string(&lock_path)
-    {
-        for line in content.lines() {
-            let line = line.trim();
-            // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
-            if let Some(val) = line.strip_prefix("core = \"")
-                && let Some(eco) = val.strip_suffix('"')
-                && !eco.is_empty()
-            {
-                return Ok(Some(eco.to_string()));
+    // Validate a present lock using TOML syntax without guessing ownership
+    // from an arbitrary `core = ...` line. The lock's package ownership is
+    // multi-core data, not a single-core dispatch authority.
+    let lock_path = root.join("mgc.lock");
+    if let Some(content) = read_regular_project_text(&lock_path, "lockfile")? {
+        let _: toml::Value = toml::from_str(&content)?;
+    }
+
+    // Preserve legacy manifest metadata, but parse every present manifest and
+    // reject conflicting explicit declarations instead of choosing by order.
+    let mut declared_cores = std::collections::BTreeSet::new();
+    let package_json_path = root.join("package.json");
+    if let Some(content) = read_regular_project_text(&package_json_path, "package manifest")? {
+        let value: serde_json::Value = serde_json::from_str(&content)?;
+        if let Some(core) = value
+            .get("magicore")
+            .and_then(|magicore| magicore.get("core"))
+            .and_then(serde_json::Value::as_str)
+        {
+            declared_cores.insert(canonical_core_hint(core));
+        }
+    }
+
+    for (manifest, label, is_cargo) in [
+        (root.join("Cargo.toml"), "Cargo manifest", true),
+        (root.join("pyproject.toml"), "Python manifest", false),
+    ] {
+        if let Some(content) = read_regular_project_text(&manifest, label)? {
+            let value: toml::Value = toml::from_str(&content)?;
+            let declared = if is_cargo {
+                value
+                    .get("package")
+                    .and_then(|package| package.get("metadata"))
+                    .and_then(|metadata| metadata.get("magicore"))
+                    .and_then(|magicore| magicore.get("core"))
+            } else {
+                value
+                    .get("tool")
+                    .and_then(|tool| tool.get("magicore"))
+                    .and_then(|magicore| magicore.get("core"))
+            };
+            if let Some(core) = declared.and_then(toml::Value::as_str) {
+                declared_cores.insert(canonical_core_hint(core));
             }
         }
     }
 
-    // 3. Try Native Manifest Injection (package.json, Cargo.toml, pyproject.toml)
-    let package_json_path = cwd.join("package.json");
-    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
-    if package_json_path.exists()
-        && let Ok(content) = std::fs::read_to_string(&package_json_path)
-        && let Ok(v) = serde_json::from_str::<serde_json::Value>(&content)
-        && let Some(eco) = v
-            .get("magicore")
-            .and_then(|m| m.get("core"))
-            .and_then(|c| c.as_str())
-    {
-        return Ok(Some(eco.to_string()));
-    }
-
-    let cargo_toml_path = cwd.join("Cargo.toml");
-    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
-    if cargo_toml_path.exists()
-        && let Ok(content) = std::fs::read_to_string(&cargo_toml_path)
-        && let Ok(v) = toml::from_str::<toml::Value>(&content)
-        && let Some(eco) = v
-            .get("package")
-            .and_then(|p| p.get("metadata"))
-            .and_then(|m| m.get("magicore"))
-            .and_then(|mgc| mgc.get("core"))
-            .and_then(|c| c.as_str())
-    {
-        return Ok(Some(eco.to_string()));
-    }
-
-    let pyproject_toml_path = cwd.join("pyproject.toml");
-    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
-    if pyproject_toml_path.exists()
-        && let Ok(content) = std::fs::read_to_string(&pyproject_toml_path)
-        && let Ok(v) = toml::from_str::<toml::Value>(&content)
-        && let Some(eco) = v
-            .get("tool")
-            .and_then(|t| t.get("magicore"))
-            .and_then(|mgc| mgc.get("core"))
-            .and_then(|c| c.as_str())
-    {
-        return Ok(Some(eco.to_string()));
-    }
-
-    // Auto-detect from file presence — tự nhận core cho project đơn manifest.
-    // Priority is intentionally conservative — ưu tiên manifest phổ biến nhất.
-    let auto_detected = if package_json_path.exists() {
-        Some("web")
-    } else if cargo_toml_path.exists() {
-        Some("lib")
-    } else if pyproject_toml_path.exists() {
-        Some("ai")
-    } else {
-        None
-    };
-
-    if let Some(core) = auto_detected {
-        // Auto-save to mgc.toml for future runs — lưu binding nếu thư mục ghi được.
-        let cfg = mgc_config::project::ProjectConfig::new(
-            cwd.file_name().unwrap_or_default().to_string_lossy(),
-            core,
+    if declared_cores.len() > 1 {
+        anyhow::bail!(
+            "conflicting MagiCore core declarations in project manifests: {}. Set one authoritative `.mgc.core` marker or `mgc.toml` ecosystem before running core-aware commands.",
+            declared_cores.into_iter().collect::<Vec<_>>().join(", ")
         );
-        let _ = cfg.save(&cwd);
-
-        return Ok(Some(core.to_string()));
+    }
+    if let Some(core) = declared_cores.into_iter().next() {
+        if !ProjectConfig::KNOWN_CORES.contains(&core.as_str()) {
+            anyhow::bail!(
+                "manifest declares unknown MagiCore core '{}'; use `.mgc.core` or `mgc.toml` with a supported core",
+                core
+            );
+        }
+        return Ok(Some(core));
     }
 
-    Ok(None)
+    // This shared detector maps a single unambiguous manifest, and returns an
+    // error for mixed ecosystems. Detection never writes mgc.toml implicitly.
+    ProjectConfig::detect_core(&root)
+}
+
+fn canonical_core_hint(core: &str) -> String {
+    let core = core.trim().to_ascii_lowercase();
+    if core == "cloud" {
+        "clo".to_string()
+    } else {
+        core
+    }
 }

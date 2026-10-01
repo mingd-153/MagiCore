@@ -3,44 +3,8 @@
 use anyhow::Result;
 
 use crate::commands::core::install::app::{
-    gate_react_native, language, manifest_hint, project_root, run_tool, tool_command,
+    gate_react_native, language, manifest_hint, project_root,
 };
-
-/// Apply a `--version` pin to provider-tool args: Flutter pub accepts
-/// `pkg:constraint` (verified against the Dart pub reference); every
-/// other app language has no verified pin syntax and fails loudly.
-/// A package already carrying `:` plus `--version` is ambiguous — failed
-/// loudly, never merged silently.
-/// (Áp pin `--version`: Flutter pub chấp nhận `pkg:constraint`; ngôn ngữ
-/// app khác fail rõ.)
-pub fn apply_version_pin(
-    lang: mgc_app_adapter::AppLanguage,
-    packages: &[String],
-    version: Option<&str>,
-) -> Result<Vec<String>> {
-    let flat: Vec<String> = packages
-        .iter()
-        .flat_map(|p| p.split_whitespace().map(String::from))
-        .collect();
-    let Some(pinned) = version else {
-        return Ok(flat);
-    };
-    if pinned.trim().is_empty() {
-        return Err(crate::error::add_version_unsupported("app", "(empty)"));
-    }
-    if lang != mgc_app_adapter::AppLanguage::Flutter {
-        return Err(crate::error::add_version_unsupported("app", pinned));
-    }
-    flat.into_iter()
-        .map(|p| {
-            if p.contains(':') {
-                Err(crate::error::add_version_conflict(&p, pinned))
-            } else {
-                Ok(format!("{p}:{pinned}"))
-            }
-        })
-        .collect()
-}
 
 /// Convert the app CLI's Flutter constraint syntax into the shared native
 /// dependency-spec syntax (`name@range`).
@@ -86,11 +50,8 @@ pub async fn add(
     if packages.is_empty() {
         return Err(crate::error::add_app_usage());
     }
-    // tool_command is PURE (string building, zero spawn). Order: React
-    // Native gates first (no runner for any verb — P0#2), then gate with
-    // the resolved tool (None when the verb has no command — the exact
-    // table cell answers Unsupported for swift/kotlin/objc verbs without
-    // runners). The manifest hint below is defensive fallback.
+    // Reject unsupported languages before any process spawn.
+    // Từ chối ngôn ngữ chưa hỗ trợ trước mọi lần spawn.
     let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
     gate_react_native(&root, lang, crate::commands::dep_gate::DepOp::Add, &compat)?;
     if lang == mgc_app_adapter::AppLanguage::Flutter {
@@ -122,7 +83,6 @@ pub async fn add(
         )
         .await;
     }
-    let cmd_opt = tool_command(lang, "add");
     // C0 ownership firewall (T0.3): single control path.
     // (Tường lửa C0: đường điều khiển duy nhất.)
     crate::commands::dep_gate::gate(
@@ -133,17 +93,11 @@ pub async fn add(
             None,
             crate::commands::dep_gate::DepOp::Add,
         ),
-        cmd_opt.as_ref().map(|c| c.tool.as_str()),
+        None,
         &compat,
         Some(&root.join(".magicore").join("exec.log")),
     )?;
-    let Some(mut cmd) = cmd_opt else {
-        return Err(manifest_hint(lang, "add"));
-    };
-    cmd.args
-        .extend(apply_version_pin(lang, &packages, _version.as_deref())?);
-    run_tool(&root, &cmd.tool, &cmd.args)?;
-    Ok(())
+    Err(manifest_hint(lang, "add"))
 }
 
 #[cfg(test)]

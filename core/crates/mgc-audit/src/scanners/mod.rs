@@ -30,6 +30,22 @@ use mgc_types::{MgError, MgResult};
 use serde::Deserialize;
 use std::path::Path;
 
+const MAX_AUDIT_PROJECT_INPUT_BYTES: u64 = 10 * 1024 * 1024;
+
+/// Read project-controlled scanner input without following links or exceeding the byte ceiling.
+/// Đọc input scanner do project cung cấp, chặn symlink và giới hạn kích thước.
+pub(crate) fn read_bounded_project_input(path: &Path, label: &str) -> MgResult<String> {
+    let bytes = mgc_lockfile::read_bounded_regular_file(path, MAX_AUDIT_PROJECT_INPUT_BYTES, label)
+        .map_err(|error| {
+            MgError::Other(format!(
+                "failed to read {label} '{}': {error}",
+                path.display()
+            ))
+        })?;
+    String::from_utf8(bytes)
+        .map_err(|error| MgError::Other(format!("{label} is not valid UTF-8: {error}")))
+}
+
 // ---------------------------------------------------------------------------
 // Typed serde schemas — mirror the REAL tool output, verified against
 // `cargo audit --json --no-fetch` (cargo-audit 0.22.2, 2026-09-09) and the
@@ -498,9 +514,13 @@ pub fn find_pylock_file(project_root: &Path) -> Option<String> {
 /// còn graph Python rỗng trong lock hợp lệ vẫn là nguồn dữ liệu có thẩm quyền.
 pub fn python_pins_from_mgc_lock(project_root: &Path) -> MgResult<Option<Vec<osv::OsvPin>>> {
     let path = project_root.join("mgc.lock");
-    let content = match std::fs::read_to_string(&path) {
-        Ok(content) => content,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+    let lockfile = match mgc_lockfile::parser::load_lockfile(&path) {
+        Ok(lockfile) => lockfile,
+        Err(mgc_lockfile::LockfileError::IoError(error))
+            if error.kind() == std::io::ErrorKind::NotFound =>
+        {
+            return Ok(None);
+        }
         Err(error) => {
             return Err(MgError::Other(format!(
                 "cannot read MGC lockfile for Python audit at {}: {error}",
@@ -508,8 +528,6 @@ pub fn python_pins_from_mgc_lock(project_root: &Path) -> MgResult<Option<Vec<osv
             )));
         }
     };
-    let lockfile = mgc_lockfile::parser::parse_lockfile(&content)
-        .map_err(|error| MgError::Other(format!("invalid mgc.lock for Python audit: {error}")))?;
     Ok(Some(
         lockfile
             .packages
@@ -618,8 +636,7 @@ pub fn read_requirements_pins(project_root: &Path) -> MgResult<(Vec<osv::OsvPin>
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("requirements.txt");
-        let raw = std::fs::read_to_string(&path)
-            .map_err(|error| MgError::Other(format!("read {file_name}: {error}")))?;
+        let raw = read_bounded_project_input(&path, file_name)?;
         for (index, line) in raw.lines().enumerate() {
             let line = line.split('#').next().unwrap_or("").trim();
             if line.is_empty() || line.starts_with("--hash=") {
@@ -704,8 +721,7 @@ pub async fn audit_python(project_root: &Path) -> MgResult<AuditReport> {
     }
     let uv_lock = project_root.join("uv.lock");
     let (pins, mut skipped, requirements_only) = if uv_lock.is_file() {
-        let raw = std::fs::read_to_string(&uv_lock)
-            .map_err(|error| MgError::Other(format!("read uv.lock: {error}")))?;
+        let raw = read_bounded_project_input(&uv_lock, "uv.lock")?;
         let (pins, skipped) = read_uv_lock_pins(&raw)?;
         (pins, skipped, false)
     } else if find_requirements_file(project_root).is_some() {

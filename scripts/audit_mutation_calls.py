@@ -67,6 +67,15 @@ ALLOWLIST = {
     ("cli/src/commands/migrate.rs", "run_lock"): (
         {"lock-write"}, "atomic lock rewrite under held guard",
     ),
+    ("cli/src/commands/trust/sign.rs", "sign_with_key_locked"): (
+        {"lock-write"}, "signing command holds ProjectWriteLock and rejects pending mutation journal before reading or writing the lock",
+    ),
+    # --- patch artifact publish (project lock + journal recovery are held
+    # --- by run_at_project_root; config save is atomic; failed save can
+    # --- leave only an unreferenced patch artifact, never a partial config) ---
+    ("cli/src/commands/patch.rs", "add_patch"): (
+        {"lock-write"}, "held ProjectWriteLock + journal check; atomic patch publish before atomic config save",
+    ),
     # --- adapter-internal writer implementations (the engine, not a bypass) ---
     ("adapters/web/src/lib.rs", "DependencyResolver::add"): (
         {"manifest-write", "fs-write"}, "engine-owned manifest writer",
@@ -381,6 +390,37 @@ PATTERNS = [
     ("fs-write", re.compile(r"\bremove_dir_all\s*\("), False),
 ]
 
+OPEN_OPTIONS_RE = re.compile(r"\bOpenOptions\b")
+OPEN_OPTIONS_FLAG_RE = re.compile(
+    r"\.(?:write|append|create|create_new|truncate)\s*\(\s*([^)]*)\)"
+)
+
+
+def open_options_write_starts(lines):
+    """Return line indexes where an OpenOptions chain enables writes.
+
+    `OpenOptions::new()` alone is not a write sink: read-only lock snapshots
+    use the same builder. Inspect the chain through `.open(...)` or its
+    statement boundary so multi-line write flags remain covered.
+    (OpenOptions tự nó không phải sink ghi; phải có cờ ghi thật.)
+    """
+    starts = set()
+    for idx, line in enumerate(lines):
+        if not OPEN_OPTIONS_RE.search(line):
+            continue
+        chain = []
+        for candidate in lines[idx : idx + 40]:
+            code = candidate.split("//", 1)[0]
+            if chain and OPEN_OPTIONS_RE.search(code):
+                break
+            chain.append(code)
+            if ".open(" in code or ";" in code:
+                break
+        flags = OPEN_OPTIONS_FLAG_RE.findall("".join(chain))
+        if any(value.strip() and value.strip() != "false" for value in flags):
+            starts.add(idx + 1)
+    return starts
+
 # The definitions themselves are not calls.
 DEF_RE = re.compile(
     r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+"
@@ -481,6 +521,7 @@ def scan_tree(root, scan_dirs):
                     continue
                 with open(full, encoding="utf-8", errors="replace") as handle:
                     lines = handle.readlines()
+                write_open_options = open_options_write_starts(lines)
                 # Functions mentioning a manifest/lock filename ANYWHERE
                 # in their CODE body (line comments excluded — string
                 # literals KEPT, since `root.join("package.json")` is
@@ -497,8 +538,16 @@ def scan_tree(root, scan_dirs):
                     stripped = line.strip()
                     if stripped.startswith("//"):
                         continue
-                    hits = [(sink, gating) for sink, pattern, gating in PATTERNS
-                            if pattern.search(line)]
+                    hits = []
+                    for sink, pattern, gating in PATTERNS:
+                        if (
+                            pattern is not None
+                            and pattern.pattern == r"\bOpenOptions\b"
+                            and idx not in write_open_options
+                        ):
+                            continue
+                        if pattern.search(line):
+                            hits.append((sink, gating))
                     if not hits:
                         continue
                     if DEF_RE.match(line):
@@ -554,6 +603,14 @@ NEGATIVE_CORPUS = {
     "fs_write_manifest.rs": ("manifest-file-write", 'std::fs::write(root.join("package.json"), data)?;'),
     "fs_alias_write_manifest.rs": ("manifest-file-write", "fs::write(p.join(\"Cargo.toml\"), data)?;"),
     "file_create_manifest.rs": ("manifest-file-write", "std::fs::File::create(root.join(\"pyproject.toml\"))?;"),
+    "open_options_write_manifest.rs": (
+        "manifest-file-write",
+        'std::fs::OpenOptions::new().write(true).open(root.join("mgc.lock"))?;',
+    ),
+    "open_options_variable_write_manifest.rs": (
+        "manifest-file-write",
+        'std::fs::OpenOptions::new().write(writable).open(root.join("mgc.lock"))?;',
+    ),
     "split_let_write_manifest.rs": ("manifest-file-write", "fs::write(p, data)?;"),
     "adapter_add_bypass.rs": ("adapter-mutation", "adapter.add(root, &name, None, opts).await?;"),
     "engine_named_add_bypass.rs": ("adapter-mutation", "engine.add(root, &name, None, opts).await?;"),
@@ -587,6 +644,13 @@ def self_test():
                 )
             with open(os.path.join(tmp, name), "w", encoding="utf-8") as handle:
                 handle.write(body)
+        readonly_body = (
+            "fn read_snapshot(root: &std::path::Path) -> R {\n"
+            '    std::fs::OpenOptions::new().read(true).open(root.join("mgc.lock"))?;\n'
+            "}\n"
+        )
+        with open(os.path.join(tmp, "open_options_read_manifest.rs"), "w", encoding="utf-8") as handle:
+            handle.write(readonly_body)
         findings, _inventory = scan_tree(tmp, ["."])
         violations = check_findings(findings)
         by_file = {}
@@ -604,6 +668,8 @@ def self_test():
                 failures.append(
                     f"{name}: expected sink '{expected_sink}' missing: {hits}"
                 )
+        if any(violation.startswith("open_options_read_manifest.rs:") for violation in violations):
+            failures.append("read-only OpenOptions on mgc.lock was misclassified as a write")
     if failures:
         print("NEGATIVE-CONTROL SELF-TEST FAILURES (gate is blind):")
         for failure in failures:

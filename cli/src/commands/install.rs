@@ -124,35 +124,16 @@ pub async fn run(
     .await
 }
 
-/// Cloud branch of the adapter-path firewall (T0.3-clo-gap): mirrors
-/// the `clo` CLI lanes exactly — terraform gates as delegated, every
-/// other detected type rides the native web engine inside the adapter.
-/// An undetected type fails closed (never assumed native).
-/// (Nhánh cloud của tường lửa adapter-path: terraform gate delegate,
-/// type khác đi engine web native; type không nhận diện được thì
-/// fail-closed.)
+/// Cloud branch of the adapter-path firewall (T0.3-clo-gap): only CDK and
+/// Pulumi projects with `package.json` may enter the native Web engine.
+/// Terraform, Cloudflare, missing manifests, and unknown types fail closed.
+/// (Chỉ CDK/Pulumi có `package.json` mới vào Web engine native; các nhánh
+/// khác bị chặn fail-closed.)
 #[cfg(feature = "clo")]
-fn clo_adapter_path_gate(project_root: &Path) -> Result<()> {
-    use mgc_cloud_adapter::CloudType;
-    match mgc_cloud_adapter::detect_type(project_root) {
-        Some(CloudType::Terraform) => {
-            let compat = crate::commands::dep_gate::from_dep_flag(None)?;
-            crate::commands::dep_gate::gate(
-                &crate::commands::dep_gate::DepContext::new(
-                    "clo",
-                    Some(crate::commands::dep_gate::eco::TERRAFORM),
-                    None,
-                    None,
-                    crate::commands::dep_gate::DepOp::Install,
-                ),
-                Some("terraform"),
-                &compat,
-                Some(&project_root.join(".magicore").join("exec.log")),
-            )
-        }
-        Some(_) => Ok(()),
-        None => Err(crate::error::detect_core_failed("clo")),
-    }
+fn clo_adapter_path_gate(project_root: &Path, op: crate::commands::dep_gate::DepOp) -> Result<()> {
+    let cloud_type = mgc_cloud_adapter::detect_type(project_root)
+        .ok_or_else(|| crate::error::detect_core_failed("clo"))?;
+    crate::commands::dep_gate::gate_cloud_project(project_root, cloud_type.as_str(), op, None)
 }
 
 /// No cloud support compiled in — a cloud adapter reaching this path is
@@ -160,7 +141,7 @@ fn clo_adapter_path_gate(project_root: &Path) -> Result<()> {
 /// (Không biên dịch hỗ trợ cloud — adapter cloud tới được đây là lỗi
 /// cấu hình build, fail-closed.)
 #[cfg(not(feature = "clo"))]
-fn clo_adapter_path_gate(project_root: &Path) -> Result<()> {
+fn clo_adapter_path_gate(project_root: &Path, _op: crate::commands::dep_gate::DepOp) -> Result<()> {
     let _ = project_root;
     Err(crate::error::core_not_in_build("clo"))
 }
@@ -241,6 +222,21 @@ async fn install_into_root(
         return Err(crate::error::too_many_packages(packages.len(), "install"));
     }
 
+    // Ownership preflight must run before even acquiring the mutation
+    // gateway: an unsupported offline/native lane should not create lock
+    // state, recover journals, or inspect mutable manifests first.
+    // (Gate trước gateway để lane unsupported không tạo side effect.)
+    validate_install_owner_for_op(
+        adapter,
+        project_root,
+        if offline {
+            crate::commands::dep_gate::DepOp::OfflineReinstall
+        } else {
+            crate::commands::dep_gate::DepOp::Install
+        },
+    )?;
+    reject_toolchain_owned_packages(adapter, packages)?;
+
     // Mutation gateway (P0-1): the generic path mutates the manifest
     // below (packages loop + write) and MUST NOT bypass lock, recovery,
     // journal and rollback like the per-core lanes get. MCP, benchmark,
@@ -256,18 +252,6 @@ async fn install_into_root(
     if !packages.is_empty() {
         mgc_lockfile::ensure_lockfile_mutation_allowed(&project_root.join("mgc.lock"))?;
     }
-
-    // Ownership preflight FIRST (P0-1): unauthorized ops fail here,
-    // before parse/prepare_add (network) or any manifest write.
-    // (Gate trước mọi side effect.)
-    validate_install_owner(adapter, project_root)?;
-
-    // Toolchain-owned manifests with package arguments fail BEFORE any
-    // adapter call (P0-1): mgc cannot journal what it does not own, and
-    // the provider toolchain must run explicitly (add-lib lane or the
-    // tool itself) — never a silent pre-gate write without rollback.
-    // (Manifest của tool + packages → lỗi trước khi gọi adapter.)
-    reject_toolchain_owned_packages(adapter, packages)?;
 
     let add_cmd = match adapter.name() {
         "web" => "mgc add".to_string(),
@@ -439,15 +423,22 @@ fn reject_toolchain_owned_packages(
     Ok(())
 }
 
-/// Ownership preflight (P0-1): the capability/ownership gate MUST run
-/// BEFORE any side effect (parse is read-only; prepare_add resolves
-/// over the network; the manifest write mutates). An unauthorized op
-/// must fail here — never after resolving, writing, or spawning.
-/// Pure function of (adapter, root): no mutation, no network.
-/// (Gate ownership chạy TRƯỚC mọi side effect — không resolve/write.)
+#[cfg(test)]
 fn validate_install_owner(
     adapter: &dyn mgc_types::adapter::PackageAdapter,
     project_root: &Path,
+) -> Result<()> {
+    validate_install_owner_for_op(
+        adapter,
+        project_root,
+        crate::commands::dep_gate::DepOp::Install,
+    )
+}
+
+fn validate_install_owner_for_op(
+    adapter: &dyn mgc_types::adapter::PackageAdapter,
+    project_root: &Path,
+    op: crate::commands::dep_gate::DepOp,
 ) -> Result<()> {
     // C0 ownership firewall (T0.3): the adapter path serves MCP +
     // workspace/monorepo installs — it passes the same gate as the
@@ -542,22 +533,46 @@ fn validate_install_owner(
                 Ecosystem::Hardware => ("hardware", None, None),
                 Ecosystem::Cloud => ("", None, None),
             };
+        let manifest_format = if core == "lib" {
+            #[cfg(feature = "lib")]
+            {
+                mgc_lib_adapter::detect_language(project_root).and_then(|language| {
+                    mgc_lib_adapter::dependency_manifest_format(project_root, language)
+                })
+            }
+            #[cfg(not(feature = "lib"))]
+            {
+                None
+            }
+        } else if core == "ai" {
+            #[cfg(feature = "ai")]
+            {
+                mgc_ai_adapter::uses_native_python_lane(project_root).then_some("mgc-pyproject")
+            }
+            #[cfg(not(feature = "ai"))]
+            {
+                None
+            }
+        } else if matches!(
+            (core, ecosystem),
+            ("game", Some(crate::commands::dep_gate::eco::BEVY)) | ("iot", Some("esp32-rust"))
+        ) && project_root.join("Cargo.toml").is_file()
+        {
+            Some("cargo-toml")
+        } else {
+            None
+        };
         if !core.is_empty() {
             let compat = crate::commands::dep_gate::from_dep_flag(None)?;
             crate::commands::dep_gate::gate(
-                &crate::commands::dep_gate::DepContext::new(
-                    core,
-                    ecosystem,
-                    framework,
-                    None,
-                    crate::commands::dep_gate::DepOp::Install,
-                ),
+                &crate::commands::dep_gate::DepContext::new(core, ecosystem, framework, None, op)
+                    .with_manifest_format(manifest_format),
                 None,
                 &compat,
                 Some(&project_root.join(".magicore").join("exec.log")),
             )?;
         } else {
-            clo_adapter_path_gate(project_root)?;
+            clo_adapter_path_gate(project_root, op)?;
         }
     }
     Ok(())
@@ -703,12 +718,10 @@ struct WorkspaceLayout {
 }
 
 pub(crate) fn discover_workspace_projects(project_root: &Path) -> Result<Option<Vec<PathBuf>>> {
-    let workspace_path = project_root.join("magicore.workspace.toml");
-    if !workspace_path.exists() {
+    let Some(contents) = mgc_workspace::read_workspace_config(project_root)? else {
         return Ok(None);
-    }
+    };
 
-    let contents = fs::read_to_string(&workspace_path)?;
     let config: WorkspaceConfig = toml::from_str(&contents)?;
     if config.mode.as_deref() != Some("monorepo") {
         return Ok(None);
@@ -725,9 +738,12 @@ pub(crate) fn discover_workspace_projects(project_root: &Path) -> Result<Option<
         .and_then(|layout| layout.packages_dir.as_deref())
         .unwrap_or("packages");
 
+    let apps_dir = mgc_workspace::resolve_workspace_layout_dir(project_root, apps_dir, "apps_dir")?;
+    let packages_dir =
+        mgc_workspace::resolve_workspace_layout_dir(project_root, packages_dir, "packages_dir")?;
     let mut workspaces = vec![];
-    collect_installable_projects(project_root.join(apps_dir), &mut workspaces)?;
-    collect_installable_projects(project_root.join(packages_dir), &mut workspaces)?;
+    collect_installable_projects(apps_dir, &mut workspaces)?;
+    collect_installable_projects(packages_dir, &mut workspaces)?;
 
     workspaces.sort();
     workspaces.dedup();
@@ -740,20 +756,20 @@ pub(crate) fn discover_workspace_projects(project_root: &Path) -> Result<Option<
 // Hàm đã chuyển sang dispatch/engine.rs (caller duy nhất).
 
 fn collect_installable_projects(root: PathBuf, out: &mut Vec<PathBuf>) -> Result<()> {
-    if !root.exists() || !root.is_dir() {
+    if !mgc_workspace::workspace_entry_is_directory(&root)? {
         return Ok(());
     }
 
     for entry in fs::read_dir(root)? {
         let entry = entry?;
         let path = entry.path();
-        if !path.is_dir() {
+        if !mgc_workspace::workspace_entry_is_directory(&path)? {
             continue;
         }
 
-        // Mix core (Q23): nhận mọi manifest — package.json (web), Cargo.toml
-        // (lib), pyproject.toml (ai), pubspec.yaml (app), mgc.toml (mọi core).
-        if mgc_config::project::ProjectConfig::auto_detect(&path).is_some() {
+        // Propagate invalid identity instead of treating it as an empty directory.
+        // (Không nuốt identity lỗi thành thư mục rỗng rồi đệ quy xuyên qua nó.)
+        if mgc_config::project::ProjectConfig::detect_core(&path)?.is_some() {
             out.push(path);
             continue;
         }

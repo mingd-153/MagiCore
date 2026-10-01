@@ -35,12 +35,14 @@ sha2.workspace = true
 
 # Utils
 dirs.workspace = true
+uuid.workspace = true
 
 # HTTP
 reqwest = { workspace = true, features = ["stream"] }
 
 [dev-dependencies]
 criterion = { workspace = true }
+mockito = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 

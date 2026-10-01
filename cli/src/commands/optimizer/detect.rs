@@ -1,18 +1,20 @@
-//! `optimizer/detect.rs` — Hardware detection (CPU/RAM/OS/arch/GPU).
-//! GPU: best-effort per-OS probing (macOS system_profiler, Linux
-//! nvidia-smi/lspci, Windows CIM/WMI). Unknown is `None`/empty — never
-//! fabricated. Unified-memory GPUs (Apple Silicon) report NO VRAM number:
-//! claiming half of system RAM as VRAM would be a fabricated measurement.
-//! (GPU: dò theo từng OS, unknown là None/rỗng — không bao giờ bịa. GPU
-//! unified-memory không báo VRAM — đoán VRAM từ RAM là bịa số liệu.)
+//! `optimizer/detect.rs` — Native OS hardware detection (CPU/RAM/OS/GPU).
+//! Reads kernel interfaces directly; it never spawns a shell or vendor CLI.
+//! Unsupported GPU probes stay empty rather than claiming a delegated scan.
+//! (Đọc giao diện kernel trực tiếp, không spawn shell/tool của vendor;
+//! GPU chưa có probe native thì giữ rỗng, không nhận vơ.)
 
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 /// Thông tin phần cứng được phát hiện
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct HardwareInfo {
-    /// Số lượng logical CPU cores
-    pub cpu_cores: usize,
+    /// Measured logical CPU cores available to this process; `None` means
+    /// the OS query failed. Never synthesize a count for tuning.
+    /// (Số logical core đo được; `None` nếu truy vấn OS thất bại.)
+    #[serde(default)]
+    pub cpu_cores: Option<usize>,
     /// Kiến trúc hệ điều hành (x86_64, aarch64, ...)
     pub arch: String,
     /// Hệ điều hành (macos, linux, windows)
@@ -28,10 +30,24 @@ pub struct HardwareInfo {
     /// Profile nhận diện (Desktop, Laptop, Server/Container)
     pub profile: SystemProfile,
     /// GPUs detected on this machine — empty when none found OR when
-    /// detection is unavailable (headless/container). Empty is honest:
-    /// it means "no GPU claimed", never "no GPU exists".
-    /// (GPU phát hiện được — rỗng nghĩa là "không claim GPU nào".)
+    /// detection is unavailable; consult `gpu_detection_status` before
+    /// treating an empty list as a measured zero.
+    /// (GPU phát hiện được; phải xem trạng thái probe trước khi hiểu rỗng là 0.)
     pub gpus: Vec<GpuInfo>,
+    /// Whether the native OS probe completed, was partial, or is unsupported.
+    /// (Trạng thái probe GPU native: đủ, một phần, hoặc chưa hỗ trợ.)
+    #[serde(default)]
+    pub gpu_detection_status: GpuDetectionStatus,
+}
+
+/// Completeness of the native GPU inventory; missing probe support is not zero GPUs.
+/// (Độ đầy đủ của inventory GPU; thiếu probe không đồng nghĩa máy không có GPU.)
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum GpuDetectionStatus {
+    Available,
+    Partial,
+    #[default]
+    Unavailable,
 }
 
 /// One GPU as reported by the OS — name always present, everything else
@@ -61,9 +77,7 @@ pub enum SystemProfile {
 impl HardwareInfo {
     /// Tự động phát hiện thông số phần cứng từ môi trường runtime
     pub fn detect() -> Self {
-        let cpu_cores = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(4);
+        let cpu_cores = std::thread::available_parallelism().ok().map(|n| n.get());
         let arch = std::env::consts::ARCH.to_string();
         let os = std::env::consts::OS.to_string();
 
@@ -75,6 +89,7 @@ impl HardwareInfo {
         let memory_gb = Self::detect_memory_gb();
         let total_memory_gb = memory_gb;
         let profile = Self::profile_for(cpu_cores, memory_gb);
+        let (gpus, gpu_detection_status) = Self::detect_gpus();
 
         Self {
             cpu_cores,
@@ -82,16 +97,16 @@ impl HardwareInfo {
             os,
             total_memory_gb,
             profile,
-            gpus: Self::detect_gpus(),
+            gpus,
+            gpu_detection_status,
         }
     }
 
-    /// Pure profile selection — unknown RAM always degrades to Constrained
-    /// (fail-safe: never tune from a guessed size).
-    /// (Chọn profile thuần — RAM unknown luôn hạ về Constrained (an toàn
-    /// fail-safe: không bao giờ tuning từ số đoán).)
-    pub fn profile_for(cpu_cores: usize, memory_gb: Option<usize>) -> SystemProfile {
-        let Some(total_memory_gb) = memory_gb else {
+    /// Pure profile selection — unknown CPU or RAM always degrades to
+    /// Constrained; no profile is derived from a guessed resource count.
+    /// (CPU hoặc RAM chưa biết thì hạ về Constrained, không đoán tài nguyên.)
+    pub fn profile_for(cpu_cores: Option<usize>, memory_gb: Option<usize>) -> SystemProfile {
+        let (Some(cpu_cores), Some(total_memory_gb)) = (cpu_cores, memory_gb) else {
             return SystemProfile::Constrained;
         };
         if cpu_cores >= 8 && total_memory_gb >= 16 {
@@ -107,20 +122,24 @@ impl HardwareInfo {
     fn detect_memory_gb() -> Option<usize> {
         #[cfg(target_os = "macos")]
         {
-            let output = std::process::Command::new("sysctl")
-                .arg("-n")
-                .arg("hw.memsize")
-                .output()
-                .ok()?;
-            let bytes_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            let bytes = Self::parse_sysctl_memsize_bytes(&bytes_str)?;
-            Some((bytes / (1024 * 1024 * 1024)) as usize)
+            let bytes = Self::macos_total_memory_bytes()?;
+            usize::try_from(bytes / (1024 * 1024 * 1024)).ok()
         }
         #[cfg(target_os = "linux")]
         {
-            let meminfo = std::fs::read_to_string("/proc/meminfo").ok()?;
-            let kb = Self::parse_meminfo_kb(&meminfo)?;
-            Some((kb / (1024 * 1024)) as usize)
+            let host_bytes = std::fs::read_to_string("/proc/meminfo")
+                .ok()
+                .and_then(|meminfo| Self::parse_meminfo_kb(&meminfo))
+                .and_then(|kb| kb.checked_mul(1024));
+            let cgroup_limit = Self::linux_cgroup_memory_limit_bytes();
+            let effective_bytes = match (host_bytes, cgroup_limit) {
+                (Some(host), Some(limit)) => host.min(limit),
+                (Some(host), None) => host,
+                (None, Some(limit)) => limit,
+                (None, None) => return None,
+            };
+            let gb = effective_bytes / (1024 * 1024 * 1024);
+            (gb > 0).then(|| usize::try_from(gb).ok()).flatten()
         }
         #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         {
@@ -128,10 +147,103 @@ impl HardwareInfo {
         }
     }
 
-    /// Parse `sysctl -n hw.memsize` output (bytes) — pure, fixture-tested
-    /// on every CI OS (the live caller is macOS-only by cfg).
-    /// (Parse bytes sysctl — thuần, test bằng fixture mọi OS.)
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    /// Read physical RAM through macOS sysctl directly, without spawning `sysctl`.
+    /// (Đọc RAM qua API sysctl của kernel macOS, không chạy executable `sysctl`.)
+    #[cfg(target_os = "macos")]
+    #[allow(unsafe_code)]
+    fn macos_total_memory_bytes() -> Option<u64> {
+        let mut value = 0_u64;
+        let mut value_size = std::mem::size_of::<u64>();
+        // SAFETY: the NUL-terminated MIB name and writable u64 buffer remain
+        // valid for the duration of the syscall; `value_size` describes it.
+        // (An toàn: tên MIB kết thúc NUL, buffer u64 ghi được còn sống suốt syscall.)
+        let result = unsafe {
+            libc::sysctlbyname(
+                c"hw.memsize".as_ptr(),
+                (&mut value as *mut u64).cast(),
+                &mut value_size,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+        (result == 0 && value_size == std::mem::size_of::<u64>() && value > 0).then_some(value)
+    }
+
+    /// Prefer the kernel cgroup limit when present, otherwise use host RAM.
+    /// (Ưu tiên giới hạn cgroup của kernel; nếu không có thì dùng RAM host.)
+    #[cfg(target_os = "linux")]
+    fn linux_cgroup_memory_limit_bytes() -> Option<u64> {
+        let memberships = std::fs::read_to_string("/proc/self/cgroup").unwrap_or_default();
+        Self::linux_cgroup_memory_limit_bytes_at(Path::new("/sys/fs/cgroup"), &memberships)
+    }
+
+    /// Read every finite process-to-root limit and use the minimum: a child
+    /// cgroup may say unlimited while one of its parents is capped.
+    /// (Đọc mọi giới hạn từ cgroup process tới root và lấy min; cgroup cha có
+    /// thể bị giới hạn dù cgroup con ghi `max`.)
+    #[cfg(any(target_os = "linux", test))]
+    pub(crate) fn linux_cgroup_memory_limit_bytes_at(
+        root: &Path,
+        memberships: &str,
+    ) -> Option<u64> {
+        let mut paths = Vec::new();
+        for line in memberships.lines() {
+            let mut fields = line.splitn(3, ':');
+            let Some(hierarchy) = fields.next() else {
+                continue;
+            };
+            let Some(controllers) = fields.next() else {
+                continue;
+            };
+            let Some(group) = fields.next() else {
+                continue;
+            };
+            let Ok(relative) = Path::new(group).strip_prefix("/") else {
+                continue;
+            };
+            if relative
+                .components()
+                .any(|part| !matches!(part, std::path::Component::Normal(_)))
+            {
+                continue;
+            }
+            if hierarchy == "0" && controllers.is_empty() {
+                for ancestor in relative.ancestors() {
+                    paths.push(root.join(ancestor).join("memory.max"));
+                }
+            } else if controllers
+                .split(',')
+                .any(|controller| controller == "memory")
+            {
+                for ancestor in relative.ancestors() {
+                    paths.push(
+                        root.join("memory")
+                            .join(ancestor)
+                            .join("memory.limit_in_bytes"),
+                    );
+                }
+            }
+        }
+        paths.sort();
+        paths.dedup();
+        paths
+            .into_iter()
+            .filter_map(|path| std::fs::read_to_string(path).ok())
+            .filter_map(|text| Self::parse_cgroup_memory_limit_bytes(&text))
+            .min()
+    }
+
+    /// Parse cgroup v1/v2 memory limit; `max` and huge v1 sentinels mean unlimited.
+    /// (Đọc giới hạn cgroup v1/v2; `max` và sentinel lớn nghĩa là không giới hạn.)
+    #[cfg(any(target_os = "linux", test))]
+    pub(crate) fn parse_cgroup_memory_limit_bytes(text: &str) -> Option<u64> {
+        let value = text.trim().parse::<u64>().ok()?;
+        (value > 0 && value < (1_u64 << 60)).then_some(value)
+    }
+
+    /// Parse a decimal byte count from the macOS sysctl value — fixture-tested.
+    /// (Parse số byte thập phân từ sysctl macOS — có fixture test.)
+    #[cfg(test)]
     pub(crate) fn parse_sysctl_memsize_bytes(text: &str) -> Option<u64> {
         text.trim().parse().ok()
     }
@@ -153,300 +265,108 @@ impl HardwareInfo {
         None
     }
 
-    /// Best-effort GPU detection for this OS — returns every GPU the OS
-    /// reports, or empty when none/unavailable. Never fabricates.
-    /// Runtime dispatch (not `#[cfg]`): every probe compiles on every
-    /// platform so unit tests cover all parsers on all CI runners; a
-    /// probe for another OS simply fails closed to empty at runtime.
-    /// (Dò GPU theo OS lúc chạy — mọi parser biên dịch mọi nơi để test
-    /// được trên mọi runner CI.)
-    pub fn detect_gpus() -> Vec<GpuInfo> {
+    /// Detect GPUs only through a native, in-process OS interface.
+    /// Linux PCI sysfs is supported; macOS and Windows remain unknown until
+    /// native IOKit/DXGI implementations are added. No utility process is run.
+    /// (Hiện chỉ Linux có probe PCI sysfs; macOS/Windows giữ unknown tới khi
+    /// có IOKit/DXGI native. Không chạy tiến trình tiện ích.)
+    fn detect_gpus() -> (Vec<GpuInfo>, GpuDetectionStatus) {
         match std::env::consts::OS {
-            "macos" => Self::detect_gpus_macos(),
             "linux" => Self::detect_gpus_linux(),
-            "windows" => Self::detect_gpus_windows(),
-            _ => Vec::new(),
+            _ => (Vec::new(), GpuDetectionStatus::Unavailable),
         }
     }
 
-    /// macOS: `system_profiler SPDisplaysDataType` lists one card block
-    /// per GPU (`Chipset Model:` + `Vendor:`). Unified-memory Apple
-    /// Silicon reports no VRAM figure — vram stays None (honest).
-    /// (macOS: đọc system_profiler; Apple Silicon không có số VRAM.)
-    fn detect_gpus_macos() -> Vec<GpuInfo> {
-        let text = match std::process::Command::new("system_profiler")
-            .arg("SPDisplaysDataType")
-            .output()
-        {
-            Ok(output) if output.status.success() => {
-                String::from_utf8_lossy(&output.stdout).to_string()
-            }
-            _ => return Vec::new(),
-        };
-        Self::parse_system_profiler(&text)
+    /// Linux: enumerate PCI display controllers from kernel sysfs metadata.
+    /// (Linux: liệt kê display controller qua metadata sysfs của kernel.)
+    fn detect_gpus_linux() -> (Vec<GpuInfo>, GpuDetectionStatus) {
+        Self::parse_linux_sysfs_gpus(Path::new("/sys/bus/pci/devices"))
     }
 
-    /// Parse `system_profiler SPDisplaysDataType` text into GPUs (pure —
-    /// unit-tested with a captured sample, no subprocess in tests).
-    /// (Parse text system_profiler thành GPU — hàm thuần để test được.)
-    pub(crate) fn parse_system_profiler(text: &str) -> Vec<GpuInfo> {
+    /// Parse kernel PCI sysfs entries; caller supplies root for hermetic tests.
+    /// (Đọc entry PCI sysfs; nhận root để test fixture không phụ thuộc máy.)
+    pub(crate) fn parse_linux_sysfs_gpus(root: &Path) -> (Vec<GpuInfo>, GpuDetectionStatus) {
+        let Ok(entries) = std::fs::read_dir(root) else {
+            return (Vec::new(), GpuDetectionStatus::Unavailable);
+        };
+        let mut paths = Vec::new();
+        let mut status = GpuDetectionStatus::Available;
+        for entry in entries {
+            match entry {
+                Ok(entry) => paths.push(entry.path()),
+                Err(_) => status = GpuDetectionStatus::Partial,
+            }
+        }
+        paths.sort();
         let mut gpus = Vec::new();
-        let mut name: Option<String> = None;
-        let mut vendor_raw: Option<String> = None;
-        let flush =
-            |name: &mut Option<String>, vendor_raw: &mut Option<String>, out: &mut Vec<GpuInfo>| {
-                if let Some(n) = name.take() {
-                    let vendor = vendor_raw
-                        .take()
-                        .map(|v| v.split('(').next().unwrap_or(&v).trim().to_string())
-                        .filter(|v| !v.is_empty());
-                    let vendor = vendor
-                        .as_deref()
-                        .and_then(Self::classify_vendor)
-                        .map(str::to_string)
-                        .or(vendor);
-                    out.push(GpuInfo {
-                        name: n,
-                        vendor,
-                        // Unified memory has no dedicated VRAM figure.
-                        vram_mb: None,
-                    });
+        for device_path in paths {
+            let class = match std::fs::read_to_string(device_path.join("class")) {
+                Ok(class) => class,
+                Err(_) => {
+                    status = GpuDetectionStatus::Partial;
+                    continue;
                 }
             };
-        for line in text.lines() {
-            let trimmed = line.trim();
-            if let Some(rest) = trimmed.strip_prefix("Chipset Model:") {
-                flush(&mut name, &mut vendor_raw, &mut gpus);
-                let model = rest.trim().to_string();
-                if !model.is_empty() {
-                    name = Some(model);
-                }
-            } else if let Some(rest) = trimmed.strip_prefix("Vendor:") {
-                vendor_raw = Some(rest.trim().to_string());
+            let Ok(class) = u32::from_str_radix(class.trim().trim_start_matches("0x"), 16) else {
+                status = GpuDetectionStatus::Partial;
+                continue;
+            };
+            if class >> 16 != 0x03 {
+                continue;
             }
+            let Some(vendor_id) = read_pci_id(&device_path.join("vendor")) else {
+                status = GpuDetectionStatus::Partial;
+                continue;
+            };
+            let Some(device_id) = read_pci_id(&device_path.join("device")) else {
+                status = GpuDetectionStatus::Partial;
+                continue;
+            };
+            let vendor_name = match vendor_id {
+                0x10de => Some("nvidia"),
+                0x1002 => Some("amd"),
+                0x8086 => Some("intel"),
+                0x106b => Some("apple"),
+                _ => None,
+            };
+            let product_name = std::fs::read_to_string(device_path.join("product_name"))
+                .or_else(|_| std::fs::read_to_string(device_path.join("label")))
+                .ok()
+                .map(|name| name.trim().to_string())
+                .filter(|name| {
+                    !name.is_empty() && name.len() <= 256 && !name.chars().any(char::is_control)
+                });
+            let name = product_name.unwrap_or_else(|| match vendor_name {
+                Some("nvidia") => format!("NVIDIA GPU (PCI {vendor_id:04x}:{device_id:04x})"),
+                Some("amd") => format!("AMD GPU (PCI {vendor_id:04x}:{device_id:04x})"),
+                Some("intel") => format!("Intel GPU (PCI {vendor_id:04x}:{device_id:04x})"),
+                Some("apple") => format!("Apple GPU (PCI {vendor_id:04x}:{device_id:04x})"),
+                _ => format!("PCI display adapter ({vendor_id:04x}:{device_id:04x})"),
+            });
+            gpus.push(GpuInfo {
+                name,
+                vendor: vendor_name.map(str::to_string),
+                vram_mb: None,
+            });
         }
-        flush(&mut name, &mut vendor_raw, &mut gpus);
-        gpus
+        (gpus, status)
     }
 
-    /// Linux: NVIDIA via `nvidia-smi` first (name + MiB VRAM), then PCI
-    /// display controllers via `lspci` (name only, no VRAM claim).
-    /// (Linux: nvidia-smi trước, lspci sau — lspci không claim VRAM.)
-    fn detect_gpus_linux() -> Vec<GpuInfo> {
-        // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
-        if let Ok(output) = std::process::Command::new("nvidia-smi")
-            .args([
-                "--query-gpu=name,memory.total",
-                "--format=csv,noheader,nounits",
-            ])
-            .output()
-            && output.status.success()
-        {
-            let gpus = Self::parse_nvidia_smi(&String::from_utf8_lossy(&output.stdout));
-            if !gpus.is_empty() {
-                return gpus;
-            }
+    /// Return vendor presence only for a complete inventory; otherwise unknown.
+    /// (`Some(false)` chỉ hợp lệ khi probe đủ; thiếu/partial phải là `None`.)
+    pub fn has_gpu_vendor(&self, vendor: &str) -> Option<bool> {
+        if self.gpu_detection_status != GpuDetectionStatus::Available {
+            return None;
         }
-        if let Ok(output) = std::process::Command::new("lspci").arg("-mm").output()
-            && output.status.success()
-        {
-            return Self::parse_lspci(&String::from_utf8_lossy(&output.stdout));
-        }
-        Vec::new()
+        Some(
+            self.gpus
+                .iter()
+                .any(|gpu| gpu.vendor.as_deref() == Some(vendor)),
+        )
     }
+}
 
-    /// Parse `nvidia-smi --format=csv,noheader[,nounits]` rows
-    /// (`<name>, <MiB>[ MiB]`) — leading-token parse tolerates both the
-    /// nounits and the units spelling. Pure, unit-tested.
-    /// (Parse dòng nvidia-smi — chịu được cả hai cách viết đơn vị.)
-    pub(crate) fn parse_nvidia_smi(text: &str) -> Vec<GpuInfo> {
-        text.lines()
-            .filter_map(|line| {
-                let (name, vram) = line.split_once(',')?;
-                let name = name.trim().to_string();
-                if name.is_empty() {
-                    return None;
-                }
-                let vram_mb = vram
-                    .split_whitespace()
-                    .next()
-                    .and_then(|tok| tok.parse::<usize>().ok())
-                    .filter(|mb| {
-                        // Sanity window: 256 MiB – 256 GiB. Outside it the
-                        // number is a parse artifact, not VRAM (fail-closed).
-                        // (Cửa sổ sanity: ngoài khoảng là số rác, bỏ.)
-                        (256..=262_144).contains(mb)
-                    });
-                Some(GpuInfo {
-                    vendor: Self::classify_vendor(&name).map(str::to_string),
-                    name,
-                    vram_mb,
-                })
-            })
-            .collect()
-    }
-
-    /// Parse `lspci -mm` display-controller rows (name only).
-    /// (Parse lspci — chỉ tên, không VRAM.)
-    pub(crate) fn parse_lspci(text: &str) -> Vec<GpuInfo> {
-        text.lines()
-            .filter(|line| {
-                let lower = line.to_lowercase();
-                line.contains('"')
-                    && (lower.contains("vga")
-                        || lower.contains("3d controller")
-                        || lower.contains("display controller"))
-            })
-            .filter_map(|line| {
-                // -mm quotes every field: ... "VGA compatible controller" "NVIDIA ...".
-                // Take the LAST quoted field as the device model.
-                // (Định dạng -mm quote mọi field — lấy field quote cuối.)
-                let mut fields = Vec::new();
-                let mut rest = line;
-                while let Some(start) = rest.find('"') {
-                    let after = &rest[start + 1..];
-                    if let Some(end) = after.find('"') {
-                        fields.push(after[..end].to_string());
-                        rest = &after[end + 1..];
-                    } else {
-                        break;
-                    }
-                }
-                fields
-                    .pop()
-                    .filter(|name| !name.is_empty())
-                    .map(|name| GpuInfo {
-                        vendor: Self::classify_vendor(&name).map(str::to_string),
-                        name,
-                        vram_mb: None,
-                    })
-            })
-            .collect()
-    }
-
-    /// Windows: CIM video controllers (name + AdapterRAM). AdapterRAM is
-    /// a uint32 that wraps past 4 GiB on modern cards — values outside
-    /// the sanity window are dropped, never reported as fact.
-    /// (Windows: đọc CIM; AdapterRAM tràn số trên card mới — ngoài khoảng
-    /// sanity thì bỏ, không báo láo.)
-    fn detect_gpus_windows() -> Vec<GpuInfo> {
-        let ps = std::process::Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-Command",
-                "Get-CimInstance Win32_VideoController | Select-Object Name,AdapterRAM | ConvertTo-Json",
-            ])
-            .output()
-            .ok()
-            .filter(|o| o.status.success())
-            .map(|o| String::from_utf8_lossy(&o.stdout).to_string());
-        let json = match ps {
-            Some(j) if !j.trim().is_empty() => j,
-            _ => return Self::detect_gpus_windows_wmic(),
-        };
-        Self::parse_cim_videocontroller(&json)
-    }
-
-    /// Legacy WMI fallback when CIM/powershell is unavailable.
-    /// (Fallback WMI khi không có powershell.)
-    fn detect_gpus_windows_wmic() -> Vec<GpuInfo> {
-        let text = match std::process::Command::new("wmic")
-            .args([
-                "path",
-                "win32_VideoController",
-                "get",
-                "name",
-                "/format:list",
-            ])
-            .output()
-        {
-            Ok(output) if output.status.success() => {
-                String::from_utf8_lossy(&output.stdout).to_string()
-            }
-            _ => return Vec::new(),
-        };
-        text.lines()
-            .filter_map(|line| {
-                let name = line.strip_prefix("Name=")?.trim().to_string();
-                if name.is_empty() {
-                    return None;
-                }
-                Some(GpuInfo {
-                    vendor: Self::classify_vendor(&name).map(str::to_string),
-                    name,
-                    vram_mb: None,
-                })
-            })
-            .collect()
-    }
-
-    /// Parse CIM `Win32_VideoController` JSON (single object or array).
-    /// (Parse JSON CIM — object đơn hoặc mảng.)
-    pub(crate) fn parse_cim_videocontroller(json: &str) -> Vec<GpuInfo> {
-        let value: serde_json::Value = match serde_json::from_str(json) {
-            Ok(v) => v,
-            Err(_) => return Vec::new(),
-        };
-        let items: Vec<&serde_json::Value> = match &value {
-            serde_json::Value::Array(arr) => arr.iter().collect(),
-            obj if obj.is_object() => vec![obj],
-            _ => return Vec::new(),
-        };
-        items
-            .into_iter()
-            .filter_map(|item| {
-                let name = item.get("Name")?.as_str()?.trim().to_string();
-                if name.is_empty() {
-                    return None;
-                }
-                let vram_mb = item
-                    .get("AdapterRAM")
-                    .and_then(serde_json::Value::as_u64)
-                    .map(|bytes| (bytes / (1024 * 1024)) as usize)
-                    .filter(|mb| (256..=262_144).contains(mb));
-                Some(GpuInfo {
-                    vendor: Self::classify_vendor(&name).map(str::to_string),
-                    name,
-                    vram_mb,
-                })
-            })
-            .collect()
-    }
-
-    /// Normalize a vendor from a model string — pure, unit-tested.
-    /// Returns the canonical id or None when unrecognized (unknown is
-    /// None, never a guess).
-    /// (Chuẩn hóa vendor từ tên model — không nhận ra thì None.)
-    pub(crate) fn classify_vendor(name: &str) -> Option<&'static str> {
-        let lower = name.to_lowercase();
-        if lower.contains("apple") || lower.contains("metal") {
-            Some("apple")
-        } else if lower.contains("nvidia")
-            || lower.contains("geforce")
-            || lower.contains("quadro")
-            || lower.contains("tesla")
-        {
-            Some("nvidia")
-        } else if lower.contains("amd") || lower.contains("radeon") {
-            Some("amd")
-        } else if lower.contains("intel")
-            || lower.contains("uhd graphics")
-            || lower.contains("iris")
-            || lower.contains("arc")
-        {
-            Some("intel")
-        } else {
-            None
-        }
-    }
-
-    /// True when at least one detected GPU has this canonical vendor id
-    /// (`apple` | `nvidia` | `amd` | `intel`). Empty GPU list → false
-    /// (no claim from no data).
-    /// (Có GPU của vendor này không — không có GPU thì false.)
-    pub fn has_gpu_vendor(&self, vendor: &str) -> bool {
-        self.gpus
-            .iter()
-            .any(|g| g.vendor.as_deref() == Some(vendor))
-    }
+fn read_pci_id(path: &Path) -> Option<u16> {
+    let value = std::fs::read_to_string(path).ok()?;
+    u16::from_str_radix(value.trim().trim_start_matches("0x"), 16).ok()
 }

@@ -174,16 +174,14 @@ pub fn read_js_lockfiles(project_root: &Path) -> MgResult<BunDenoRead> {
     let mut combined = BunDenoRead::default();
     let bun_path = project_root.join("bun.lock");
     if bun_path.is_file() {
-        let raw = std::fs::read_to_string(&bun_path)
-            .map_err(|e| MgError::Other(format!("read bun.lock: {e}")))?;
+        let raw = super::read_bounded_project_input(&bun_path, "bun.lock")?;
         let read = read_bun_lock(&raw)?;
         combined.npm_pins.extend(read.npm_pins);
         combined.jsr_skipped.extend(read.jsr_skipped);
     }
     let deno_path = project_root.join("deno.lock");
     if deno_path.is_file() {
-        let raw = std::fs::read_to_string(&deno_path)
-            .map_err(|e| MgError::Other(format!("read deno.lock: {e}")))?;
+        let raw = super::read_bounded_project_input(&deno_path, "deno.lock")?;
         let read = read_deno_lock(&raw)?;
         combined.npm_pins.extend(read.npm_pins);
         combined.jsr_skipped.extend(read.jsr_skipped);

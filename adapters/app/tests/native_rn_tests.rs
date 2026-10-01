@@ -10,7 +10,9 @@
 //! Test wiring React Native — cả ba registry đều được mock.
 
 use mgc_types::adapter::PackageAdapter;
-use mgc_types::capabilities::{ContentStoreProvider, DependencyResolver};
+use mgc_types::capabilities::{
+    Capability, ContentStoreProvider, DependencyResolver, LockfileProvider,
+};
 use sha1::Digest as _;
 use tar::{Builder, Header};
 
@@ -19,6 +21,39 @@ use tar::{Builder, Header};
 /// Env toàn cục process (URL registry/store root) bị đổi ở đây — tuần tự hóa
 /// phần nhạy env giữa các test song song.
 static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+#[tokio::test]
+async fn react_native_does_not_advertise_unavailable_dependency_operations() {
+    let project = tempfile::tempdir().unwrap();
+    std::fs::write(
+        project.path().join("package.json"),
+        r#"{"name":"rn-app","version":"1.0.0","dependencies":{"react-native":"0.72.0"}}"#,
+    )
+    .unwrap();
+    let adapter = mgc_app_adapter::adapter_for(project.path()).unwrap();
+
+    assert!(
+        !adapter
+            .capabilities()
+            .contains(&Capability::DependencyResolver)
+    );
+    assert!(
+        !adapter
+            .capabilities()
+            .contains(&Capability::ContentStoreProvider)
+    );
+    assert!(
+        !adapter
+            .capabilities()
+            .contains(&Capability::LockfileProvider)
+    );
+    assert!(adapter.probe_content_store().is_err());
+    assert!(adapter.probe_lockfile_provider().is_err());
+    assert!(adapter.probe_dependency_resolver().is_err());
+    let manifest = adapter.parse_manifest(project.path()).await.unwrap();
+    let error = adapter.resolve(&manifest).await.unwrap_err();
+    assert!(matches!(error, mgc_types::MgError::Unsupported { .. }));
+}
 
 struct EnvRestoreGuard(Vec<(&'static str, Option<std::ffi::OsString>)>);
 
@@ -52,11 +87,9 @@ impl Drop for EnvRestoreGuard {
 async fn mock_server() -> Option<mockito::ServerGuard> {
     match std::net::TcpListener::bind("127.0.0.1:0") {
         Ok(listener) => drop(listener),
-        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
-            eprintln!("warning: skipping RN mock test because localhost bind is blocked");
-            return None;
-        }
-        Err(error) => panic!("failed to probe localhost bind: {error}"),
+        Err(error) => panic!(
+            "React Native mock tests require localhost; refusing to report skipped tests as passing: {error}"
+        ),
     }
     Some(mockito::Server::new_async().await)
 }
@@ -227,7 +260,11 @@ async fn app_rn_multi_tier_install_fails_closed_without_atomic_commit() {
     let result = async {
         let adapter = mgc_app_adapter::adapter_for(tmp.path()).expect("RN project detected");
         let manifest = adapter.parse_manifest(tmp.path()).await?;
-        let graph = adapter.resolve(&manifest).await?;
+        // Exercise the dormant tier resolver directly; the adapter/CLI does
+        // not advertise or expose it until atomic cross-tier install exists.
+        let graph = mgc_app_adapter::native::rn_layers::resolve_rn_layers(&manifest, tmp.path())
+            .await?
+            .graph;
         // The JS tier resolves the declared React Native dependency through
         // the mocked npm registry; Android and iOS add one Maven pin and two
         // CocoaPods entries.
@@ -303,7 +340,9 @@ async fn app_rn_podspec_checksum_mismatch_fails_closed() {
     let result = async {
         let adapter = mgc_app_adapter::adapter_for(tmp.path()).expect("RN project detected");
         let manifest = adapter.parse_manifest(tmp.path()).await?;
-        adapter.resolve(&manifest).await
+        mgc_app_adapter::native::rn_layers::resolve_rn_layers(&manifest, tmp.path())
+            .await
+            .map(|_| mgc_types::ResolvedGraph::empty())
     }
     .await;
     unsafe {
@@ -336,7 +375,10 @@ async fn app_rn_podfile_without_lock_fails_closed() {
     // MUST fail closed (V1.2: skip paths must never read as pass).
     // (Không Podfile.lock → tier iOS không có bao đóng kiểm chứng được,
     // resolve PHẢI fail-closed.)
-    let err = adapter.resolve(&manifest).await.unwrap_err();
+    let err = mgc_app_adapter::native::rn_layers::resolve_rn_layers(&manifest, tmp.path())
+        .await
+        .err()
+        .expect("missing iOS lock must fail in the dormant layered resolver");
     assert!(
         matches!(err, mgc_types::MgError::Unsupported { .. }),
         "a Podfile without Podfile.lock must fail closed as Unsupported: {err:?}"

@@ -125,13 +125,6 @@ impl CasClaimContext {
     }
 }
 
-pub fn extracted_cache_full_validation_enabled() -> bool {
-    std::env::var("MAGICORE_WEB_VALIDATE_EXTRACTED_CACHE")
-        .ok()
-        .map(|value| value.trim().to_ascii_lowercase())
-        .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
-}
-
 pub fn locate_package_dir(extract_root: &Path) -> MgResult<PathBuf> {
     let package_dir = extract_root.join("package");
     if package_dir.is_dir() {
@@ -235,8 +228,7 @@ where
         if let Some(marker) = marker.as_ref()
             && extracted_marker_matches_fast(marker, expected_marker)
             && extracted_marker_has_content_signature(marker)
-            && (!extracted_cache_full_validation_enabled()
-                || extracted_content_matches(&canonical_root, marker)?)
+            && extracted_content_matches(&canonical_root, marker)?
         {
             // Warm-cache reuse (Gate 11-B.2 Task D): skip the re-extraction +
             // rename, but STILL import the tarball's blobs into THIS project's
@@ -403,22 +395,20 @@ fn publish_extracted_root(
             // `concurrent_same_digest_does_not_double_store`: the old code
             // removed the winner another process had just published and
             // was about to link).
-            // Full validation (MAGICORE_WEB_VALIDATE_EXTRACTED_CACHE=1)
-            // ALSO requires the tree content to match — a marker alone
-            // cannot prove completeness (a crashed extract can leave a
-            // marked but file-incomplete root, which must be rebuilt).
-            // (Racer cùng digest đã publish winner ĐÚNG: giữ lại — KHÔNG
-            // bao giờ xóa root có marker khớp vì process khác có thể đang
-            // link TỪ nó. Full validation còn đòi nội dung cây khớp.)
-            let winner_matches = read_extracted_package_marker(canonical_root)
-                .ok()
-                .flatten()
-                .is_some_and(|marker| {
-                    extracted_marker_matches_fast(&marker, expected_marker)
-                        && extracted_marker_has_content_signature(&marker)
-                })
-                && (!extracted_cache_full_validation_enabled()
-                    || extracted_content_matches(canonical_root, expected_marker).unwrap_or(false));
+            // Always validate content: a marker cannot prove that a cached
+            // root is complete or untampered. A matching winner is immutable
+            // for this publish decision and must never be removed.
+            // Luôn xác thực nội dung: marker không chứng minh cây cache đủ
+            // file hay chưa bị sửa. Winner khớp không bị xóa trong quyết định này.
+            let winner_matches = match read_extracted_package_marker(canonical_root)? {
+                Some(marker)
+                    if extracted_marker_matches_fast(&marker, expected_marker)
+                        && extracted_marker_has_content_signature(&marker) =>
+                {
+                    extracted_content_matches(canonical_root, expected_marker)?
+                }
+                _ => false,
+            };
             if winner_matches {
                 return Ok(());
             }
@@ -448,13 +438,15 @@ fn publish_extracted_root(
                 // SAME canonical root. Verify the winner before reusing it.
                 // (Thua race publish cho installer đồng thời vào CÙNG root
                 // canonical. Verify winner trước khi tái sử dụng.)
-                let winner_matches = read_extracted_package_marker(canonical_root)
-                    .ok()
-                    .flatten()
-                    .is_some_and(|marker| {
-                        extracted_marker_matches_fast(&marker, expected_marker)
-                            && extracted_marker_has_content_signature(&marker)
-                    });
+                let winner_matches = match read_extracted_package_marker(canonical_root)? {
+                    Some(marker)
+                        if extracted_marker_matches_fast(&marker, expected_marker)
+                            && extracted_marker_has_content_signature(&marker) =>
+                    {
+                        extracted_content_matches(canonical_root, expected_marker)?
+                    }
+                    _ => false,
+                };
                 if winner_matches {
                     // Same digest ⇒ identical content: keep the winner, our
                     // staging copy is discarded by the caller's temp cleanup.

@@ -5,10 +5,7 @@ use mgc_ui::info;
 use std::path::{Path, PathBuf};
 
 fn project_root() -> Result<PathBuf> {
-    let cwd = std::env::current_dir().map_err(|e| crate::error::cwd_deleted(&e))?;
-    let root = crate::commands::core::shared::find_project_root(&cwd)?
-        .ok_or_else(|| crate::error::no_mgc_project_found("iot"))?;
-    Ok(root)
+    crate::commands::core::shared::core_project_root("iot")
 }
 
 /// Build + flash firmware esp32 (Q16). Board đọc từ arg hoặc mgc.toml `[iot] board`;

@@ -44,7 +44,8 @@ impl AppLanguage {
 
 pub fn detect_language(root: &Path) -> Option<AppLanguage> {
     // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
-    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml"))
+    if let Ok(Some(content)) =
+        mgc_config::project::read_regular_project_text(&root.join("mgc.toml"), "project config")
         && let Ok(v) = toml::from_str::<toml::Value>(&content)
         && let Some(p) = v
             .get("app")
@@ -55,35 +56,49 @@ pub fn detect_language(root: &Path) -> Option<AppLanguage> {
             "flutter" => Some(AppLanguage::Flutter),
             "kotlin" => Some(AppLanguage::Kotlin),
             "swift" => Some(AppLanguage::Swift),
+            "react-native" => Some(AppLanguage::ReactNative),
             "objc" => Some(AppLanguage::ObjC),
             "multi" => Some(AppLanguage::Multi),
             _ => None,
         };
     }
-    if root.join("pubspec.yaml").exists() {
+    if is_regular_manifest(&root.join("pubspec.yaml")) {
         return Some(AppLanguage::Flutter);
     }
-    if root.join("build.gradle.kts").exists() || root.join("build.gradle").exists() {
+    if is_regular_manifest(&root.join("build.gradle.kts"))
+        || is_regular_manifest(&root.join("build.gradle"))
+    {
         return Some(AppLanguage::Kotlin);
     }
-    if root.join("Package.swift").exists() {
+    if is_regular_manifest(&root.join("Package.swift")) {
         return Some(AppLanguage::Swift);
     }
     // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
-    if let Ok(content) = std::fs::read_to_string(root.join("package.json"))
-        && content.contains("\"react-native\"")
+    if let Ok(Some(content)) = mgc_config::project::read_regular_project_text(
+        &root.join("package.json"),
+        "package manifest",
+    ) && content.contains("\"react-native\"")
     {
         return Some(AppLanguage::ReactNative);
     }
-    if root.join("ObjcBridge.h").exists() && root.join("ObjcBridge.m").exists() {
+    if is_regular_manifest(&root.join("ObjcBridge.h"))
+        && is_regular_manifest(&root.join("ObjcBridge.m"))
+    {
         return Some(AppLanguage::ObjC);
     }
     None
 }
 
+/// Ignore symlinked and special-file framework markers during core selection.
+/// Bỏ qua marker framework là symlink hoặc file đặc biệt khi chọn core.
+fn is_regular_manifest(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_file())
+}
+
 pub(crate) fn manifest_is_app(root: &Path) -> bool {
     // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
-    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml"))
+    if let Ok(Some(content)) =
+        mgc_config::project::read_regular_project_text(&root.join("mgc.toml"), "project config")
         && let Ok(v) = toml::from_str::<toml::Value>(&content)
     {
         if v.get("ecosystem").and_then(|e| e.as_str()) == Some("app") {

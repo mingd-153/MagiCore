@@ -26,7 +26,10 @@ impl OptimizerAdapter for ReactNativeAdapter {
             SystemProfile::Constrained => 2048,
         };
 
-        let metro_workers = hw.cpu_cores.max(2);
+        let metro_workers = hw.cpu_cores.map(|cores| cores.max(2));
+        let metro_workers_line = metro_workers
+            .map(|workers| format!("METRO_MAX_WORKERS={workers}\n"))
+            .unwrap_or_else(|| "# CPU count unknown; keep Metro's runtime default.\n".to_string());
 
         // RULE §13 compliant port: 5314 is permutation of {4,3,1,5} — cổng tuân thủ RULE §13
         // User can override via environment: RCT_METRO_PORT — user có thể override qua biến môi trường
@@ -41,13 +44,14 @@ impl OptimizerAdapter for ReactNativeAdapter {
                  # Override via: export RCT_METRO_PORT=<your-port>\n\
                  NODE_OPTIONS=\"--max-old-space-size={max_old_space}\"\n\
                  METRO_CACHE=.mgc-optimizer/.metro-cache\n\
-                 METRO_MAX_WORKERS={metro_workers}\n\
+                 {metro_workers_line}\
                  RCT_METRO_PORT=${{RCT_METRO_PORT:-{default_metro_port}}}\n\
                  REACT_NATIVE_BUILD_OUTPUT=.mgc-optimizer/build\n",
                 hw.profile
             ),
             description: format!(
-                "React Native Metro bundler ({metro_workers} workers, port {default_metro_port}) & V8 heap ({max_old_space}MB)"
+                "React Native Metro bundler ({} workers, port {default_metro_port}) & V8 heap ({max_old_space}MB)",
+                metro_workers.map(|workers| workers.to_string()).unwrap_or_else(|| "default".to_string())
             ),
         });
 

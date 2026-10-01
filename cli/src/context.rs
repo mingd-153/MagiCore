@@ -15,12 +15,10 @@ pub struct ProjectContext {
 
 impl ProjectContext {
     /// Load context, optionally with explicit `--core` override.
-    /// Priority (T9a — chữ kí chống nhầm core):
-    ///   1. `--core` flag
-    ///   2. `.mgc.core` marker (signature file)
-    ///   3. `mgc.toml` (saved by `mgc init` — marker đồng bộ ecosystem)
-    ///   4. auto_detect signature files (package.json → web, Cargo.toml → lib,
-    ///      pyproject.toml → ai) — ambiguous → Err, không đoán (RULE §9.3)
+    /// Persisted project identity is authoritative; `--core` can confirm but
+    /// cannot reassign it. On an unclaimed project the flag may select a core
+    /// only when it agrees with a single detected signature.
+    /// Identity đã lưu là chủ sở hữu; `--core` chỉ xác nhận, không được đổi.
     pub fn load_with_core(core_override: Option<&str>) -> anyhow::Result<Self> {
         let cwd = std::env::current_dir().map_err(|e| crate::error::cwd_deleted(&e))?;
         let project_root = ProjectConfig::find_project_root(&cwd);
@@ -78,30 +76,72 @@ impl ProjectContext {
         core_override: Option<&str>,
     ) -> anyhow::Result<(PathBuf, ProjectConfig)> {
         if let Some(root) = project_root {
-            // T9a: marker là chữ kí có quyền cao nhất (sau --core). Marker sai
-            // (core không hợp lệ) → Err fail-closed, không đoán core khác.
+            // The persisted marker is an ownership record, not a hint that
+            // `--core` may override. Broken/conflicting identity fails closed.
+            // (Marker là owner đã lưu; identity hỏng/lệch thì dừng fail-closed.)
             let marker_core = ProjectConfig::read_core_marker(root)?;
+
+            // An explicit selector may choose a core for an unclaimed project,
+            // but must not silently reassign a project with persisted identity.
+            // (Cờ chọn core chỉ chọn cho project chưa claim, không được đổi owner đã lưu.)
+            if let (Some(requested), Some(owned)) = (core_override, marker_core.as_deref()) {
+                Self::ensure_override_matches_identity(requested, owned)?;
+            }
 
             if let Some(mut cfg) = ProjectConfig::load(root)? {
                 if let Some(core) = core_override {
-                    cfg.ecosystem = core.to_string();
+                    Self::ensure_override_matches_identity(core, &cfg.ecosystem)?;
+                    let canonical = Ecosystem::from_str(core)
+                        .ok_or_else(|| crate::error::unknown_ecosystem(core))?;
+                    cfg.ecosystem = canonical.as_str().to_string();
                 } else if let Some(marker) = &marker_core {
-                    // Marker sửa tay đổi core → marker thắng (chữ kí dev chủ động).
+                    // A conflicting marker is rejected while reading above; this branch
+                    // only accepts an already-validated identity.
+                    // Marker mâu thuẫn đã bị từ chối khi đọc ở trên; nhánh này chỉ nhận identity hợp lệ.
                     if cfg.ecosystem != marker[..] {
                         cfg.ecosystem = marker.clone();
+                    }
+                }
+                if marker_core.is_none() {
+                    // Adopt the identity from an existing config before any
+                    // core-aware command can act on the legacy project.
+                    // (Claim core từ config cũ trước khi lệnh nào được thao tác.)
+                    let canonical = Ecosystem::from_str(&cfg.ecosystem)
+                        .ok_or_else(|| crate::error::unknown_ecosystem(&cfg.ecosystem))?;
+                    match ProjectConfig::ensure_core_marker_at(root, canonical.as_str()) {
+                        Ok(()) => mgc_ui::warning(&format!(
+                            "No '{}' found — recording the existing mgc.toml core '{}' as project identity.",
+                            ProjectConfig::CORE_MARKER_FILE,
+                            canonical.as_str(),
+                        )),
+                        Err(error)
+                            if error.downcast_ref::<std::io::Error>().is_some_and(|io| {
+                                io.kind() == std::io::ErrorKind::PermissionDenied
+                            }) =>
+                        {
+                            mgc_ui::warning(&format!(
+                                "Cannot persist '{}' because the project directory is read-only; using the existing mgc.toml core '{}' as identity.",
+                                ProjectConfig::CORE_MARKER_FILE,
+                                canonical.as_str(),
+                            ));
+                        }
+                        Err(error) => return Err(error),
                     }
                 }
                 return Ok((root.clone(), cfg));
             }
 
             if let Some(eco) = ProjectConfig::detect_core(root)? {
+                if let Some(requested) = core_override {
+                    Self::ensure_override_matches_identity(requested, &eco)?;
+                }
                 let eco = core_override.unwrap_or(&eco);
                 // T9a: tự ghi marker khi vừa detect từ signature — lần sau
                 // không còn phụ thuộc thứ tự file (cảnh báo rõ ràng).
-                if marker_core.is_none() && core_override.is_none() {
-                    ProjectConfig::write_core_marker_at(root, eco)?;
+                if marker_core.is_none() {
+                    ProjectConfig::ensure_core_marker_at(root, eco)?;
                     mgc_ui::warning(&format!(
-                        "No '{}' found — auto-marking project as core '{}'. Edit the file to change core.",
+                        "No '{}' found — claiming project identity as core '{}'. Core reassignment is blocked until an explicit migration workflow is available.",
                         ProjectConfig::CORE_MARKER_FILE,
                         eco,
                     ));
@@ -123,6 +163,21 @@ impl ProjectContext {
         }
 
         Err(crate::error::no_mgc_project_root())
+    }
+
+    fn ensure_override_matches_identity(requested: &str, owned: &str) -> anyhow::Result<()> {
+        let requested_core = Ecosystem::from_str(requested)
+            .ok_or_else(|| crate::error::unknown_ecosystem(requested))?;
+        let owned_core =
+            Ecosystem::from_str(owned).ok_or_else(|| crate::error::unknown_ecosystem(owned))?;
+        if requested_core != owned_core {
+            anyhow::bail!(
+                "core override '{}' conflicts with existing project core '{}'; core reassignment is not supported by this version",
+                requested_core.as_str(),
+                owned_core.as_str(),
+            );
+        }
+        Ok(())
     }
 
     fn dir_name(path: &std::path::Path) -> String {
@@ -157,3 +212,7 @@ impl ProjectContext {
         )
     }
 }
+
+#[cfg(test)]
+#[path = "test/context.rs"]
+mod tests;

@@ -1,47 +1,11 @@
 //! `mgc add library` — tách từ core/library.rs (Phase 7 v5).
 
 use anyhow::Result;
-use mgc_types::Ecosystem;
-use mgc_types::adapter::PackageAdapter;
 fn project_root() -> Result<PathBuf> {
-    let cwd = std::env::current_dir().map_err(|e| crate::error::cwd_deleted(&e))?;
-    let root = shared::find_project_root(&cwd)?
-        .ok_or_else(|| crate::error::no_mgc_project_found("lib"))?;
-    Ok(root)
-}
-
-fn lib_adapter() -> Arc<dyn PackageAdapter> {
-    let cwd = std::env::current_dir().unwrap_or_default();
-    let (registry_url, token) = crate::context::ProjectContext::load_at(
-        &cwd,
-        mgc_config::project::ProjectConfig::find_project_root(&cwd).as_ref(),
-        None,
-    )
-    .ok()
-    .map(|ctx| {
-        (
-            ctx.config.registries.first().map(|r| r.url.clone()),
-            ctx.config.registries.first().and_then(|r| r.token.clone()),
-        )
-    })
-    .map(|(u, t)| {
-        (
-            u.or_else(|| std::env::var("MAGICORE_LIB_REGISTRY_URL").ok()),
-            t.or_else(|| std::env::var("MAGICORE_LIB_REGISTRY_TOKEN").ok()),
-        )
-    })
-    .unwrap_or_else(|| {
-        (
-            std::env::var("MAGICORE_LIB_REGISTRY_URL").ok(),
-            std::env::var("MAGICORE_LIB_REGISTRY_TOKEN").ok(),
-        )
-    });
-    crate::factory::create_adapter(&Ecosystem::Lib, registry_url.as_deref(), token.as_deref())
-        .expect("lib adapter always available in lib core build")
+    shared::core_project_root("lib")
 }
 
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use crate::commands::core::shared;
 
@@ -61,21 +25,16 @@ pub async fn add(
     let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
     // The ownership gate permits only a completed native dependency lane.
     // Tường lửa chỉ cho phép lane dependency native đã hoàn chỉnh.
-    let detected = mgc_lib_adapter::detect_language(&root);
-    let language = detected.map(|lang| lang.ecosystem());
     crate::commands::dep_gate::gate(
-        &crate::commands::dep_gate::DepContext::new(
-            "lib",
-            language,
-            None,
-            None,
+        &crate::commands::dep_gate::lib_project_context(
+            &root,
             crate::commands::dep_gate::DepOp::Add,
         ),
         None,
         &compat,
         Some(&root.join(".magicore").join("exec.log")),
     )?;
-    let adapter = lib_adapter();
+    let adapter = shared::lib_adapter(&root)?;
     shared::add(
         &*adapter, &root, packages, version, dev, exact, optional, peer, no_save, true, global,
     )

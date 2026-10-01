@@ -77,6 +77,33 @@ fn store_db_for(project_root: &Path) -> Result<PathBuf> {
     Ok(store_root.join("store.db"))
 }
 
+/// The current store subcommands operate on the Web store layout only.
+/// Require a consistent project signature/config before status, prune,
+/// backup, restore, or doctor can touch that core-owned data.
+fn ensure_web_store_owner(project_root: &Path) -> Result<()> {
+    let marker = ProjectConfig::read_core_marker(project_root)?
+        .ok_or_else(crate::error::store_core_signature_required)?;
+    let configured = ProjectConfig::load(project_root)?.map(|config| {
+        if config.ecosystem == "cloud" {
+            "clo".to_string()
+        } else {
+            config.ecosystem
+        }
+    });
+
+    if let Some(configured) = &configured
+        && &marker != configured
+    {
+        return Err(crate::error::store_core_identity_conflict(
+            &marker, configured,
+        ));
+    }
+    if marker != "web" {
+        return Err(crate::error::store_requires_web_core(Some(&marker)));
+    }
+    Ok(())
+}
+
 /// Locks directory for the doctor's GC (P2-1): the install lock lives
 /// under the USER store root by default (Database::project_install_lock
 /// → <store>/locks/), NOT under the project cache — the lock must be
@@ -210,6 +237,20 @@ pub async fn run(cmd: StoreCmd) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let project_root =
         ProjectConfig::find_project_root(&cwd).ok_or_else(crate::error::project_root_missing)?;
+    ensure_web_store_owner(&project_root)?;
+    let native = crate::commands::compat::CompatMode::Native;
+    crate::commands::dep_gate::gate(
+        &crate::commands::dep_gate::DepContext::new(
+            "web",
+            Some(crate::commands::dep_gate::eco::JS),
+            None,
+            None,
+            crate::commands::dep_gate::DepOp::Gc,
+        ),
+        None,
+        &native,
+        None,
+    )?;
 
     match cmd {
         StoreCmd::Prune { dry_run, json } => {

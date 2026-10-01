@@ -152,6 +152,116 @@ pub struct ProjectConfig {
     pub scripts: Option<ScriptsPolicy>,
 }
 
+/// Exact pre-operation snapshot of MagiCore-owned project identity files.
+/// Snapshot nguyên byte các file định danh project do MGC sở hữu.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectIdentitySnapshot {
+    marker: Option<String>,
+    config: Option<String>,
+}
+
+/// Capture the marker and project config before running untrusted lifecycle hooks.
+/// Chụp marker và cấu hình trước khi chạy lifecycle hook không đáng tin.
+pub fn snapshot_project_identity(project_root: &Path) -> anyhow::Result<ProjectIdentitySnapshot> {
+    Ok(ProjectIdentitySnapshot {
+        marker: read_regular_project_text(
+            &project_root.join(ProjectConfig::CORE_MARKER_FILE),
+            "core marker",
+        )?,
+        config: read_regular_project_text(&project_root.join("mgc.toml"), "project config")?,
+    })
+}
+
+/// Check the marker bytes and canonical configured core against a snapshot.
+/// So marker nguyên byte và core canonical trong config khớp snapshot.
+pub fn project_identity_matches_snapshot(
+    project_root: &Path,
+    snapshot: &ProjectIdentitySnapshot,
+) -> anyhow::Result<bool> {
+    let marker = read_regular_project_text(
+        &project_root.join(ProjectConfig::CORE_MARKER_FILE),
+        "core marker",
+    )?;
+    if marker != snapshot.marker {
+        return Ok(false);
+    }
+    let current_config =
+        read_regular_project_text(&project_root.join("mgc.toml"), "project config")?;
+    let current_core = ecosystem_from_config(current_config.as_deref())?;
+    let expected_core = ecosystem_from_config(snapshot.config.as_deref())?;
+    Ok(current_core.as_deref().map(ProjectConfig::canonical_core)
+        == expected_core.as_deref().map(ProjectConfig::canonical_core))
+}
+
+/// Restore identity files atomically after a lifecycle hook changes ownership.
+/// Refuses symlink/special-file targets and reports every failed restoration.
+/// Khôi phục atomic file identity sau khi hook đổi ownership; từ chối symlink/file đặc biệt.
+pub fn restore_project_identity(
+    project_root: &Path,
+    snapshot: &ProjectIdentitySnapshot,
+) -> anyhow::Result<()> {
+    let mut failures = Vec::new();
+    for (path, content, label) in [
+        (
+            project_root.join("mgc.toml"),
+            snapshot.config.as_deref(),
+            "project config",
+        ),
+        (
+            project_root.join(ProjectConfig::CORE_MARKER_FILE),
+            snapshot.marker.as_deref(),
+            "core marker",
+        ),
+    ] {
+        let result = read_regular_project_text(&path, label).and_then(|current| {
+            let unchanged = if label == "project config" {
+                match (
+                    ecosystem_from_config(current.as_deref()),
+                    ecosystem_from_config(content),
+                ) {
+                    (Ok(current), Ok(expected)) => {
+                        current.as_deref().map(ProjectConfig::canonical_core)
+                            == expected.as_deref().map(ProjectConfig::canonical_core)
+                    }
+                    _ => false,
+                }
+            } else {
+                current.as_deref() == content
+            };
+            if unchanged {
+                return Ok(());
+            }
+            match content {
+                Some(content) => atomic_write_project_config(&path, content.as_bytes()),
+                None => remove_regular_project_identity_file(&path),
+            }
+        });
+        if let Err(error) = result {
+            failures.push(format!("restore {label} '{}': {error}", path.display()));
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        anyhow::bail!(
+            "project identity restoration failed: {}",
+            failures.join("; ")
+        )
+    }
+}
+
+fn remove_regular_project_identity_file(path: &Path) -> anyhow::Result<()> {
+    if ensure_regular_project_config(path)?.is_none() {
+        return Ok(());
+    }
+    std::fs::remove_file(path)?;
+    #[cfg(unix)]
+    if let Some(parent) = path.parent() {
+        std::fs::File::open(parent)?.sync_all()?;
+    }
+    Ok(())
+}
+
 /// Lifecycle script policy — `[scripts] policy/allow/deny`.
 /// npm parity (approve-scripts/deny-scripts) in committed form: the local
 /// trust DB stays machine-private, this file is reviewed like code.
@@ -416,27 +526,52 @@ impl ProjectConfig {
     /// Load from project root (mgc.toml)
     pub fn load(project_root: &Path) -> Result<Option<Self>, anyhow::Error> {
         let path = project_root.join("mgc.toml");
-        if !path.exists() {
+        let Some(content) = read_regular_project_text(&path, "project config")? else {
             return Ok(None);
-        }
-        let content = std::fs::read_to_string(&path)?;
+        };
         Ok(Some(toml::from_str(&content)?))
     }
 
     /// Save to project root (mgc.toml)
     pub fn save(&self, project_root: &Path) -> Result<(), anyhow::Error> {
+        let desired_core = Self::canonical_core(&self.ecosystem);
+        // Claim the project core before writing config so a save from another
+        // core cannot replace either the marker or the existing mgc.toml.
+        // (Ghi nhận core trước để save từ core khác không thể thay marker hay mgc.toml.)
+        Self::ensure_core_marker_at(project_root, &desired_core)?;
         let path = project_root.join("mgc.toml");
         let content = toml::to_string_pretty(self)?;
-        std::fs::write(path, content)?;
-        self.write_core_marker(project_root)?;
+        atomic_write_project_config(&path, content.as_bytes())?;
         Ok(())
     }
 
-    // ── Core signature marker (T9a — chống nhầm core, user 2026-08-19) ──
+    fn ensure_mgc_config_core_compatible(
+        project_root: &Path,
+        desired_core: &str,
+    ) -> Result<(), anyhow::Error> {
+        let path = project_root.join("mgc.toml");
+        if ensure_regular_project_config(&path)?.is_none() {
+            return Ok(());
+        }
+        let Some(existing) = Self::load(project_root)? else {
+            return Ok(());
+        };
+        let existing_core = Self::canonical_core(&existing.ecosystem);
+        if existing_core != desired_core {
+            anyhow::bail!(
+                "Project is already configured as core '{}'; refusing to replace it with '{}'. Core reassignment is not supported by this version.",
+                existing_core,
+                desired_core,
+            );
+        }
+        Ok(())
+    }
+
+    // ── Plain-text core identity marker (T9a — chống nhầm core) ──
     // Marker file luôn đi kèm mgc.toml; sinh trong save() — mọi path (init,
     // wizard, create-*) nhận marker tự động.
 
-    /// Core signature marker file name (const tập trung — RULE §12).
+    /// Plain-text core identity marker file name — not a cryptographic signature.
     pub const CORE_MARKER_FILE: &str = ".mgc.core";
 
     /// Core names accepted by the marker (chuẩn hóa "cloud" → "clo").
@@ -458,13 +593,12 @@ impl ProjectConfig {
     ///
     /// - None: marker file does not exist.
     /// - Err: marker exists but the core name is unknown/empty (fail-closed —
-    ///   never guess a wrong core from a broken signature).
+    ///   never guess a wrong core from a malformed marker).
     pub fn read_core_marker(project_root: &Path) -> Result<Option<String>, anyhow::Error> {
         let path = project_root.join(Self::CORE_MARKER_FILE);
-        if !path.exists() {
+        let Some(content) = read_regular_project_text(&path, "core marker")? else {
             return Ok(None);
-        }
-        let content = std::fs::read_to_string(&path)?;
+        };
         let first_line = content
             .lines()
             .next()
@@ -473,21 +607,135 @@ impl ProjectConfig {
         let core = Self::canonical_core(first_line);
         if core.is_empty() || !Self::is_known_core(&core) {
             anyhow::bail!(
-                "'{}' has an invalid core signature '{}'. Expected one of: {}. Fix the file or run 'mgc init --signature <core>'.",
+                "'{}' has an invalid core marker '{}'. Expected one of: {}. Repair the marker file manually before running core-aware commands.",
                 path.display(),
                 first_line,
                 Self::KNOWN_CORES.join(", "),
             );
         }
+        Self::validate_marker_matches_project_config(project_root, &core)?;
         Ok(Some(core))
+    }
+
+    /// Reject a marker that disagrees with the persisted project identity.
+    /// Từ chối marker lệch với identity đã lưu trong cấu hình project.
+    fn validate_marker_matches_project_config(
+        project_root: &Path,
+        marker: &str,
+    ) -> Result<(), anyhow::Error> {
+        if ensure_regular_project_config(&project_root.join("mgc.toml"))?.is_none() {
+            return Ok(());
+        }
+        let configured = Self::read_to_string_ecosystem(project_root)?
+            .ok_or_else(|| anyhow::anyhow!("project config is missing its ecosystem"))?;
+        let configured = Self::canonical_core(&configured);
+        if !Self::is_known_core(&configured) {
+            anyhow::bail!(
+                "project config has unknown core '{}'; refusing to trust core marker '{}'",
+                configured,
+                marker,
+            );
+        }
+        if configured != marker {
+            anyhow::bail!(
+                "core marker '{}' conflicts with mgc.toml core '{}'; core reassignment is not supported by this version",
+                marker,
+                configured,
+            );
+        }
+        Ok(())
     }
 
     /// Write core marker file (1 line plain text + optional comment).
     pub fn write_core_marker(&self, project_root: &Path) -> Result<(), anyhow::Error> {
-        Self::write_core_marker_at(project_root, &self.ecosystem)
+        Self::ensure_core_marker_at(project_root, &self.ecosystem)
     }
 
-    /// Write marker for an arbitrary core name (dùng cho `mgc init --signature`).
+    /// Claim an absent marker or verify an existing marker has the same core.
+    /// Nhận ownership nếu marker chưa có; marker khác core luôn bị từ chối.
+    pub fn ensure_core_marker_at(project_root: &Path, core: &str) -> Result<(), anyhow::Error> {
+        let canonical = Self::canonical_core(core);
+        if !Self::is_known_core(&canonical) {
+            anyhow::bail!(
+                "Unknown core '{}'. Expected one of: {}.",
+                core,
+                Self::KNOWN_CORES.join(", "),
+            );
+        }
+        // Keep the compatibility check in the shared ownership primitive so
+        // every public entry point (including `write_core_marker`) is unable
+        // to override an existing mgc.toml core identity.
+        // (Đặt kiểm tra ở primitive chung để mọi API public đều không thể ghi đè core.)
+        Self::ensure_mgc_config_core_compatible(project_root, &canonical)?;
+        std::fs::create_dir_all(project_root)?;
+        let path = project_root.join(Self::CORE_MARKER_FILE);
+        match Self::read_core_marker(project_root)? {
+            Some(existing) if existing == canonical => return Ok(()),
+            Some(existing) => anyhow::bail!(
+                "Project is already marked as core '{}'; refusing to replace it with '{}'. Core reassignment is not supported by this version.",
+                existing,
+                canonical,
+            ),
+            None => {}
+        }
+
+        // Publish a fully written marker with a no-replace hard link. Creating
+        // the destination first and filling it afterward exposed an empty or
+        // partial identity file if the process was killed between those steps.
+        // (Publish marker đã ghi hoàn chỉnh bằng hard link không-ghi-đè; tránh
+        // marker rỗng/nửa chừng nếu process bị kill.)
+        let parent = path.parent().unwrap_or_else(|| Path::new("."));
+        let temp_path = parent.join(format!(
+            ".{}.claim.{}.{}",
+            Self::CORE_MARKER_FILE,
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        let result = (|| -> anyhow::Result<()> {
+            let mut options = std::fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+            }
+            let mut file = options.open(&temp_path)?;
+            use std::io::Write;
+            file.write_all(format!("{canonical}\n").as_bytes())?;
+            file.sync_all()?;
+            match std::fs::hard_link(&temp_path, &path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    return match Self::read_core_marker(project_root)? {
+                        Some(existing) if existing == canonical => Ok(()),
+                        Some(existing) => anyhow::bail!(
+                            "Project is already marked as core '{}'; refusing to replace it with '{}'.",
+                            existing,
+                            canonical,
+                        ),
+                        None => anyhow::bail!(
+                            "Core marker '{}' changed while claiming project ownership; retry the command.",
+                            path.display(),
+                        ),
+                    };
+                }
+                Err(error) => return Err(error.into()),
+            }
+            #[cfg(unix)]
+            std::fs::File::open(parent)?.sync_all()?;
+            Ok(())
+        })();
+        let cleanup = std::fs::remove_file(&temp_path);
+        if let Err(error) = result {
+            let _ = cleanup;
+            return Err(error);
+        }
+        cleanup?;
+        Ok(())
+    }
+
+    /// Write a core marker only when it agrees with any existing project config.
+    /// Chỉ ghi marker khi nhất quán với cấu hình project hiện có.
     pub fn write_core_marker_at(project_root: &Path, core: &str) -> Result<(), anyhow::Error> {
         let canonical = Self::canonical_core(core);
         if !Self::is_known_core(&canonical) {
@@ -498,51 +746,49 @@ impl ProjectConfig {
             );
         }
         std::fs::create_dir_all(project_root)?;
-        let path = project_root.join(Self::CORE_MARKER_FILE);
-        std::fs::write(path, format!("{canonical}\n"))?;
-        Ok(())
+        Self::ensure_core_marker_at(project_root, &canonical)
     }
 
-    /// Collect distinct cores detected from project signature files.
-    fn detect_signatures(project_root: &Path) -> Vec<String> {
+    /// Collect distinct cores detected from project manifests.
+    fn detect_signatures(project_root: &Path) -> Result<Vec<String>, anyhow::Error> {
         let mut cores: Vec<String> = Vec::new();
-        if project_root.join("package.json").exists() {
+        if signature_file_exists(&project_root.join("package.json"))? {
             cores.push("web".to_string());
         }
-        if project_root.join("Cargo.toml").exists() {
+        if signature_file_exists(&project_root.join("Cargo.toml"))? {
             cores.push("lib".to_string());
         }
-        if project_root.join("pyproject.toml").exists() {
+        if signature_file_exists(&project_root.join("pyproject.toml"))? {
             cores.push("ai".to_string());
         }
-        if project_root.join("pubspec.yaml").exists() {
+        if signature_file_exists(&project_root.join("pubspec.yaml"))? {
             cores.push("app".to_string());
         }
-        if project_root.join("Package.swift").exists() {
+        if signature_file_exists(&project_root.join("Package.swift"))? {
             cores.push("app".to_string());
         }
         cores.sort();
         cores.dedup();
-        cores
+        Ok(cores)
     }
 
     /// Detect ecosystem with T9a priority: marker → mgc.toml → signatures.
     ///
-    /// Err = ambiguous: multiple signature files pointing at different cores
+    /// Err = ambiguous: multiple ecosystem manifests point at different cores
     /// and no marker (fail-closed — never guess, RULE §9.3).
     pub fn detect_core(project_root: &Path) -> Result<Option<String>, anyhow::Error> {
         if let Some(marker) = Self::read_core_marker(project_root)? {
             return Ok(Some(marker));
         }
-        if project_root.join("mgc.toml").exists() {
-            return Ok(Self::read_to_string_ecosystem(project_root));
+        if ensure_regular_project_config(&project_root.join("mgc.toml"))?.is_some() {
+            return Self::read_to_string_ecosystem(project_root);
         }
-        let signatures = Self::detect_signatures(project_root);
+        let signatures = Self::detect_signatures(project_root)?;
         match signatures.len() {
             0 => Ok(None),
             1 => Ok(Some(signatures[0].clone())),
             _ => anyhow::bail!(
-                "Ambiguous project core in '{}': multiple signatures ({}) but no '{}'. Run 'mgc init --signature <core>' to mark the core explicitly.",
+                "Ambiguous project core in '{}': multiple ecosystem manifests ({}) but no '{}'. Run 'mgc init --signature <core>' to write a plain-text core marker explicitly.",
                 project_root.display(),
                 signatures.join(", "),
                 Self::CORE_MARKER_FILE,
@@ -550,19 +796,20 @@ impl ProjectConfig {
         }
     }
 
-    /// Legacy detect (kept for tests): detect_core result flattened, marker
-    /// first, else mgc.toml, else first signature. Luồng mới dùng detect_core.
-    pub fn auto_detect(project_root: &Path) -> Option<String> {
-        Self::detect_core(project_root).ok().flatten()
+    /// Detect the project core without hiding malformed or conflicting identity errors.
+    /// Phát hiện core nhưng không biến marker hỏng/xung đột thành kết quả không tìm thấy.
+    pub fn auto_detect(project_root: &Path) -> Result<Option<String>, anyhow::Error> {
+        Self::detect_core(project_root)
     }
 
     /// Read `[ecosystem]` from an existing mgc.toml (multi/app/adapter config priority).
-    fn read_to_string_ecosystem(project_root: &Path) -> Option<String> {
-        let content = std::fs::read_to_string(project_root.join("mgc.toml")).ok()?;
-        let v: toml::Value = toml::from_str(&content).ok()?;
-        v.get("ecosystem")
-            .and_then(|e| e.as_str())
-            .map(String::from)
+    fn read_to_string_ecosystem(project_root: &Path) -> Result<Option<String>, anyhow::Error> {
+        let Some(content) =
+            read_regular_project_text(&project_root.join("mgc.toml"), "project config")?
+        else {
+            return Ok(None);
+        };
+        ecosystem_from_config(Some(&content))
     }
 
     /// Find project root by looking for mgc.toml / .mgc.core / package.json /
@@ -592,6 +839,178 @@ impl ProjectConfig {
 
         None
     }
+}
+
+fn ecosystem_from_config(content: Option<&str>) -> anyhow::Result<Option<String>> {
+    let Some(content) = content else {
+        return Ok(None);
+    };
+    let value: toml::Value = toml::from_str(content)?;
+    Ok(value
+        .get("ecosystem")
+        .and_then(|ecosystem| ecosystem.as_str())
+        .map(String::from))
+}
+
+/// Return metadata only for an existing regular config file. Symlinks and
+/// special files are refused before project identity is read or mutated.
+/// Chỉ trả metadata của config file thường; từ chối symlink/file đặc biệt.
+fn ensure_regular_project_config(path: &Path) -> anyhow::Result<Option<std::fs::Metadata>> {
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    if metadata.file_type().is_symlink() {
+        anyhow::bail!("project config '{}' must not be a symlink", path.display());
+    }
+    if !metadata.is_file() {
+        anyhow::bail!("project config '{}' must be a regular file", path.display());
+    }
+    Ok(Some(metadata))
+}
+
+/// Read a project identity/configuration file from a no-follow handle.
+/// Path metadata is checked for clear diagnostics, then the opened handle is
+/// checked again so a final-component symlink swap cannot redirect the read.
+/// Đọc file identity/config từ handle no-follow; kiểm tra lại metadata handle
+/// để symlink swap ở thành phần cuối không thể đổi đích đọc.
+/// Read a regular project file without following the final path component.
+/// Symlinks, reparse points, and special files are rejected. Callers should
+/// parse the returned text with the format-specific parser they own.
+/// Đọc file thường trong project, không đi theo path component cuối.
+pub fn read_regular_project_text(path: &Path, label: &str) -> anyhow::Result<Option<String>> {
+    use std::io::Read;
+
+    const MAX_PROJECT_TEXT_BYTES: u64 = 10 * 1024 * 1024;
+
+    let path_metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    if path_metadata.file_type().is_symlink() {
+        anyhow::bail!("{label} '{}' must not be a symlink", path.display());
+    }
+    if !path_metadata.is_file() {
+        anyhow::bail!("{label} '{}' must be a regular file", path.display());
+    }
+
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    let file = options.open(path).map_err(|error| {
+        anyhow::anyhow!(
+            "open {label} '{}' without following links: {error}",
+            path.display()
+        )
+    })?;
+    let opened_metadata = file.metadata()?;
+    if !opened_metadata.is_file() {
+        anyhow::bail!("{label} '{}' is not a regular file", path.display());
+    }
+    if opened_metadata.len() > MAX_PROJECT_TEXT_BYTES {
+        anyhow::bail!(
+            "{label} '{}' exceeds the {} byte safety limit",
+            path.display(),
+            MAX_PROJECT_TEXT_BYTES
+        );
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+        if opened_metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            anyhow::bail!("{label} '{}' must not be a reparse point", path.display());
+        }
+    }
+
+    let mut content = String::new();
+    file.take(MAX_PROJECT_TEXT_BYTES + 1)
+        .read_to_string(&mut content)?;
+    if content.len() as u64 > MAX_PROJECT_TEXT_BYTES {
+        anyhow::bail!(
+            "{label} '{}' exceeds the {} byte safety limit",
+            path.display(),
+            MAX_PROJECT_TEXT_BYTES
+        );
+    }
+    Ok(Some(content))
+}
+
+/// A project signature is only recognized when it is a regular file owned
+/// by the project tree; symlinked or special-file signatures fail closed.
+/// Chỉ nhận signature là file thường trong project; symlink/file đặc biệt bị từ chối.
+fn signature_file_exists(path: &Path) -> anyhow::Result<bool> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            anyhow::bail!(
+                "project signature '{}' must not be a symlink",
+                path.display()
+            )
+        }
+        Ok(metadata) if metadata.is_file() => Ok(true),
+        Ok(_) => anyhow::bail!(
+            "project signature '{}' must be a regular file",
+            path.display()
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// Publish `mgc.toml` through a unique same-directory staging file. Replacing
+/// the path atomically avoids truncation and never follows a swapped symlink.
+/// Publish `mgc.toml` qua staging file cùng thư mục, atomic, không truncate.
+fn atomic_write_project_config(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+    use std::io::Write;
+
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("project config path has no file name"))?;
+    let metadata = ensure_regular_project_config(path)?;
+    let temp_path = parent.join(format!(
+        ".{}.tmp.{}.{}",
+        file_name.to_string_lossy(),
+        std::process::id(),
+        uuid::Uuid::new_v4()
+    ));
+
+    let result = (|| -> anyhow::Result<()> {
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+        }
+        let mut file = options.open(&temp_path)?;
+        if let Some(metadata) = &metadata {
+            file.set_permissions(metadata.permissions())?;
+        }
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        ensure_regular_project_config(path)?;
+        mgc_lockfile::atomic::atomic_replace_file(&temp_path, path)?;
+        #[cfg(unix)]
+        std::fs::File::open(parent)?.sync_all()?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp_path);
+    }
+    result
 }
 
 /// Security config — `[security] min_release_age` per ecosystem (quarantine guard).
@@ -834,11 +1253,11 @@ pub fn decide_scripts(
 /// (Đọc riêng bảng `[scripts]` — file hỏng thì lỗi rõ, không im lặng.)
 pub fn load_scripts_table(project_root: &std::path::Path) -> Result<Option<ScriptsPolicy>, String> {
     let path = project_root.join("mgc.toml");
-    if !path.is_file() {
+    let Some(text) = read_regular_project_text(&path, "project config")
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))?
+    else {
         return Ok(None);
-    }
-    let text = std::fs::read_to_string(&path)
-        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    };
     let value: toml::Value = text
         .parse()
         .map_err(|e| format!("invalid TOML in {}: {e}", path.display()))?;

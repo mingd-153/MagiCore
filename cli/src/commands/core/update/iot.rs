@@ -6,10 +6,7 @@ use std::path::PathBuf;
 use crate::commands::core::shared;
 
 fn project_root() -> Result<PathBuf> {
-    let cwd = std::env::current_dir().map_err(|e| crate::error::cwd_deleted(&e))?;
-    let root = shared::find_project_root(&cwd)?
-        .ok_or_else(|| crate::error::no_mgc_project_found("iot"))?;
-    Ok(root)
+    shared::core_project_root("iot")
 }
 
 pub async fn update(
@@ -36,7 +33,8 @@ pub async fn update(
                 Some("esp32-rust"),
                 target_owned.as_deref(),
                 crate::commands::dep_gate::DepOp::Update,
-            ),
+            )
+            .with_manifest_format(Some("cargo-toml")),
             None,
             &compat,
             Some(&root.join(".magicore").join("exec.log")),

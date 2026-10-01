@@ -35,7 +35,8 @@ type ManifestProbe = fn(&Path) -> Option<String>;
 pub fn detect_language(root: &Path) -> Option<LibLanguage> {
     let mgc_toml = root.join("mgc.toml");
     // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
-    if let Ok(content) = std::fs::read_to_string(&mgc_toml)
+    if let Ok(Some(content)) =
+        mgc_config::project::read_regular_project_text(&mgc_toml, "project config")
         && let Ok(v) = toml::from_str::<toml::Value>(&content)
     {
         if v.get("ecosystem")
@@ -51,7 +52,7 @@ pub fn detect_language(root: &Path) -> Option<LibLanguage> {
             // detection instead of refusing blindly.
             // (Project có package.json thuộc lane JS; manifest non-JS mà
             // không có package.json thì rơi xuống detect marker.)
-            if root.join("package.json").exists() {
+            if is_regular_manifest(&root.join("package.json")) {
                 return None;
             }
         }
@@ -71,13 +72,13 @@ pub fn detect_language(root: &Path) -> Option<LibLanguage> {
             };
         }
     }
-    if root.join("package.json").exists() {
+    if is_regular_manifest(&root.join("package.json")) {
         return Some(LibLanguage::Ts);
     }
-    if root.join("Cargo.toml").exists() {
+    if is_regular_manifest(&root.join("Cargo.toml")) {
         return Some(LibLanguage::Rust);
     }
-    if root.join("go.mod").exists() {
+    if is_regular_manifest(&root.join("go.mod")) {
         return Some(LibLanguage::Go);
     }
     // Java/Kotlin: the gradle verification metadata (lockfile) is the
@@ -86,13 +87,10 @@ pub fn detect_language(root: &Path) -> Option<LibLanguage> {
     // Java/Kotlin: metadata verification gradle (lockfile) là nguồn
     // audit — ưu tiên trước build file thường. Project pom.xml cũng là
     // Java (engine Maven native, Phase 2).
-    if root
-        .join("gradle")
-        .join("verification-metadata.xml")
-        .is_file()
-        || root.join("build.gradle").is_file()
-        || root.join("build.gradle.kts").is_file()
-        || root.join("pom.xml").is_file()
+    if is_regular_manifest(&root.join("gradle/verification-metadata.xml"))
+        || is_regular_manifest(&root.join("build.gradle"))
+        || is_regular_manifest(&root.join("build.gradle.kts"))
+        || is_regular_manifest(&root.join("pom.xml"))
     {
         return Some(LibLanguage::Java);
     }
@@ -100,30 +98,80 @@ pub fn detect_language(root: &Path) -> Option<LibLanguage> {
     // *.csproj is also .NET (native NuGet engine, Phase 2).
     // .NET: packages.lock.json là lockfile audit đọc; *.csproj trần cũng
     // là .NET (engine NuGet native, Phase 2).
-    if root.join("packages.lock.json").is_file() || find_csproj(root).is_some() {
+    if is_regular_manifest(&root.join("packages.lock.json")) || find_csproj(root).is_some() {
         return Some(LibLanguage::DotNet);
     }
-    if root.join("pyproject.toml").exists() {
+    if is_regular_manifest(&root.join("pyproject.toml")) {
         return Some(LibLanguage::Python);
     }
     None
 }
 
-/// Find the first `*.csproj` at the project root (single level — NuGet
-/// projects are one csproj per directory in the mgc lib lane).
-/// Tìm `*.csproj` đầu tiên ở gốc project (một cấp — project NuGet trong
-/// lane lib của mgc là một csproj mỗi thư mục).
+/// Return the dependency-manifest format whose native writer/resolver owns
+/// this lib lane. Language detection alone is insufficient for Java (.NET
+/// is likewise native only when a root-level csproj exists).
+/// Trả format manifest dependency mà writer/resolver native sở hữu; chỉ biết
+/// ngôn ngữ là chưa đủ để xác nhận Java hoặc .NET.
+pub fn dependency_manifest_format(root: &Path, language: LibLanguage) -> Option<&'static str> {
+    match language {
+        LibLanguage::Ts if is_regular_manifest(&root.join("package.json")) => Some("package-json"),
+        LibLanguage::Rust if is_regular_manifest(&root.join("Cargo.toml")) => Some("cargo-toml"),
+        LibLanguage::Go if is_regular_manifest(&root.join("go.mod")) => Some("go-mod"),
+        LibLanguage::Python if is_regular_manifest(&root.join("pyproject.toml")) => {
+            if crate::manifest::supports_native_python_project(root) {
+                Some("pep621-native")
+            } else {
+                Some("pyproject-unsupported")
+            }
+        }
+        LibLanguage::Java => {
+            let has_pom = is_regular_manifest(&root.join("pom.xml"));
+            let has_gradle = is_regular_manifest(&root.join("build.gradle"))
+                || is_regular_manifest(&root.join("build.gradle.kts"));
+            match (has_pom, has_gradle) {
+                (true, false) => Some("maven-pom"),
+                (false, true) => Some("gradle"),
+                (true, true) => Some("ambiguous"),
+                (false, false) => None,
+            }
+        }
+        LibLanguage::DotNet if find_csproj(root).is_some() => Some("csproj"),
+        LibLanguage::Ts
+        | LibLanguage::Rust
+        | LibLanguage::Python
+        | LibLanguage::Go
+        | LibLanguage::DotNet => None,
+    }
+}
+
+/// `Path::is_file` follows symlinks; ownership must not treat an external
+/// symlink as a project-owned dependency manifest.
+/// `Path::is_file` theo symlink; chỉ nhận manifest file thường thuộc project.
+fn is_regular_manifest(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_file())
+}
+
+/// Find the unique `*.csproj` at the project root. Multiple projects need
+/// explicit project selection; choosing whichever `read_dir` returns first
+/// would make install/add nondeterministic.
+/// Tìm `.csproj` duy nhất ở root; nhiều project cần chọn rõ, không chọn ngẫu
+/// nhiên theo thứ tự `read_dir`.
 pub(crate) fn find_csproj(root: &Path) -> Option<std::path::PathBuf> {
     let entries = std::fs::read_dir(root).ok()?;
-    entries
-        .flatten()
-        .map(|e| e.path())
-        .find(|p| p.extension().and_then(|e| e.to_str()) == Some("csproj"))
+    let mut projects = entries.flatten().map(|e| e.path()).filter(|p| {
+        is_regular_manifest(p)
+            && p.extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("csproj"))
+    });
+    let first = projects.next()?;
+    projects.next().is_none().then_some(first)
 }
 
 pub(crate) fn manifest_is_lib(root: &Path) -> bool {
     // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
-    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml"))
+    if let Ok(Some(content)) =
+        mgc_config::project::read_regular_project_text(&root.join("mgc.toml"), "project config")
         && let Ok(v) = toml::from_str::<toml::Value>(&content)
     {
         if v.get("ecosystem").and_then(|e| e.as_str()) == Some("lib") {
@@ -139,7 +187,7 @@ pub(crate) fn manifest_is_lib(root: &Path) -> bool {
         (&root.join("pyproject.toml"), probe_pyproject),
     ];
     for (path, probe) in probes {
-        if path.exists()
+        if is_regular_manifest(path)
             && let Some(eco) = probe(path)
             && eco == "lib"
         {
@@ -150,7 +198,8 @@ pub(crate) fn manifest_is_lib(root: &Path) -> bool {
 }
 
 fn probe_package_json(path: &Path) -> Option<String> {
-    let content = std::fs::read_to_string(path).ok()?;
+    let content =
+        mgc_config::project::read_regular_project_text(path, "package manifest").ok()??;
     let v: serde_json::Value = serde_json::from_str(&content).ok()?;
     v.get("magicore")
         .and_then(|m| m.get("core"))
@@ -159,7 +208,7 @@ fn probe_package_json(path: &Path) -> Option<String> {
 }
 
 fn probe_cargo_toml(path: &Path) -> Option<String> {
-    let content = std::fs::read_to_string(path).ok()?;
+    let content = mgc_config::project::read_regular_project_text(path, "Cargo manifest").ok()??;
     let v: toml::Value = toml::from_str(&content).ok()?;
     v.get("package")
         .and_then(|p| p.get("metadata"))
@@ -170,7 +219,8 @@ fn probe_cargo_toml(path: &Path) -> Option<String> {
 }
 
 fn probe_pyproject(path: &Path) -> Option<String> {
-    let content = std::fs::read_to_string(path).ok()?;
+    let content =
+        mgc_config::project::read_regular_project_text(path, "Python manifest").ok()??;
     let v: toml::Value = toml::from_str(&content).ok()?;
     v.get("tool")
         .and_then(|t| t.get("magicore"))

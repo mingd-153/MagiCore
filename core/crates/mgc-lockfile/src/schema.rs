@@ -9,6 +9,7 @@
 //! định). Ghi thì luôn xuất shape v3.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 use crate::ecosystem_tag::EcosystemTag;
 use crate::{LockfileError, LockfileResult};
@@ -62,6 +63,18 @@ pub struct Lockfile {
     // vẫn parse được.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub root_dependencies: Vec<String>,
+
+    /// Exact root package pins indexed by owning core. Unlike the legacy
+    /// unscoped root list, this preserves direct-edge identity in a
+    /// multi-core lockfile and allows frozen replay without guessing among
+    /// multiple versions that satisfy the same manifest range. New values
+    /// use `mgc-root-v1:<ecosystem>:<name@version>` so one core can own
+    /// several ecosystems; unqualified legacy values are accepted only when
+    /// they map to one package unambiguously.
+    /// Giá trị mới dùng định danh có ecosystem để một core giữ nhiều hệ sinh
+    /// thái; giá trị cũ chỉ được nhận khi ánh xạ duy nhất, không mơ hồ.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub root_dependencies_by_owner: BTreeMap<String, Vec<String>>,
 
     /// Package list — Danh sách package
     #[serde(rename = "package")]
@@ -421,6 +434,7 @@ impl Lockfile {
                 dependency_ownership: Vec::new(),
             },
             root_dependencies: Vec::new(),
+            root_dependencies_by_owner: BTreeMap::new(),
             packages: Vec::new(),
             workspace: None,
             optimizer_profile: None,

@@ -71,6 +71,21 @@ fn terraform_lock_missing_file_is_unsupported() {
     ));
 }
 
+#[cfg(unix)]
+#[test]
+fn terraform_audit_refuses_symlinked_lockfile() {
+    let dir = tempfile::tempdir().unwrap();
+    let outside = dir.path().join("outside.lock");
+    let lock = dir.path().join(".terraform.lock.hcl");
+    std::fs::write(&outside, TF_LOCK).unwrap();
+    std::os::unix::fs::symlink(&outside, &lock).unwrap();
+
+    let error = audit_terraform_lock(dir.path()).unwrap_err();
+
+    assert!(error.to_string().contains("regular non-symlink"));
+    assert_eq!(std::fs::read_to_string(outside).unwrap(), TF_LOCK);
+}
+
 #[test]
 fn terraform_lock_truncated_block_reports_missing_checksums() {
     // No closing brace → the trailing provider still gets evaluated.

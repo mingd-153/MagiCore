@@ -24,7 +24,8 @@ impl CloudType {
 
 pub fn detect_type(root: &Path) -> Option<CloudType> {
     // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
-    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml"))
+    if let Ok(Some(content)) =
+        mgc_config::project::read_regular_project_text(&root.join("mgc.toml"), "project config")
         && let Ok(v) = toml::from_str::<toml::Value>(&content)
         && let Some(t) = v
             .get("cloud")
@@ -39,17 +40,19 @@ pub fn detect_type(root: &Path) -> Option<CloudType> {
             _ => None,
         };
     }
-    if root.join("wrangler.toml").exists() {
+    if is_regular_manifest(&root.join("wrangler.toml")) {
         return Some(CloudType::Cloudflare);
     }
-    if root.join("Pulumi.yaml").exists() {
+    if is_regular_manifest(&root.join("Pulumi.yaml")) {
         return Some(CloudType::Pulumi);
     }
     if has_tf_files(root) {
         return Some(CloudType::Terraform);
     }
-    if let Ok(content) = std::fs::read_to_string(root.join("package.json"))
-        && let Ok(v) = serde_json::from_str::<serde_json::Value>(&content)
+    if let Ok(Some(content)) = mgc_config::project::read_regular_project_text(
+        &root.join("package.json"),
+        "package manifest",
+    ) && let Ok(v) = serde_json::from_str::<serde_json::Value>(&content)
     {
         let has_cdk = v
             .get("dependencies")
@@ -67,14 +70,23 @@ fn has_tf_files(root: &Path) -> bool {
     let Ok(entries) = std::fs::read_dir(root) else {
         return false;
     };
-    entries
-        .flatten()
-        .any(|e| e.path().extension().is_some_and(|ext| ext == "tf"))
+    entries.flatten().any(|entry| {
+        let path = entry.path();
+        path.extension().is_some_and(|ext| ext == "tf")
+            && std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_file())
+    })
+}
+
+/// Ignore symlinked and special-file framework markers during core selection.
+/// Bỏ qua marker framework là symlink hoặc file đặc biệt khi chọn core.
+fn is_regular_manifest(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_file())
 }
 
 pub(crate) fn manifest_is_cloud(root: &Path) -> bool {
     // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
-    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml"))
+    if let Ok(Some(content)) =
+        mgc_config::project::read_regular_project_text(&root.join("mgc.toml"), "project config")
         && let Ok(v) = toml::from_str::<toml::Value>(&content)
     {
         if v.get("ecosystem").and_then(|e| e.as_str()) == Some("cloud") {

@@ -1,10 +1,10 @@
 #![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::Instant;
 
 const MANIFEST: &str = env!("CARGO_MANIFEST_DIR");
+const COMMAND_TIMEOUT_SECS: u64 = 300;
 
 /// Run mgc command from workspace root.
 pub fn mgc(args: &[&str]) -> (bool, String) {
@@ -27,7 +27,15 @@ fn run_mg(args: &[&str], cwd: &Path) -> (bool, String) {
     let bin = runtime_bin
         .or(compile_bin)
         .expect("Cargo must provide CARGO_BIN_EXE_mgc for CLI integration tests");
-    let mut command = Command::new(bin);
+    let mut options = mgc_exec::run::ExecOptions {
+        cwd: Some(cwd.to_path_buf()),
+        timeout: Some(std::time::Duration::from_secs(COMMAND_TIMEOUT_SECS)),
+        capture_full_stdout: true,
+        // A CLI error is evidence returned to the test, never a successful command.
+        // Trả mã lỗi cho assertion của test, không coi CLI lỗi là thành công.
+        allowed_exit_codes: (1..=255).collect(),
+        ..Default::default()
+    };
 
     let workspace_root = Path::new(MANIFEST)
         .parent()
@@ -45,22 +53,38 @@ fn run_mg(args: &[&str], cwd: &Path) -> (bool, String) {
         .is_file();
 
     if template_contract {
-        command.env("MAGICORE_TEMPLATE_DIR", template_disk);
+        options.env.push((
+            "MAGICORE_TEMPLATE_DIR".into(),
+            template_disk.to_string_lossy().into_owned(),
+        ));
     }
 
-    let output = command
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .expect("failed to run Cargo-built mgc binary");
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    run_binary_with_options(&bin, args, &options)
+}
+
+pub fn run_binary_with_options(
+    bin: &Path,
+    args: &[&str],
+    options: &mgc_exec::run::ExecOptions,
+) -> (bool, String) {
+    // Reuse the platform's bounded process-tree executor instead of unbounded output().
+    // Dùng executor có timeout và kill cây tiến trình thay output() không giới hạn.
+    let arguments = args
+        .iter()
+        .map(|arg| (*arg).to_string())
+        .collect::<Vec<_>>();
+    let output = match mgc_exec::run::run_project_binary(bin, &arguments, options) {
+        Ok(report) => report,
+        Err(error) => return (false, format!("MGC test command failed: {error:#}")),
+    };
+    let stdout = output.stdout_full;
+    let stderr = output.stderr_tail;
     let combined = if stderr.is_empty() {
         stdout
     } else {
         format!("{stdout}\n{stderr}")
     };
-    (output.status.success(), combined)
+    (output.exit_code == 0, combined)
 }
 
 /// Create a temp directory for scaffold testing.

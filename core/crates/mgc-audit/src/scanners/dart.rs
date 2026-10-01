@@ -15,8 +15,8 @@
 //! unsupported kèm hướng dẫn thật.
 
 use crate::scanners::osv::{OsvPin, audit_osv_pins};
+use mgc_types::MgResult;
 use mgc_types::adapter::{AuditReport, ScannerStatus};
-use mgc_types::{MgError, MgResult};
 use std::path::Path;
 
 /// pubspec.lock is a small, stable yaml subset — parse the
@@ -102,8 +102,7 @@ pub async fn audit_flutter_osv(project_root: &Path) -> MgResult<AuditReport> {
             "flutter/dart (no pubspec.lock found — run flutter pub get first)",
         ));
     }
-    let raw = std::fs::read_to_string(&lock_path)
-        .map_err(|e| MgError::Other(format!("read pubspec.lock: {e}")))?;
+    let raw = super::read_bounded_project_input(&lock_path, "pubspec.lock")?;
     let (pins, skipped) = read_pubspec_lock(&raw)?;
     if pins.is_empty() && skipped.is_empty() {
         return Ok(AuditReport::clean(0));

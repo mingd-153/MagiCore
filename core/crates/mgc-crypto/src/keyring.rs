@@ -3,14 +3,15 @@
 
 use crate::ed25519_signer::{Ed25519PublicKey, Ed25519Signer};
 use crate::{CryptoError, CryptoResult};
-use ring::rand::SystemRandom;
+use ring::rand::{SecureRandom, SystemRandom};
 use ring::signature::Ed25519KeyPair;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 /// Key pair wrapper — Key pair wrapper
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct KeyPair {
     /// PKCS8-encoded private key — Khóa riêng encode PKCS8
     pub private_key_pkcs8: Vec<u8>,
@@ -20,6 +21,18 @@ pub struct KeyPair {
     pub key_id: String,
     /// Creation timestamp — Timestamp tạo
     pub created_at: u64,
+}
+
+impl fmt::Debug for KeyPair {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("KeyPair")
+            .field("private_key_pkcs8", &"[REDACTED]")
+            .field("public_key", &self.public_key)
+            .field("key_id", &self.key_id)
+            .field("created_at", &self.created_at)
+            .finish()
+    }
 }
 
 impl KeyPair {
@@ -82,7 +95,7 @@ impl Keyring {
 
     /// Load keyring from file — Load keyring từ file
     pub fn load(path: &Path) -> CryptoResult<Self> {
-        let content = fs::read_to_string(path)?;
+        let content = read_keyring_contents(path)?;
         let keyring: Keyring = serde_json::from_str(&content)?;
         Ok(keyring)
     }
@@ -124,41 +137,15 @@ impl Keyring {
         }
 
         let content = serde_json::to_string_pretty(self)?;
-
-        // R1.1 FIX (AUDIT VÒNG 2): Create backup before overwrite
-        if path.exists() {
+        let previous = read_existing_for_backup(path)?;
+        if let Some(previous) = previous {
             let backup = path.with_extension("json.bak");
-            if let Err(e) = fs::copy(path, &backup) {
-                // Log warning but don't fail (backup is best-effort)
-                eprintln!("WARN: failed to create keyring backup: {}", e);
-            }
+            reject_non_regular_existing_path(&backup)?;
+            write_private_file_atomic(&backup, previous.as_bytes())?;
         }
 
-        // A3 FIX: Atomic write with secure permissions from the start (Unix only)
-        #[cfg(unix)]
-        {
-            use std::io::Write;
-            use std::os::unix::fs::OpenOptionsExt;
-
-            // Create file with 0o600 permissions atomically
-            let mut file = fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .mode(0o600) // Set perms BEFORE writing (no TOCTOU)
-                .open(path)?;
-
-            file.write_all(content.as_bytes())?;
-            file.sync_all()?; // Ensure data on disk
-            Ok(())
-        }
-
-        // Non-Unix: fallback to old behavior (TOCTOU still exists)
-        #[cfg(not(unix))]
-        {
-            fs::write(path, content)?;
-            Ok(())
-        }
+        reject_non_regular_existing_path(path)?;
+        write_private_file_atomic(path, content.as_bytes())
     }
 
     /// Add new key pair — Thêm key pair mới
@@ -218,11 +205,216 @@ impl Keyring {
     }
 }
 
+fn read_keyring_contents(path: &Path) -> CryptoResult<String> {
+    #[cfg(unix)]
+    {
+        use std::io::Read;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+        let mut options = fs::OpenOptions::new();
+        options
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+        let mut file = options.open(path)?;
+        let metadata = file.metadata()?;
+        if !metadata.is_file() {
+            return Err(CryptoError::KeyringFailed(
+                "keyring path must resolve to a regular file".to_string(),
+            ));
+        }
+
+        let mode = metadata.permissions().mode() & 0o7777;
+        if mode & !0o600 != 0 {
+            return Err(CryptoError::KeyringFailed(format!(
+                "keyring file '{}' has insecure permissions {mode:04o}; group/world access and executable bits are forbidden",
+                path.display(),
+            )));
+        }
+
+        let mut content = String::new();
+        file.read_to_string(&mut content)?;
+        Ok(content)
+    }
+
+    #[cfg(windows)]
+    {
+        use std::io::Read;
+        use std::os::windows::fs::OpenOptionsExt;
+
+        // FILE_FLAG_OPEN_REPARSE_POINT prevents following a final-component
+        // symlink/reparse point while opening the key material.
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        let mut options = fs::OpenOptions::new();
+        options
+            .read(true)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+        let mut file = options.open(path)?;
+        let metadata = file.metadata()?;
+        if !metadata.is_file() || metadata.file_type().is_symlink() {
+            return Err(CryptoError::KeyringFailed(
+                "keyring path must resolve to a regular non-reparse file".to_string(),
+            ));
+        }
+
+        let mut content = String::new();
+        file.read_to_string(&mut content)?;
+        Ok(content)
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        let metadata = fs::symlink_metadata(path)?;
+        if !metadata.file_type().is_file() {
+            return Err(CryptoError::KeyringFailed(
+                "keyring path must resolve to a regular file".to_string(),
+            ));
+        }
+        Ok(fs::read_to_string(path)?)
+    }
+}
+
+fn read_existing_for_backup(path: &Path) -> CryptoResult<Option<String>> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => read_keyring_contents(path).map(Some),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn reject_non_regular_existing_path(path: &Path) -> CryptoResult<()> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            Err(CryptoError::KeyringFailed(format!(
+                "refusing to replace non-regular or symlink keyring path '{}'",
+                path.display()
+            )))
+        }
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn write_private_file_atomic(path: &Path, contents: &[u8]) -> CryptoResult<()> {
+    use std::io::Write;
+
+    let parent = path.parent().ok_or_else(|| {
+        CryptoError::KeyringFailed("keyring destination must have a parent directory".to_string())
+    })?;
+    let rng = SystemRandom::new();
+
+    for _ in 0..16 {
+        let mut nonce = [0u8; 16];
+        rng.fill(&mut nonce).map_err(|_| {
+            CryptoError::KeyringFailed("failed to generate temporary keyring name".to_string())
+        })?;
+        let nonce_hex = nonce
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        let file_name = path
+            .file_name()
+            .unwrap_or_else(|| std::ffi::OsStr::new("keyring"))
+            .to_string_lossy();
+        let temporary_path = parent.join(format!(".{file_name}.{nonce_hex}.tmp"));
+
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+        }
+
+        let mut file = match options.open(&temporary_path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.into()),
+        };
+        let mut cleanup = TemporaryKeyringFile::new(temporary_path.clone());
+        file.write_all(contents)?;
+        file.sync_all()?;
+        drop(file);
+        atomic_replace_file(&temporary_path, path)?;
+        cleanup.disarm();
+
+        #[cfg(unix)]
+        fs::File::open(parent)?.sync_all()?;
+
+        return Ok(());
+    }
+
+    Err(CryptoError::KeyringFailed(
+        "could not allocate a unique temporary keyring file".to_string(),
+    ))
+}
+
+fn atomic_replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Storage::FileSystem::{
+            MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
+        };
+
+        let source_wide: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
+        let destination_wide: Vec<u16> = destination
+            .as_os_str()
+            .encode_wide()
+            .chain(Some(0))
+            .collect();
+        // SAFETY: both nul-terminated path buffers stay alive for the full
+        // synchronous call; MoveFileExW does not retain either pointer.
+        let succeeded = unsafe {
+            MoveFileExW(
+                source_wide.as_ptr(),
+                destination_wide.as_ptr(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            )
+        };
+        if succeeded == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        fs::rename(source, destination)
+    }
+}
+
+struct TemporaryKeyringFile {
+    path: PathBuf,
+    armed: bool,
+}
+
+impl TemporaryKeyringFile {
+    fn new(path: PathBuf) -> Self {
+        Self { path, armed: true }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for TemporaryKeyringFile {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+}
+
 impl Default for Keyring {
     fn default() -> Self {
         Self::new()
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/keyring_save_unit.rs"]
+mod keyring_save_unit;
 
 // Hex encoding helper — Helper encode hex
 mod hex {

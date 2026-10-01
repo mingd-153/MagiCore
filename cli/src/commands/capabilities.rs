@@ -57,26 +57,47 @@ fn capabilities_for_core(core: &str) -> Result<&'static [Capability]> {
 /// nguồn máy-đọc DUY NHẤT matrix cross-check (T0.4).
 pub fn dependency_ownership(core: &str) -> serde_json::Value {
     use crate::commands::dep_gate::{DepContext, DepOwner, SPLIT_LANGUAGES, owner_for};
-    fn ops_for(core: &str, ecosystem: Option<&str>) -> serde_json::Value {
+    fn ops_for(
+        core: &str,
+        ecosystem: Option<&str>,
+        manifest_format: Option<&str>,
+    ) -> serde_json::Value {
         let mut map = serde_json::Map::new();
         for op in crate::commands::dep_gate::DepOp::ALL {
-            let ctx = DepContext::new(core, ecosystem, None, None, *op);
+            let ctx = DepContext::new(core, ecosystem, None, None, *op)
+                .with_manifest_format(manifest_format);
             let (owner, tools): (&str, Vec<String>) = match owner_for(&ctx) {
                 DepOwner::Native => ("mgc-native", Vec::new()),
                 DepOwner::ScaffoldOnly => ("scaffold-only", Vec::new()),
                 DepOwner::Unsupported => ("unsupported", Vec::new()),
             };
-            map.insert(
-                op.as_str().to_string(),
-                serde_json::json!({"owner": owner, "tools": tools}),
-            );
+            let mut cell = serde_json::json!({"owner": owner, "tools": tools});
+            if matches!(
+                (core, ecosystem),
+                ("game", Some("bevy")) | ("iot", Some("esp32-rust"))
+            ) && owner == "mgc-native"
+            {
+                cell["requires"] = serde_json::json!("Cargo.toml");
+            }
+            map.insert(op.as_str().to_string(), cell);
         }
         serde_json::Value::Object(map)
     }
-    let base = ops_for(core, None);
+    let base = ops_for(core, None, None);
     let mut languages = serde_json::Map::new();
     for language in SPLIT_LANGUAGES {
-        let split = ops_for(core, Some(language));
+        let manifest_format = match (core, *language) {
+            ("ai", "python") => Some("mgc-pyproject"),
+            ("lib", "ts") => Some("package-json"),
+            ("lib", "rust") => Some("cargo-toml"),
+            ("lib", "python") => Some("pep621-native"),
+            ("lib", "go") => Some("go-mod"),
+            ("lib", "java") => Some("maven-pom"),
+            ("lib", "dotnet") => Some("csproj"),
+            ("game", "bevy") | ("iot", "esp32-rust") => Some("cargo-toml"),
+            _ => None,
+        };
+        let split = ops_for(core, Some(language), manifest_format);
         if split != base {
             languages.insert((*language).to_string(), split);
         }
@@ -87,6 +108,39 @@ pub fn dependency_ownership(core: &str) -> serde_json::Value {
         root.insert(
             "languages".to_string(),
             serde_json::Value::Object(languages),
+        );
+    }
+    if core == "lib" {
+        root.insert(
+            "manifest_variants".to_string(),
+            serde_json::json!({
+                "ts/package-json": ops_for("lib", Some("ts"), Some("package-json")),
+                "rust/cargo-toml": ops_for("lib", Some("rust"), Some("cargo-toml")),
+                "python/pep621-native": ops_for("lib", Some("python"), Some("pep621-native")),
+                "python/pyproject-unsupported": ops_for("lib", Some("python"), Some("pyproject-unsupported")),
+                "go/go-mod": ops_for("lib", Some("go"), Some("go-mod")),
+                "go/unknown": ops_for("lib", Some("go"), None),
+                "rust/unknown": ops_for("lib", Some("rust"), None),
+                "ts/unknown": ops_for("lib", Some("ts"), None),
+                "java/maven-pom": ops_for("lib", Some("java"), Some("maven-pom")),
+                "java/gradle": ops_for("lib", Some("java"), Some("gradle")),
+                "dotnet/csproj": ops_for("lib", Some("dotnet"), Some("csproj")),
+                "java/unknown": ops_for("lib", Some("java"), None),
+                "dotnet/unknown": ops_for("lib", Some("dotnet"), None),
+            }),
+        );
+    }
+    if core == "ai" {
+        root.insert(
+            "manifest_requirements".to_string(),
+            serde_json::json!({"python": "mgc-pyproject"}),
+        );
+        root.insert(
+            "manifest_variants".to_string(),
+            serde_json::json!({
+                "python/mgc-pyproject": ops_for("ai", Some("python"), Some("mgc-pyproject")),
+                "python/foreign-lock": ops_for("ai", Some("python"), Some("foreign-lock")),
+            }),
         );
     }
     serde_json::Value::Object(root)

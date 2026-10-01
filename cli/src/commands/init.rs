@@ -11,16 +11,16 @@ use std::path::{Path, PathBuf};
 
 /// mgc init — create a new project with mgc.toml
 ///
-/// `--signature <core>`: chỉ ghi marker `.mgc.core` cho project HIỆN TẠI
-/// (không wizard, không scaffold) — dùng khi auto-detect ambiguous hoặc
-/// muốn đổi core project cũ (T9a).
+/// `--signature <core>` is a compatibility flag that writes a plain-text
+/// `.mgc.core` identity marker; it does not create a cryptographic signature.
+/// (Flag tương thích này ghi marker core dạng text, không tạo chữ ký mật mã.)
 pub async fn run(template: Option<String>, signature: Option<String>) -> Result<()> {
     if let Some(core) = signature {
         let cwd = std::env::current_dir().map_err(|e| crate::error::cwd_deleted(&e))?;
         let root = ProjectConfig::find_project_root(&cwd).unwrap_or(cwd);
         ProjectConfig::write_core_marker_at(&root, &core)?;
         mgc_ui::success(&format!(
-            "Core signature '{}' written to {}/{}",
+            "Core identity marker '{}' written to {}/{} (plain text; not cryptographically signed)",
             core,
             root.display(),
             ProjectConfig::CORE_MARKER_FILE,
@@ -151,16 +151,8 @@ fn write_mgc_toml(project_dir: &Path, config: &ScaffoldConfig) -> Result<()> {
         config.features.clone(),
     );
     proj_config.save(project_dir)?;
-    // T9a: Tự động ghi .mgc.core marker cùng lúc với mgc.toml.
-    // Đảm bảo auto_detect ưu tiên marker → đúng core cho mọi lệnh core-aware.
-    if let Err(e) = ProjectConfig::write_core_marker_at(project_dir, &config.core) {
-        mgc_ui::warning(&format!(
-            "Could not write {} marker: {e}",
-            ProjectConfig::CORE_MARKER_FILE
-        ));
-    }
-    if config.core == "game" {
-        // `mgc run` = script runner — game scaffold bổ sung bản ship chuẩn (mgc build → cargo run)
+    if config.core == "game" && config.frameworks.iter().any(|name| name == "bevy") {
+        // Cargo scripts currently apply only to the Bevy scaffold — không gắn lệnh Rust cho engine khác.
         let scripts = "\n[scripts]\nrun = \"cargo run\"\nbuild = \"cargo build\"\n".to_string();
         let path = project_dir.join("mgc.toml");
         let mut content = std::fs::read_to_string(&path)?;
@@ -360,3 +352,7 @@ fn ask_web_features(config: &ScaffoldConfig) -> (Vec<Answer>, bool) {
         (options, true)
     }
 }
+
+#[cfg(test)]
+#[path = "test/init.rs"]
+mod tests;

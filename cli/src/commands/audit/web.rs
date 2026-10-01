@@ -11,9 +11,9 @@ pub(crate) async fn audit(
     project_root: &Path,
     fix: bool,
     fmt: OutputFormat,
+    strict: StrictMode,
 ) -> Result<()> {
     use super::{enforce_audit_exit, print_audit_report};
-    let strict = StrictMode::from_env();
     let report = adapter.audit(project_root).await?;
 
     // Defer only when a fix will actually run; every no-op/error branch

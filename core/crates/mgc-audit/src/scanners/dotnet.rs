@@ -154,8 +154,7 @@ pub fn collect_dotnet_pins(project_root: &Path) -> MgResult<(Vec<OsvPin>, Vec<St
     sln_paths.sort();
     for sln in &sln_paths {
         recognized = true;
-        let sln_raw = std::fs::read_to_string(sln)
-            .map_err(|e| MgError::Other(format!("read {}: {e}", sln.display())))?;
+        let sln_raw = super::read_bounded_project_input(sln, "solution file")?;
         let projects = read_solution_projects(&sln_raw);
         if projects.is_empty() {
             skipped.push(format!(
@@ -192,8 +191,7 @@ pub fn collect_dotnet_pins(project_root: &Path) -> MgResult<(Vec<OsvPin>, Vec<St
                 .filter(|p| p.is_file());
             match lock {
                 Some(path) => {
-                    let raw = std::fs::read_to_string(&path)
-                        .map_err(|e| MgError::Other(format!("read {}: {e}", path.display())))?;
+                    let raw = super::read_bounded_project_input(&path, "packages.lock.json")?;
                     let (mut p, mut s) = read_packages_lock(&raw)?;
                     drain_new_pins(&mut p, &mut seen, &mut pins);
                     skipped.append(&mut s);
@@ -214,8 +212,7 @@ pub fn collect_dotnet_pins(project_root: &Path) -> MgResult<(Vec<OsvPin>, Vec<St
     let root_lock = project_root.join("packages.lock.json");
     if root_lock.is_file() {
         recognized = true;
-        let raw = std::fs::read_to_string(&root_lock)
-            .map_err(|e| MgError::Other(format!("read packages.lock.json: {e}")))?;
+        let raw = super::read_bounded_project_input(&root_lock, "packages.lock.json")?;
         let (mut p, mut s) = read_packages_lock(&raw)?;
         drain_new_pins(&mut p, &mut seen, &mut pins);
         skipped.append(&mut s);

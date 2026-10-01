@@ -231,6 +231,33 @@ impl NpmDependencyProvider {
             .collect()
     }
 
+    /// Collect installable edges from one npm version record. Optional peer
+    /// dependencies are compatibility hints, not dependencies to auto-fetch;
+    /// npm encodes that distinction in `peerDependenciesMeta`.
+    /// (Thu thập edge cài đặt từ metadata npm. Optional peer chỉ là gợi ý
+    /// tương thích, không được tự tải; npm khai báo trong `peerDependenciesMeta`.)
+    fn collect_version_dependencies(
+        &self,
+        version: &native::npm_registry::VersionInfo,
+    ) -> Vec<ResolvedDep> {
+        let mut dependencies =
+            self.collect_resolved_deps(version.dependencies.as_ref(), false, false);
+        dependencies.extend(self.collect_resolved_deps(
+            version.optional_dependencies.as_ref(),
+            true,
+            false,
+        ));
+        let mut peers = self.collect_resolved_deps(version.peer_dependencies.as_ref(), false, true);
+        peers.retain(|peer| {
+            !version
+                .peer_dependencies_meta
+                .get(peer.package.as_str())
+                .is_some_and(|metadata| metadata.optional)
+        });
+        dependencies.extend(peers);
+        dependencies
+    }
+
     pub async fn prefetch_resolution_metadata(
         &self,
         names: &[PackageName],
@@ -547,21 +574,7 @@ impl DependencyProvider for NpmDependencyProvider {
         let deps: Vec<ResolvedDep> = meta
             .versions
             .get(&package_id.version().to_string())
-            .map(|v| {
-                let mut collected =
-                    self.collect_resolved_deps(v.dependencies.as_ref(), false, false);
-                collected.extend(self.collect_resolved_deps(
-                    v.optional_dependencies.as_ref(),
-                    true,
-                    false,
-                ));
-                collected.extend(self.collect_resolved_deps(
-                    v.peer_dependencies.as_ref(),
-                    false,
-                    true,
-                ));
-                collected
-            })
+            .map(|version| self.collect_version_dependencies(version))
             .unwrap_or_default();
         self.registry_cache.insert_deps(cache_key, deps.clone());
         Ok(deps)
@@ -660,21 +673,7 @@ impl DependencyProvider for NpmDependencyProvider {
                 let deps = meta
                     .versions
                     .get(&id.version().to_string())
-                    .map(|v| {
-                        let mut collected =
-                            self.collect_resolved_deps(v.dependencies.as_ref(), false, false);
-                        collected.extend(self.collect_resolved_deps(
-                            v.optional_dependencies.as_ref(),
-                            true,
-                            false,
-                        ));
-                        collected.extend(self.collect_resolved_deps(
-                            v.peer_dependencies.as_ref(),
-                            false,
-                            true,
-                        ));
-                        collected
-                    })
+                    .map(|version| self.collect_version_dependencies(version))
                     .unwrap_or_default();
                 self.registry_cache.insert_deps(cache_key, deps.clone());
                 results.push((id.clone(), deps));
@@ -710,21 +709,7 @@ impl DependencyProvider for NpmDependencyProvider {
             let deps = meta
                 .versions
                 .get(&package_id.version().to_string())
-                .map(|v| {
-                    let mut collected =
-                        self.collect_resolved_deps(v.dependencies.as_ref(), false, false);
-                    collected.extend(self.collect_resolved_deps(
-                        v.optional_dependencies.as_ref(),
-                        true,
-                        false,
-                    ));
-                    collected.extend(self.collect_resolved_deps(
-                        v.peer_dependencies.as_ref(),
-                        false,
-                        true,
-                    ));
-                    collected
-                })
+                .map(|version| self.collect_version_dependencies(version))
                 .unwrap_or_default();
             self.registry_cache
                 .insert_deps(Self::version_key(&package_id), deps.clone());

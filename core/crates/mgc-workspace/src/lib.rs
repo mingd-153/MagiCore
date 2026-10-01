@@ -12,7 +12,10 @@ pub use computation_cache::{
     PackageBuildCache, check_package_build_freshness, compute_composite_hash,
     compute_package_source_hash, load_package_build_cache, save_package_build_cache,
 };
-pub use discover::{DiscoverOptions, build_workspace_graph, discover_workspace_targets};
+pub use discover::{
+    DiscoverOptions, build_workspace_graph, discover_workspace_targets, read_workspace_config,
+    resolve_workspace_layout_dir, workspace_entry_is_directory,
+};
 pub use filter::filter_matches;
 pub use graph::{
     WorkspaceEdge, WorkspaceGraph, WorkspaceNode, WorkspacePackageManifest, read_package_manifest,

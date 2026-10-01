@@ -100,9 +100,9 @@ fn test_project_bat_executes_through_mgc_exec() {
         .rand_bytes(8)
         .tempfile()
         .expect("create temp .bat file");
-    writeln!(bat_file, "@echo off").unwrap();
-    writeln!(bat_file, "echo SUCCESS").unwrap();
-    bat_file.flush().unwrap();
+    writeln!(bat_file, "@echo off").expect("write batch header");
+    writeln!(bat_file, "echo SUCCESS").expect("write batch body");
+    bat_file.flush().expect("flush batch script");
 
     // Persist to disk and close handle (Windows requires file handle closed before spawn)
     let (file, bat_path) = bat_file.keep().expect("persist temp file");
@@ -227,7 +227,7 @@ fn pick_by_priority<'a>(lines: &'a [&'a str]) -> &'a str {
     if let Some(shim) = lines.iter().find(|l| is_shim(l)) {
         return shim;
     }
-    lines.first().unwrap()
+    lines.first().expect("at least one command candidate")
 }
 
 #[cfg(not(windows))]

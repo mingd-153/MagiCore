@@ -16,6 +16,7 @@ pub mod migrate;
 pub mod parser;
 pub mod policy;
 pub mod project_lock;
+pub mod root_pin;
 pub mod schema;
 pub mod serialization;
 pub mod v4;
@@ -29,12 +30,17 @@ pub use import::{
     import_into_lockfile,
 };
 pub use merge::{MergeConflict, merge3, resolve_git_conflict_markers};
+pub use root_pin::{RootPin, format_root_pin, parse_root_pin, update_owner_root_pins};
 
 pub use migrate::{
     auto_upgrade_lockfile, detect_lockfile_version, migrate_v1_to_v2, migrate_v2_to_v3,
     migrate_v3_to_v4,
 };
-pub use parser::{load_and_verify_lockfile, load_lockfile, parse_lockfile};
+pub use parser::{
+    LockDocument, load_and_verify_lockfile, load_lock_document, load_lockfile, parse_document,
+    parse_lockfile, read_bounded_regular_file, read_lockfile_bytes, read_signature_file_bytes,
+    signature_file_presence,
+};
 pub use schema::{
     ArtifactRef, CrossEdge, OWNER_DELEGATED, OWNER_MGC_NATIVE, OWNER_SCAFFOLD_ONLY,
     OWNER_UNSUPPORTED, Provenance, SOURCE_KIND_DELEGATED_TOOL, SOURCE_KIND_NATIVE_RESOLVE,
@@ -61,19 +67,30 @@ pub use writer::{
 // Issue #4: Lockfile V2 - Temporary stub, replace with proper v2 implementation
 pub fn read_lockfile_checked(project_root: &std::path::Path) -> LockfileResult<Option<Lockfile>> {
     let lockfile_path = project_root.join("mgc.lock");
-    if !lockfile_path.exists() {
-        return Ok(None);
+    match std::fs::symlink_metadata(&lockfile_path) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            Err(LockfileError::ParseError(format!(
+                "lockfile '{}' must be a regular non-symlink file",
+                lockfile_path.display()
+            )))
+        }
+        Ok(_) => load_lockfile(&lockfile_path).map(Some),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
     }
-    load_lockfile(&lockfile_path).map(Some)
 }
 
-// Issue #4: Lockfile V2 - Temporary stub, checksum writing deferred to v2
+/// Legacy checksum-sidecar API. Checksums are not written by this crate;
+/// lock integrity uses the signed-lockfile APIs instead.
+/// API sidecar checksum cũ. Crate này không ghi checksum; integrity lock
+/// được xử lý bằng API lockfile có chữ ký.
 pub fn write_lockfile_checksum(
     _project_root: &std::path::Path,
     _content: &[u8],
 ) -> LockfileResult<()> {
-    // Checksum validation moved to signature verification in v2
-    Ok(())
+    Err(LockfileError::WriteFailed(
+        "lockfile checksum sidecars are unsupported; use the signed lockfile API".to_string(),
+    ))
 }
 
 /// Result type for lockfile operations — Kiểu kết quả cho thao tác lockfile

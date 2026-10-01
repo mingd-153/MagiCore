@@ -3,6 +3,26 @@ use mgc_lockfile::{Lockfile, Package};
 use mgc_types::{DependencySpec, Ecosystem, PackageName, VersionRange};
 
 #[test]
+fn core_command_identity_rejects_a_foreign_project_with_a_matching_manifest() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    mgc_config::project::ProjectConfig::new("ai-rust-project", "ai")
+        .save(temp.path())
+        .expect("save AI identity");
+    std::fs::write(
+        temp.path().join("Cargo.toml"),
+        "[package]\nname = 'ai-rust-project'\nversion = '0.1.0'\n",
+    )
+    .expect("write adjacent Rust manifest");
+
+    assert!(ensure_project_core_identity(temp.path(), "lib").is_err());
+    assert!(ensure_project_core_identity(temp.path(), "web").is_err());
+    assert!(ensure_project_core_identity(temp.path(), "app").is_err());
+    assert!(ensure_project_core_identity(temp.path(), "iot").is_err());
+    assert!(ensure_project_core_identity(temp.path(), "ai").is_ok());
+    assert!(lib_adapter(temp.path()).is_err());
+}
+
+#[test]
 fn shared_dependency_mutations_refuse_toolchain_owned_paths() {
     assert!(ensure_native_manifest_owner(true, "add").is_ok());
 
@@ -168,7 +188,7 @@ fn v2_graph_preserves_dependency_edges() {
         "blake3-scheduler".into(),
     ));
 
-    let graph = graph_from_lockfile(&lock).unwrap();
+    let graph = graph_from_lockfile(&lock, "web").unwrap();
     assert_eq!(graph.packages.len(), 2);
     assert_eq!(graph.packages[0].deps[0].to_string(), "scheduler@0.25.0");
 }
@@ -182,6 +202,44 @@ fn why_edge_name_strips_version_and_range() {
     assert_eq!(edge_name("@scope/pkg"), "@scope/pkg");
     assert_eq!(edge_name("@scope/pkg@1.3.0"), "@scope/pkg");
     assert_eq!(edge_name("  pad-core@2.0.0  "), "pad-core");
+}
+
+#[tokio::test]
+#[cfg(feature = "web")]
+async fn why_rejects_v4_graph_with_a_dangling_root_pin() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let mut lock = mgc_lockfile::canonical::LockfileV4::new("mgc/test");
+    lock.packages.push(mgc_lockfile::canonical::PackageV4 {
+        key: mgc_lockfile::PackageKey {
+            ecosystem: mgc_lockfile::EcosystemTag::Web,
+            name: "requests".to_string(),
+            version: "1.0.0".to_string(),
+            source_id: "npm".to_string(),
+            variant: mgc_lockfile::VariantKey::default(),
+        },
+        edges: Vec::new(),
+        artifact: None,
+        provenance: None,
+        toolchain: None,
+        scripts_policy: None,
+        store_ref: None,
+    });
+    lock.root_dependencies.push("missing@1.0.0".to_string());
+    lock.metadata.lockfile_hash = mgc_lockfile::canonical::payload_digest(&lock.payload());
+    std::fs::write(
+        temp.path().join("mgc.lock"),
+        mgc_lockfile::canonical::write_v4_document(&lock).unwrap(),
+    )
+    .unwrap();
+    let adapter =
+        mgc_web_adapter::WebAdapter::with_registry("https://registry.npmjs.org".to_string())
+            .unwrap();
+
+    let error = why(&adapter, temp.path(), "requests")
+        .await
+        .expect_err("diagnostics must reject an internally inconsistent v4 graph");
+
+    assert!(error.to_string().contains("root pin"), "{error:#}");
 }
 
 #[test]
@@ -289,6 +347,9 @@ async fn mutation_gateway_rejects_signed_lock_before_creating_a_journal() {
     package.ecosystem = mgc_lockfile::EcosystemTag::Python;
     package.owner_core = Some("lib".into());
     signed.packages.push(package);
+    // Signing must start from a real unsigned lock, not the recovery sentinel.
+    // Test signing dùng lock thật, không dùng sentinel hỏng của recovery fixture.
+    std::fs::write(&lock_path, toml::to_string(&signed).unwrap()).unwrap();
     let key = mgc_crypto::keyring::KeyPair::generate().unwrap();
     mgc_lockfile::sign_and_write_lockfile(&mut signed, &lock_path, &key).unwrap();
     let lock_before = std::fs::read(&lock_path).unwrap();
@@ -329,6 +390,9 @@ async fn install_gateway_allows_an_existing_signed_lock_for_read_only_reuse() {
     package.ecosystem = mgc_lockfile::EcosystemTag::Python;
     package.owner_core = Some("lib".into());
     lock.packages.push(package);
+    // Keep the corrupt-input refusal intact while exercising valid lock reuse.
+    // Giữ nguyên từ chối input hỏng, kiểm chứng reuse bằng lock hợp lệ.
+    std::fs::write(&lock_path, toml::to_string(&lock).unwrap()).unwrap();
     let key = mgc_crypto::keyring::KeyPair::generate().unwrap();
     mgc_lockfile::sign_and_write_lockfile(&mut lock, &lock_path, &key).unwrap();
     let adapter = mgc_lib_adapter::adapter_for(root, None, None)
@@ -367,6 +431,22 @@ fn test_adapter_and_lock(
         .expect("pyproject must detect a python lib adapter");
     let lock = ProjectWriteLock::acquire(root, std::time::Duration::from_secs(30)).unwrap();
     (adapter, lock)
+}
+
+#[tokio::test]
+#[cfg(feature = "lib")]
+async fn mutation_snapshot_treats_only_missing_lock_as_absent() {
+    let dir = tempfile::tempdir().unwrap();
+    python_fixture(dir.path());
+    std::fs::remove_file(dir.path().join("mgc.lock")).unwrap();
+    let (adapter, write_lock) = test_adapter_and_lock(dir.path());
+    let manifest = adapter.parse_manifest(dir.path()).await.unwrap();
+
+    let snapshot =
+        MutationSnapshot::capture(&manifest, dir.path(), &write_lock, MutationOperation::Add)
+            .unwrap();
+
+    assert!(snapshot.lock_bytes.is_none());
 }
 
 #[tokio::test]

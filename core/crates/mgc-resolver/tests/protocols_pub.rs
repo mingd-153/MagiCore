@@ -6,15 +6,18 @@
 use mgc_resolver::protocols::sha256_hex;
 use mgc_resolver::protocols::{PubProtocol, RegistryProtocol};
 use serde_json::{Value, json};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
 
 async fn mock_server() -> Option<mockito::ServerGuard> {
     match std::net::TcpListener::bind("127.0.0.1:0") {
         Ok(listener) => drop(listener),
-        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
-            eprintln!("warning: skipping pub mock test because localhost bind is blocked");
-            return None;
-        }
-        Err(error) => panic!("failed to probe localhost bind: {error}"),
+        Err(error) => panic!(
+            "pub.dev mock tests require localhost; refusing to report skipped tests as passing: {error}"
+        ),
     }
     Some(mockito::Server::new_async().await)
 }
@@ -34,6 +37,36 @@ fn pub_version(version: &str, archive_url: &str, sha: &str, deps: Value) -> Valu
 
 fn pub_json(versions: Vec<Value>) -> String {
     serde_json::to_string(&json!({ "name": "http", "versions": versions })).unwrap()
+}
+
+#[tokio::test]
+async fn pub_missing_archive_digest_fails_resolution() {
+    let Some(mut server) = mock_server().await else {
+        return;
+    };
+    let base = server.url();
+    let mut version = pub_version(
+        "1.0.0",
+        &format!("{base}/archives/http-1.0.0.tar.gz"),
+        "",
+        json!({}),
+    );
+    version
+        .as_object_mut()
+        .expect("pub version object")
+        .remove("archive_sha256");
+    server
+        .mock("GET", "/api/packages/http")
+        .with_status(200)
+        .with_body(pub_json(vec![version]))
+        .create_async()
+        .await;
+
+    let error = PubProtocol::new(&base)
+        .resolve("http", "^1.0.0")
+        .await
+        .expect_err("pub.dev package without an archive digest must not resolve");
+    assert!(error.to_string().contains("archive_sha256"), "{error}");
 }
 
 #[tokio::test]
@@ -151,6 +184,92 @@ async fn pub_multi_root_resolution_intersects_transitive_constraints() {
             "an empty intersection must fail closed instead of selecting an incompatible version",
         );
     assert!(matches!(error, mgc_types::MgError::DependencyConflict(_)));
+}
+
+#[tokio::test]
+async fn pub_multi_root_metadata_fetch_is_bounded_and_concurrent() {
+    let listener = match TcpListener::bind("127.0.0.1:0").await {
+        Ok(listener) => listener,
+        Err(error) => panic!("failed to bind pub concurrency test server: {error}"),
+    };
+    let address = listener.local_addr().unwrap();
+    let active = Arc::new(AtomicUsize::new(0));
+    let max_active = Arc::new(AtomicUsize::new(0));
+    let server_active = Arc::clone(&active);
+    let server_max_active = Arc::clone(&max_active);
+    let archive_sha256 = sha256_hex(b"ARCHIVE");
+    let request_count = 32usize;
+    let server = tokio::spawn(async move {
+        let mut handlers = Vec::with_capacity(request_count);
+        for _ in 0..request_count {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let active = Arc::clone(&server_active);
+            let max_active = Arc::clone(&server_max_active);
+            let archive_sha256 = archive_sha256.clone();
+            handlers.push(tokio::spawn(async move {
+                let mut request = Vec::new();
+                let mut chunk = [0u8; 1024];
+                while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    let read = socket.read(&mut chunk).await.unwrap();
+                    assert_ne!(read, 0, "client closed before sending HTTP headers");
+                    request.extend_from_slice(&chunk[..read]);
+                }
+                let request_line = String::from_utf8(request).unwrap();
+                let package = request_line
+                    .lines()
+                    .next()
+                    .and_then(|line| line.split_whitespace().nth(1))
+                    .and_then(|path| path.strip_prefix("/api/packages/"))
+                    .expect("package route");
+
+                let current = active.fetch_add(1, Ordering::SeqCst) + 1;
+                max_active.fetch_max(current, Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_millis(40)).await;
+                active.fetch_sub(1, Ordering::SeqCst);
+
+                let body = serde_json::to_vec(&json!({
+                    "name": package,
+                    "versions": [{
+                        "version": "1.0.0",
+                        "pubspec": {
+                            "version": "1.0.0",
+                            "environment": { "sdk": "^3.0.0" },
+                            "dependencies": {}
+                        },
+                        "archive_url": "http://127.0.0.1/archive.tar.gz",
+                        "archive_sha256": archive_sha256
+                    }]
+                }))
+                .unwrap();
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                    body.len()
+                );
+                socket.write_all(response.as_bytes()).await.unwrap();
+                socket.write_all(&body).await.unwrap();
+            }));
+        }
+        for handler in handlers {
+            handler.await.unwrap();
+        }
+    });
+
+    let protocol = PubProtocol::new(&format!("http://{address}"));
+    let roots = (0..request_count)
+        .map(|index| (format!("root{index}"), "any".to_string()))
+        .collect::<Vec<_>>();
+    let entries = protocol.resolve_graph_roots(&roots).await.unwrap();
+    server.await.unwrap();
+
+    assert_eq!(entries.len(), request_count);
+    assert!(
+        max_active.load(Ordering::SeqCst) > 1,
+        "pub.dev multi-root metadata requests must overlap"
+    );
+    assert!(
+        max_active.load(Ordering::SeqCst) <= 16,
+        "pub.dev metadata concurrency must honor the shared resolver cap"
+    );
 }
 
 #[tokio::test]

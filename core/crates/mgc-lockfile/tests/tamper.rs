@@ -34,6 +34,87 @@ fn test_sign_and_verify_roundtrip() {
     assert_eq!(loaded.packages[0].name, "react");
 }
 
+#[cfg(unix)]
+#[test]
+fn signed_lock_verification_refuses_symlinked_lock_and_signature_files() {
+    use std::os::unix::fs::symlink;
+
+    let dir = tempdir().unwrap();
+    let lockfile_path = dir.path().join("mgc.lock");
+    let mut lockfile = Lockfile::new();
+    let key_pair = KeyPair::generate().unwrap();
+    sign_and_write_lockfile(&mut lockfile, &lockfile_path, &key_pair).unwrap();
+    let signature_path = lockfile_path.with_extension("lock.sig");
+
+    let lock_target = dir.path().join("lock-target");
+    std::fs::rename(&lockfile_path, &lock_target).unwrap();
+    symlink(&lock_target, &lockfile_path).unwrap();
+    assert!(load_and_verify_lockfile(&lockfile_path, &signature_path).is_err());
+    std::fs::remove_file(&lockfile_path).unwrap();
+    std::fs::rename(&lock_target, &lockfile_path).unwrap();
+
+    let signature_target = dir.path().join("signature-target");
+    std::fs::rename(&signature_path, &signature_target).unwrap();
+    symlink(&signature_target, &signature_path).unwrap();
+    assert!(load_and_verify_lockfile(&lockfile_path, &signature_path).is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn signature_presence_probe_distinguishes_missing_from_symlink() {
+    use mgc_lockfile::signature_file_presence;
+    use std::os::unix::fs::symlink;
+
+    let dir = tempdir().unwrap();
+    let lock_path = dir.path().join("mgc.lock");
+    assert!(!signature_file_presence(&lock_path).unwrap());
+
+    let outside = dir.path().join("outside.sig");
+    std::fs::write(&outside, "signature data").unwrap();
+    symlink(&outside, lock_path.with_extension("lock.sig")).unwrap();
+
+    assert!(signature_file_presence(&lock_path).is_err());
+}
+
+#[test]
+fn signed_lock_verification_rejects_oversized_lock_and_signature_files() {
+    let dir = tempdir().unwrap();
+    let lockfile_path = dir.path().join("mgc.lock");
+    let signature_path = lockfile_path.with_extension("lock.sig");
+
+    std::fs::write(&lockfile_path, vec![b' '; 10 * 1024 * 1024 + 1]).unwrap();
+    std::fs::write(&signature_path, "signature").unwrap();
+    assert!(load_and_verify_lockfile(&lockfile_path, &signature_path).is_err());
+
+    std::fs::write(
+        &lockfile_path,
+        mgc_lockfile::serialize_lockfile(&Lockfile::new()).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(&signature_path, vec![b'x'; 64 * 1024 + 1]).unwrap();
+    assert!(load_and_verify_lockfile(&lockfile_path, &signature_path).is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn trust_verification_does_not_downgrade_symlinks_to_unsigned() {
+    use std::os::unix::fs::symlink;
+
+    let dir = tempdir().unwrap();
+    let lockfile_path = dir.path().join("mgc.lock");
+    write_lockfile(&Lockfile::new(), &lockfile_path).unwrap();
+    let lock_target = dir.path().join("lock-target");
+    std::fs::rename(&lockfile_path, &lock_target).unwrap();
+    symlink(&lock_target, &lockfile_path).unwrap();
+    assert!(verify_lockfile(&lockfile_path).is_err());
+
+    std::fs::remove_file(&lockfile_path).unwrap();
+    std::fs::rename(&lock_target, &lockfile_path).unwrap();
+    let signature_path = lockfile_path.with_extension("lock.sig");
+    symlink(dir.path().join("missing-signature"), &signature_path).unwrap();
+    assert!(verify_lockfile(&lockfile_path).is_err());
+}
+
 #[test]
 fn test_tamper_detection_manual_edit() {
     let dir = tempdir().unwrap();
@@ -151,6 +232,21 @@ fn ordinary_writer_refuses_signed_metadata_when_signature_sidecar_is_missing() {
 }
 
 #[test]
+fn verifier_does_not_downgrade_signed_metadata_without_sidecar_to_unsigned() {
+    let dir = tempdir().unwrap();
+    let lockfile_path = dir.path().join("mgc.lock");
+    let mut lock = Lockfile::new();
+    let key = KeyPair::generate().unwrap();
+    sign_and_write_lockfile(&mut lock, &lockfile_path, &key).unwrap();
+    std::fs::remove_file(lockfile_path.with_extension("lock.sig")).unwrap();
+
+    assert!(matches!(
+        verify_lockfile(&lockfile_path).unwrap(),
+        VerificationStatus::InvalidSignature(_)
+    ));
+}
+
+#[test]
 fn ordinary_writer_refuses_inline_v4_signature_without_sidecar() {
     let dir = tempdir().unwrap();
     let lockfile_path = dir.path().join("mgc.lock");
@@ -169,6 +265,58 @@ fn ordinary_writer_refuses_inline_v4_signature_without_sidecar() {
         mgc_lockfile::LockfileError::SignedLockMutation(_)
     ));
     assert_eq!(std::fs::read(lockfile_path).unwrap(), bytes.as_bytes());
+}
+
+#[test]
+fn ordinary_writer_refuses_to_downgrade_unsigned_v4_lockfile() {
+    let dir = tempdir().unwrap();
+    let lockfile_path = dir.path().join("mgc.lock");
+    let mut v4 = mgc_lockfile::canonical::LockfileV4::new("mgc/test");
+    v4.root_dependencies.push("npm:react@19.0.0".to_string());
+    v4.metadata.lockfile_hash = mgc_lockfile::canonical::payload_digest(&v4.payload());
+    let bytes = mgc_lockfile::canonical::write_v4_document(&v4).unwrap();
+    std::fs::write(&lockfile_path, &bytes).unwrap();
+
+    let error = write_lockfile(&Lockfile::new(), &lockfile_path).unwrap_err();
+
+    assert!(error.to_string().contains("legacy lockfile writer"));
+    assert_eq!(std::fs::read(lockfile_path).unwrap(), bytes.as_bytes());
+}
+
+#[test]
+fn legacy_signer_refuses_to_downgrade_unsigned_v4_lockfile() {
+    let dir = tempdir().unwrap();
+    let lockfile_path = dir.path().join("mgc.lock");
+    let mut v4 = mgc_lockfile::canonical::LockfileV4::new("mgc/test");
+    v4.root_dependencies.push("npm:react@19.0.0".to_string());
+    v4.metadata.lockfile_hash = mgc_lockfile::canonical::payload_digest(&v4.payload());
+    let bytes = mgc_lockfile::canonical::write_v4_document(&v4).unwrap();
+    std::fs::write(&lockfile_path, &bytes).unwrap();
+
+    let mut legacy = Lockfile::new();
+    let error = sign_and_write_lockfile(&mut legacy, &lockfile_path, &KeyPair::generate().unwrap())
+        .unwrap_err();
+
+    assert!(error.to_string().contains("legacy lockfile writer"));
+    assert_eq!(std::fs::read(lockfile_path).unwrap(), bytes.as_bytes());
+}
+
+#[test]
+fn ordinary_writer_rejects_oversized_existing_lock_without_rewriting_it() {
+    let dir = tempdir().unwrap();
+    let lockfile_path = dir.path().join("mgc.lock");
+    let mut bytes = b"version = \"3\"\n[metadata]\ngenerator = \"test\"\n#".to_vec();
+    bytes.extend(std::iter::repeat_n(
+        b'x',
+        10 * 1024 * 1024 + 1 - bytes.len(),
+    ));
+    bytes.push(b'\n');
+    std::fs::write(&lockfile_path, &bytes).unwrap();
+
+    let error = write_lockfile(&Lockfile::new(), &lockfile_path).unwrap_err();
+
+    assert!(error.to_string().contains("lockfile too large"));
+    assert_eq!(std::fs::read(lockfile_path).unwrap(), bytes);
 }
 
 #[cfg(unix)]

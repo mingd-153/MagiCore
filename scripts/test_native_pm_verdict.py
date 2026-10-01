@@ -1,0 +1,1206 @@
+#!/usr/bin/env python3
+"""Regression tests for the native package-manager evidence verdict."""
+
+import io
+import json
+import os
+import re
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+from contextlib import redirect_stdout
+from unittest.mock import patch
+
+from lifecycle_capability_matrix import (
+    NATIVE_PM_REQUIRED_DIMENSIONS,
+    NATIVE_PM_USER_OPERATIONS,
+    ALL_DEPENDENCY_OPERATIONS,
+    PLATFORM_EVIDENCE_RELEASE_SCOPE,
+    ALL_DIMENSIONS,
+    LANES,
+    validate_lane_registry,
+    SCHEMA_VERSION,
+    STATUS_NATIVE,
+    STATUS_PLAIN,
+    STATUS_FAILED,
+    STATUS_UNVERIFIED,
+    STATUS_UNSUPPORTED,
+    native_pm_supported,
+    native_pm_claim_scope,
+    native_pm_claim_errors,
+    lifecycle_owner_for,
+    lifecycle_pass_status,
+    lifecycle_status_for_owner,
+    framework_catalog_errors,
+    evidence_commit_error,
+    scaffold_language_matches,
+    platform_evidence_errors,
+    record_platform_green,
+    print_dependency_owner_summary,
+    lifecycle_platform_name,
+    lifecycle_environment,
+    recovery_environment,
+    python_venv_environment,
+    provision_python_build_tools,
+    validate_adapter_consistency,
+    _materialize_marker,
+    lifecycle_working_tree_clean,
+    lifecycle_source_matches,
+    run_lane,
+)
+from provenance_chain import _matrix_sha_for_head
+
+
+class AdapterConsistencyGate(unittest.TestCase):
+    def test_every_lane_matches_its_real_adapter_or_embedded_native_route(self):
+        output = io.StringIO()
+        with redirect_stdout(output):
+            result = validate_adapter_consistency()
+
+        self.assertEqual(result, 0, output.getvalue())
+        self.assertIn("22 lanes", output.getvalue())
+
+    def test_cloud_native_exceptions_are_framework_scoped(self):
+        from lifecycle_capability_matrix import CLI_NATIVE_DEPENDENCY_ROUTES
+
+        self.assertIn(("clo", "cdk"), CLI_NATIVE_DEPENDENCY_ROUTES)
+        self.assertIn(("clo", "pulumi"), CLI_NATIVE_DEPENDENCY_ROUTES)
+        self.assertNotIn(("clo", "terraform"), CLI_NATIVE_DEPENDENCY_ROUTES)
+
+
+class LifecycleEnvironmentIsolation(unittest.TestCase):
+    def test_lane_environment_overrides_host_store_and_project_cache(self):
+        with patch.dict(
+            "os.environ",
+            {
+                "MAGICORE_STORE_ROOT": "/host/private/mgc-store",
+                "MGC_CACHE_DIR": "/host/private/mgc-cache",
+            },
+        ):
+            original_environment = os.environ.copy()
+            env = lifecycle_environment(
+                "/tmp/mgc-lane-sandbox", "/tmp/mgc-lane-sandbox/project"
+            )
+            self.assertEqual(os.environ, original_environment)
+
+        self.assertEqual(
+            env["MGC_CACHE_DIR"],
+            "/tmp/mgc-lane-sandbox/project/.magicore",
+        )
+        self.assertEqual(env["HOME"], "/tmp/mgc-lane-sandbox/.home")
+        self.assertEqual(
+            env["CARGO_HOME"], "/tmp/mgc-lane-sandbox/.cargo-home"
+        )
+        self.assertEqual(
+            env["PIP_CACHE_DIR"], "/tmp/mgc-lane-sandbox/.cache/pip"
+        )
+        self.assertEqual(
+            env["npm_config_cache"], "/tmp/mgc-lane-sandbox/.cache/npm"
+        )
+        self.assertEqual(env["GOMODCACHE"], "/tmp/mgc-lane-sandbox/.go/pkg/mod")
+        self.assertEqual(env["GOCACHE"], "/tmp/mgc-lane-sandbox/.cache/go-build")
+        self.assertEqual(
+            env["DOTNET_CLI_HOME"], "/tmp/mgc-lane-sandbox/.home/.dotnet"
+        )
+        self.assertEqual(
+            env["TMPDIR"], "/tmp/mgc-lane-sandbox/.tmp"
+        )
+        self.assertEqual(
+            env["DENO_DIR"], "/tmp/mgc-lane-sandbox/.cache/deno"
+        )
+        self.assertNotIn("MAGICORE_STORE_ROOT", env)
+
+    def test_lane_environment_preserves_read_only_rustup_toolchain_home(self):
+        with tempfile.TemporaryDirectory() as root:
+            rustup_home = os.path.join(root, "rustup")
+            os.makedirs(rustup_home)
+            with patch.dict("os.environ", {"RUSTUP_HOME": rustup_home}):
+                env = lifecycle_environment(
+                    os.path.join(root, "lane"), os.path.join(root, "project")
+                )
+
+            self.assertEqual(env["RUSTUP_HOME"], rustup_home)
+            self.assertEqual(env["RUSTUP_AUTO_INSTALL"], "0")
+
+    def test_lane_environment_infers_rustup_home_from_host_home(self):
+        with tempfile.TemporaryDirectory() as root:
+            host_home = os.path.join(root, "host-home")
+            rustup_home = os.path.join(host_home, ".rustup")
+            os.makedirs(rustup_home)
+            with patch.dict("os.environ", {"HOME": host_home}, clear=False):
+                os.environ.pop("RUSTUP_HOME", None)
+                env = lifecycle_environment(
+                    os.path.join(root, "lane"), os.path.join(root, "project")
+                )
+
+            self.assertEqual(env["RUSTUP_HOME"], rustup_home)
+
+    def test_lane_environment_rejects_missing_rustup_home_without_installing(self):
+        with tempfile.TemporaryDirectory() as root:
+            host_home = os.path.join(root, "host-home")
+            os.makedirs(host_home)
+            with patch.dict(
+                "os.environ",
+                {"HOME": host_home, "RUSTUP_HOME": os.path.join(root, "missing")},
+                clear=False,
+            ):
+                env = lifecycle_environment(
+                    os.path.join(root, "lane"), os.path.join(root, "project")
+                )
+
+            self.assertNotIn("RUSTUP_HOME", env)
+            self.assertEqual(env["RUSTUP_AUTO_INSTALL"], "0")
+
+    def test_lane_environment_creates_isolated_tool_temp_directory(self):
+        with tempfile.TemporaryDirectory() as root:
+            sandbox = os.path.join(root, "lane")
+            os.makedirs(sandbox)
+            env = lifecycle_environment(sandbox, os.path.join(sandbox, "project"))
+
+            self.assertTrue(os.path.isdir(env["TMPDIR"]))
+            self.assertEqual(env["TMP"], env["TMPDIR"])
+            self.assertEqual(env["TEMP"], env["TMPDIR"])
+
+
+    def test_recovery_environment_uses_project_private_store(self):
+        with patch.dict(
+            "os.environ",
+            {
+                "MAGICORE_STORE_ROOT": "/host/private/store",
+                "MGC_CACHE_DIR": "/host/private/cache",
+            },
+        ):
+            original_environment = os.environ.copy()
+            env = recovery_environment("/tmp/lane", "/tmp/lane/project")
+            self.assertEqual(os.environ, original_environment)
+
+        self.assertEqual(
+            env["HOME"], "/tmp/lane/project/.magicore-recovery/home"
+        )
+        self.assertEqual(
+            env["MGC_CACHE_DIR"], "/tmp/lane/project/.magicore-recovery"
+        )
+
+    def test_materialization_markers_resolve_inside_lane_environment(self):
+        rust_env = {"HOME": "/tmp/lane/.home"}
+        self.assertEqual(
+            _materialize_marker("/tmp/lane/project", "rust", rust_env),
+            (
+                "mgc-cargo-store",
+                "/tmp/lane/.home/.magicore/store/cargo",
+            ),
+        )
+
+        go_env = {"PATH": "/lane/bin", "GOMODCACHE": "/tmp/lane/.go/pkg/mod"}
+        completed = subprocess.CompletedProcess(
+            args=["go", "env", "GOMODCACHE"], returncode=0, stdout=go_env["GOMODCACHE"]
+        )
+        with patch("lifecycle_capability_matrix.shutil.which", return_value="/lane/bin/go"), \
+             patch("lifecycle_capability_matrix.subprocess.run", return_value=completed) as run:
+            marker = _materialize_marker("/tmp/lane/project", "go", go_env)
+        self.assertEqual(marker, ("gomodcache", go_env["GOMODCACHE"]))
+        self.assertEqual(run.call_args.kwargs["env"], go_env)
+
+    def test_python_provision_only_installs_into_lane_venv(self):
+        sandbox = "/tmp/lane"
+        project = "/tmp/lane/project"
+        environment = {"PATH": "/usr/bin:/bin"}
+        success = subprocess.CompletedProcess(args=[], returncode=0)
+        calls = []
+
+        def fake_run(argv, **kwargs):
+            calls.append((argv, kwargs))
+            return success
+
+        with patch("lifecycle_capability_matrix.shutil.which", return_value="/usr/bin/python3"), \
+             patch("lifecycle_capability_matrix.subprocess.run", side_effect=fake_run):
+            result, isolated = provision_python_build_tools(
+                sandbox, project, environment, timeout_s=30
+            )
+
+        self.assertIs(result, success)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0][0][:3], ["/usr/bin/python3", "-m", "venv"])
+        venv_python = os.path.join(
+            sandbox,
+            ".mgc-lifecycle-python",
+            "Scripts" if os.name == "nt" else "bin",
+            "python.exe" if os.name == "nt" else "python",
+        )
+        self.assertEqual(calls[1][0][0], venv_python)
+        self.assertEqual(calls[1][1]["env"]["PIP_REQUIRE_VIRTUALENV"], "true")
+        self.assertEqual(isolated["VIRTUAL_ENV"], os.path.dirname(os.path.dirname(venv_python)))
+        self.assertEqual(environment, {"PATH": "/usr/bin:/bin"})
+
+    def test_python_tools_use_isolated_venv_path_and_require_venv(self):
+        original = {
+            "PATH": "/usr/bin:/bin",
+            "MAGICORE_STORE_ROOT": "/tmp/lane-store",
+            "MGC_CACHE_DIR": "/tmp/project/.magicore",
+        }
+        active = python_venv_environment(original, "/tmp/lane/.venv")
+
+        scripts_dir = "Scripts" if os.name == "nt" else "bin"
+        self.assertTrue(
+            active["PATH"].startswith(
+                os.path.join("/tmp/lane/.venv", scripts_dir) + os.pathsep
+            )
+        )
+        self.assertEqual(active["VIRTUAL_ENV"], "/tmp/lane/.venv")
+        self.assertEqual(active["PIP_REQUIRE_VIRTUALENV"], "true")
+        self.assertNotIn("VIRTUAL_ENV", original)
+        self.assertEqual(original["PATH"], "/usr/bin:/bin")
+
+
+class LanePreparationFailure(unittest.TestCase):
+    def test_failed_real_dependency_fixture_cannot_be_laundered_by_empty_install(self):
+        calls = []
+
+        def fake_run(argv, **kwargs):
+            args = argv[1:]
+            calls.append(args)
+            if args[0] == "create-test":
+                os.mkdir(os.path.join(kwargs["cwd"], args[-1]))
+                return subprocess.CompletedProcess(argv, 0, "created", "")
+            if args[0] == "add-ai":
+                return subprocess.CompletedProcess(argv, 1, "", "registry unavailable")
+            if args[0] == "optimizer":
+                return subprocess.CompletedProcess(argv, 0, "Optimizer skipped", "")
+            raise AssertionError(f"blocked lifecycle step was executed: {args}")
+
+        lane = {
+            "core": "ai",
+            "language": "matrix-test-language",
+            "scaffold": ["create-test", "fixture"],
+            "pre_steps": ["mgc_add_real_dependency"],
+            "steps": [
+                ("install", ["install"]),
+                ("test", ["test"]),
+                ("build", ["build"]),
+            ],
+            "delegated": [],
+            "install_owner": "native-engine",
+        }
+
+        with patch("lifecycle_capability_matrix.subprocess.run", side_effect=fake_run):
+            result = run_lane("/tmp/fake-mgc", lane)
+
+        self.assertEqual(result["dims"]["add"], STATUS_FAILED)
+        self.assertEqual(result["dims"]["install"], STATUS_UNVERIFIED)
+        self.assertEqual(result["dims"]["test"], STATUS_UNVERIFIED)
+        self.assertEqual(result["dims"]["build"], STATUS_UNVERIFIED)
+        self.assertNotIn(["install"], calls)
+
+    def test_failed_python_tool_provisioning_blocks_test_and_build(self):
+        calls = []
+
+        def fake_run(argv, **kwargs):
+            args = argv[1:]
+            calls.append(args)
+            if args[0] == "create-test":
+                os.mkdir(os.path.join(kwargs["cwd"], args[-1]))
+                return subprocess.CompletedProcess(argv, 0, "created", "")
+            if args[0] == "install":
+                return subprocess.CompletedProcess(argv, 0, "installed", "")
+            if args[0] == "optimizer":
+                return subprocess.CompletedProcess(argv, 0, "Optimizer skipped", "")
+            raise AssertionError(f"step without provisioned tools was run: {args}")
+
+        provision_failure = subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="build backend unavailable"
+        )
+        lane = {
+            "core": "lib",
+            "language": "matrix-test-language",
+            "scaffold": ["create-test", "fixture"],
+            "pre_steps": ["provision_py_build_tools"],
+            "steps": [
+                ("install", ["install"]),
+                ("test", ["test"]),
+                ("build", ["build"]),
+            ],
+            "delegated": [],
+            "install_owner": "native-engine",
+        }
+
+        with patch("lifecycle_capability_matrix.subprocess.run", side_effect=fake_run), \
+             patch(
+                 "lifecycle_capability_matrix.provision_python_build_tools",
+                 return_value=(provision_failure, {"PATH": "/lane/bin"}),
+             ):
+            result = run_lane("/tmp/fake-mgc", lane)
+
+        self.assertEqual(result["dims"]["install"], STATUS_NATIVE)
+        self.assertEqual(result["dims"]["test"], STATUS_UNVERIFIED)
+        self.assertEqual(result["dims"]["build"], STATUS_UNVERIFIED)
+        self.assertIn(["install"], calls)
+        self.assertNotIn(["test"], calls)
+        self.assertNotIn(["build"], calls)
+
+
+def evidence(dimensions=None, owners=None):
+    statuses = {name: STATUS_NATIVE for name in NATIVE_PM_REQUIRED_DIMENSIONS}
+    statuses.update(dimensions or {})
+    operation_owners = {
+        "resolve": "mgc",
+        "lock": "mgc",
+        "fetch": "mgc",
+        "verify": "mgc",
+        "store": "magicore-shared-cas",
+        "materialize": "mgc",
+    }
+    operation_owners.update({operation: "mgc" for operation in NATIVE_PM_USER_OPERATIONS})
+    operation_owners.update(owners or {})
+    return statuses, operation_owners
+
+
+class NativePackageManagerVerdict(unittest.TestCase):
+    def test_release_gate_scope_tracks_every_declared_native_lane(self):
+        expected = {
+            (lane["core"], lane["language"], lane.get("framework_id", ""))
+            for lane in LANES
+            if lane.get("dependency_owner") == "mgc-native"
+        }
+        self.assertEqual(native_pm_claim_scope(LANES), expected)
+
+    def test_missing_native_evidence_blocks_each_claimed_lane(self):
+        lanes = [
+            {
+                "core": "app",
+                "language": "flutter",
+                "dependency_owner": "mgc-native",
+                "native_pm_verdict": "not-native-pm",
+            },
+            {
+                "core": "app",
+                "language": "objc",
+                "dependency_owner": "unsupported",
+                "native_pm_verdict": "unsupported",
+            },
+        ]
+        failures = native_pm_claim_errors(lanes)
+        self.assertEqual(len(failures), 1)
+        self.assertIn("app/flutter", failures[0])
+
+    def test_lifecycle_workflow_uses_shared_native_claim_gate(self):
+        workflow = (
+            Path(__file__).resolve().parent.parent
+            / ".github"
+            / "workflows"
+            / "lifecycle-matrix.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("NATIVE_PM_SCOPE = native_pm_claim_scope(data[\"lanes\"])", workflow)
+        self.assertIn("failures.extend(native_pm_claim_errors(data[\"lanes\"]))", workflow)
+        self.assertIn("PLATFORM_EVIDENCE_RELEASE_SCOPE", workflow)
+        self.assertIn('lane.get("dependency_owner") != "mgc-native"', workflow)
+        self.assertIn('lane.get("native_pm_verdict") != "native-pm-supported"', workflow)
+        self.assertIn("unexpected lane outside global v1.2 scope", workflow)
+        self.assertIn("from lifecycle_capability_matrix import (\n              ALL_STATUSES,\n              ALL_DIMENSIONS,\n              SCHEMA_VERSION,", workflow)
+        self.assertIn('data.get("schema_version") != SCHEMA_VERSION', workflow)
+        self.assertIn("LIFECYCLE_OWNER_VALUES,", workflow)
+        self.assertIn('lifecycle_owners = lane.get("lifecycle_owners")', workflow)
+        self.assertIn('owner != "mgc-native"', workflow)
+        self.assertIn("lifecycle_status_for_owner(owner)", workflow)
+        self.assertIn("framework_catalog_errors(data.get(\"framework_catalog\"), data[\"lanes\"])", workflow)
+        self.assertIn("required_dimensions_for_lane(*key)", workflow)
+        self.assertIn("if status not in ALL_STATUSES", workflow)
+        self.assertIn("for name in (source_required or ())", workflow)
+        self.assertIn("if dimensions.get(name) not in PASS_STATUSES", workflow)
+        self.assertIn("unknown_dimensions = sorted(set(dimensions) - set(ALL_DIMENSIONS))", workflow)
+        self.assertGreaterEqual(workflow.count('- "scripts/**"'), 2)
+        self.assertNotIn('RELEASE_SCOPE = {\n              ("web", "javascript")', workflow)
+
+    def test_lifecycle_workflow_loads_dimensions_before_owner_consistency_check(self):
+        workflow = (
+            Path(__file__).resolve().parent.parent
+            / ".github"
+            / "workflows"
+            / "lifecycle-matrix.yml"
+        ).read_text(encoding="utf-8")
+        dimensions_assignment = workflow.index(
+            'dimensions = lane.get("dimensions", {})'
+        )
+        owner_status_check = workflow.index(
+            'dimensions.get(dimension) != lifecycle_status_for_owner(owner)'
+        )
+        self.assertLess(dimensions_assignment, owner_status_check)
+        self.assertIn('if not isinstance(dimensions, dict):', workflow)
+
+    def test_native_verdict_requires_every_user_dependency_operation(self):
+        expected = {
+            "install", "add", "remove", "update", "list",
+            "frozen-install", "offline-reinstall", "gc",
+        }
+        self.assertEqual(set(NATIVE_PM_USER_OPERATIONS), expected)
+        self.assertTrue(expected.issubset(set(NATIVE_PM_REQUIRED_DIMENSIONS)))
+        for operation in expected:
+            with self.subTest(operation=operation):
+                dimensions, owners = evidence({operation: STATUS_UNSUPPORTED})
+                self.assertFalse(
+                    native_pm_supported("mgc-native", "native-engine", [], dimensions, owners)
+                )
+
+    def test_missing_owner_for_a_native_user_operation_blocks_claim(self):
+        dimensions, owners = evidence()
+        del owners["list"]
+        self.assertFalse(
+            native_pm_supported("mgc-native", "native-engine", [], dimensions, owners)
+        )
+
+    def test_owner_summary_never_presents_declared_native_owner_as_a_verdict(self):
+        output = io.StringIO()
+        with redirect_stdout(output):
+            print_dependency_owner_summary()
+        self.assertNotIn("native-pm-supported (ceiling)", output.getvalue())
+        self.assertIn("native evidence required; not a verdict", output.getvalue())
+        self.assertIn(
+            '"native_pm_verdict": "not-evaluated-without-lifecycle-evidence"',
+            output.getvalue(),
+        )
+
+    def test_integrity_verification_is_a_first_class_matrix_dimension(self):
+        self.assertIn("verify", ALL_DIMENSIONS)
+        self.assertTrue(set(NATIVE_PM_USER_OPERATIONS).issubset(ALL_DIMENSIONS))
+        self.assertEqual(len(ALL_DIMENSIONS), 23)
+        for lane in LANES:
+            with self.subTest(core=lane["core"], language=lane["language"]):
+                self.assertTrue(lane.get("owner_by_operation", {}).get("verify"))
+
+    def test_lifecycle_only_pass_does_not_claim_native_package_manager(self):
+        dimensions, owners = evidence(
+            {"store": STATUS_UNSUPPORTED, "offline-reinstall": STATUS_UNSUPPORTED}
+        )
+        self.assertFalse(native_pm_supported("mgc-native", "native-engine", [], dimensions, owners))
+
+    def test_missing_dependency_dimension_does_not_claim_native(self):
+        dimensions, owners = evidence()
+        del dimensions["fetch"]
+        self.assertFalse(native_pm_supported("mgc-native", "native-engine", [], dimensions, owners))
+
+    def test_missing_integrity_verification_evidence_does_not_claim_native(self):
+        dimensions, owners = evidence({"verify": STATUS_UNSUPPORTED})
+        self.assertFalse(native_pm_supported("mgc-native", "native-engine", [], dimensions, owners))
+
+    def test_delegated_integrity_verification_does_not_claim_native(self):
+        dimensions, owners = evidence(owners={"verify": "cargo"})
+        self.assertFalse(native_pm_supported("mgc-native", "native-engine", [], dimensions, owners))
+
+    def test_delegated_operation_does_not_claim_native(self):
+        dimensions, owners = evidence(owners={"fetch": "cargo"})
+        self.assertFalse(native_pm_supported("mgc-native", "native-engine", [], dimensions, owners))
+
+    def test_any_delegated_package_manager_blocks_native_claim(self):
+        dimensions, owners = evidence()
+        self.assertFalse(native_pm_supported("mgc-native", "native-engine", ["cargo"], dimensions, owners))
+
+    def test_complete_native_dependency_evidence_passes(self):
+        dimensions, owners = evidence()
+        self.assertTrue(native_pm_supported("mgc-native", "native-engine", [], dimensions, owners))
+
+
+class NativeFrameworkLifecycleCoverage(unittest.TestCase):
+    def test_framework_qualified_release_scope_uses_new_schema(self):
+        self.assertEqual(SCHEMA_VERSION, 7)
+
+    def catalog_record(self, framework, *, core="lib", status="mgc-engine-path", operations=None):
+        operation_owners = operations or {
+            operation: {"owner": "mgc-native"}
+            for operation in ALL_DEPENDENCY_OPERATIONS
+        }
+        return {
+            "core": core,
+            "framework": framework,
+            "status": status,
+            "dependency_ownership": operation_owners,
+            "evidence": "test fixture",
+        }
+
+    def test_catalog_native_framework_with_complete_lane_and_owners_passes(self):
+        lanes = [{"core": "lib", "framework_id": "rust"}]
+        self.assertEqual(
+            framework_catalog_errors(
+                [self.catalog_record("rust")], lanes
+            ),
+            [],
+        )
+
+    def test_catalog_scaffold_only_framework_blocks_promotion(self):
+        errors = framework_catalog_errors(
+            [self.catalog_record("django", status="scaffold-only")], []
+        )
+        self.assertTrue(any("scaffold-only" in error for error in errors))
+        self.assertTrue(any("no lifecycle evidence lane" in error for error in errors))
+
+    def test_catalog_framework_missing_dependency_owner_blocks_promotion(self):
+        operations = {
+            operation: {"owner": "mgc-native"}
+            for operation in ALL_DEPENDENCY_OPERATIONS
+        }
+        del operations["offline-reinstall"]
+        errors = framework_catalog_errors(
+            [self.catalog_record("rust", operations=operations)],
+            [{"core": "lib", "framework_id": "rust"}],
+        )
+        self.assertTrue(any("offline-reinstall" in error for error in errors))
+
+    def test_catalog_rejects_duplicate_or_unregistered_framework_identity(self):
+        lanes = [{"core": "lib", "framework_id": "rust"}]
+        errors = framework_catalog_errors(
+            [self.catalog_record("rust"), self.catalog_record("rust")],
+            [{"core": "lib", "framework_id": "go"}],
+        )
+        self.assertTrue(any("duplicate framework catalog" in error for error in errors))
+        self.assertTrue(any("not present in framework catalog" in error for error in errors))
+
+    def test_matrix_producer_requires_compiled_framework_and_owner_crosscheck(self):
+        source = (
+            Path(__file__).resolve().parent
+            / "lifecycle_capability_matrix.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("dep_gate_rc = validate_dep_gate_consistency(mgc_bin)", source)
+        self.assertIn('"framework_catalog": FRAMEWORK_QUALIFICATION_EVIDENCE', source)
+        self.assertIn("or dep_gate_rc != 0", source)
+
+    def test_lane_registry_rejects_duplicate_full_lane_identity(self):
+        duplicate = [dict(LANES[0]), dict(LANES[0])]
+        with self.assertRaisesRegex(ValueError, "duplicate core/language/framework"):
+            validate_lane_registry(duplicate)
+
+    def test_lane_registry_allows_distinct_frameworks_for_same_core_language(self):
+        first = dict(LANES[0])
+        second = dict(LANES[0], framework_id="rust-macro", framework_ids=["rust-macro"])
+        self.assertTrue(validate_lane_registry([first, second]))
+
+    def test_lane_registry_rejects_unknown_required_dimension(self):
+        invalid = [dict(LANES[0], required_dims=["not-a-dimension"])]
+        with self.assertRaisesRegex(ValueError, "unknown required dimension"):
+            validate_lane_registry(invalid)
+
+    def test_lane_registry_rejects_invalid_lifecycle_owner_override(self):
+        invalid = [dict(LANES[0], lifecycle_owner_overrides={"dev": "vite"})]
+        with self.assertRaisesRegex(ValueError, "invalid lifecycle owner override"):
+            validate_lane_registry(invalid)
+
+    def test_lane_registry_rejects_unproven_native_build_test_run_overrides(self):
+        for lane in LANES:
+            for dimension in ("build", "test", "run"):
+                invalid = dict(
+                    lane,
+                    lifecycle_owner_overrides={dimension: "mgc-native"},
+                )
+                with self.subTest(
+                    core=lane["core"],
+                    language=lane["language"],
+                    framework=lane.get("framework_id", ""),
+                    dimension=dimension,
+                ):
+                    with self.assertRaisesRegex(
+                        ValueError, "native lifecycle owner override lacks evidence"
+                    ):
+                        validate_lane_registry([invalid])
+
+    def test_lane_registry_rejects_framework_lane_mismatch(self):
+        invalid = [dict(LANES[0], framework_id="not-the-declared-id")]
+        with self.assertRaisesRegex(ValueError, "framework_id must match"):
+            validate_lane_registry(invalid)
+
+    def test_lane_registry_rejects_framework_ids_without_exact_binding(self):
+        invalid = [dict(LANES[0], framework_id=None)]
+        with self.assertRaisesRegex(ValueError, "requires an exact framework_id"):
+            validate_lane_registry(invalid)
+
+    def test_lane_registry_rejects_duplicate_framework_identity(self):
+        first = dict(LANES[0])
+        second = dict(LANES[1], framework_id=first["framework_id"],
+                      framework_ids=list(first["framework_ids"]))
+        with self.assertRaisesRegex(ValueError, "duplicate core/framework"):
+            validate_lane_registry([first, second])
+
+    def missing_native_lanes(self, source, lanes):
+        # Match one Rust struct literal only; matching a bare `}` can span
+        # adjacent records because each literal closes with `},`.
+        # Khớp đúng một struct literal; bare `}` sẽ nuốt nhiều record liền nhau.
+        records = re.findall(r"FrameworkRecord\s*\{(.*?)\n\s*\},", source, re.S)
+        native_frameworks = set()
+        for record in records:
+            if "FrameworkStatus::NativeEngine" not in record:
+                continue
+            core = re.search(r'core:\s*"([^"]+)"', record)
+            framework = re.search(r'framework:\s*"([^"]+)"', record)
+            self.assertIsNotNone(core, f"native framework record has no core: {record}")
+            self.assertIsNotNone(
+                framework, f"native framework record has no id: {record}"
+            )
+            native_frameworks.add((core.group(1), framework.group(1)))
+
+        covered = {
+            (lane["core"], framework)
+            for lane in lanes
+            for framework in lane.get("framework_ids", ())
+        }
+        return native_frameworks - covered
+
+    def test_every_native_engine_framework_has_a_lifecycle_lane(self):
+        # Registry engine routes need executable lifecycle lanes, not only
+        # per-operation declarations. Registry engine route phải có lane.
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "cli/src/commands/framework_records.rs").read_text(
+            encoding="utf-8"
+        )
+        missing = self.missing_native_lanes(source, LANES)
+        self.assertEqual(
+            missing,
+            set(),
+            "native engine framework(s) without lifecycle evidence lane: "
+            f"{sorted(missing)}",
+        )
+
+    def test_negative_control_detects_removed_cloud_framework_lanes(self):
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "cli/src/commands/framework_records.rs").read_text(
+            encoding="utf-8"
+        )
+        without_cloud = [lane for lane in LANES if lane["core"] != "clo"]
+        missing = self.missing_native_lanes(source, without_cloud)
+        self.assertEqual(missing, {("clo", "cdk"), ("clo", "pulumi")})
+
+    def test_framework_specific_lanes_bind_exactly_one_matching_id(self):
+        for lane in LANES:
+            framework_id = lane.get("framework_id")
+            if framework_id:
+                self.assertEqual(
+                    lane.get("framework_ids"),
+                    [framework_id],
+                    f"{lane['core']}/{lane['language']} must bind its exact framework",
+                )
+
+    def test_typescript_scaffold_requires_source_and_config_markers(self):
+        with tempfile.TemporaryDirectory() as sandbox:
+            project = Path(sandbox) / "test-web-ts"
+            project.mkdir()
+            (project / "index.html").write_text("<main></main>", encoding="utf-8")
+            self.assertFalse(
+                scaffold_language_matches(
+                    sandbox,
+                    project.name,
+                    "ts",
+                    ["index.html", "src/main.ts", "tsconfig.json"],
+                )
+            )
+            (project / "src").mkdir()
+            (project / "src/main.ts").write_text("export {}", encoding="utf-8")
+            (project / "tsconfig.json").write_text("{}", encoding="utf-8")
+            self.assertTrue(
+                scaffold_language_matches(
+                    sandbox,
+                    project.name,
+                    "ts",
+                    ["index.html", "src/main.ts", "tsconfig.json"],
+                )
+            )
+
+
+class MatrixProvenance(unittest.TestCase):
+    def test_run_sha_mismatch_is_rejected(self):
+        self.assertIsNotNone(evidence_commit_error("1" * 40, "2" * 40))
+
+    def test_matching_run_sha_is_accepted(self):
+        self.assertIsNone(evidence_commit_error("a" * 40, "a" * 40))
+
+    def test_local_run_without_expected_sha_remains_supported(self):
+        self.assertIsNone(evidence_commit_error("a" * 40, None))
+
+    def test_ci_run_without_expected_sha_is_rejected(self):
+        self.assertIsNotNone(evidence_commit_error("a" * 40, None, is_ci=True))
+
+    def test_ci_green_record_requires_sha_bound_to_run(self):
+        self.assertIsNotNone(
+            evidence_commit_error(
+                "a" * 40,
+                "a" * 40,
+                is_ci=True,
+                recorded_sha="b" * 40,
+                require_recorded=True,
+            )
+        )
+
+
+class PlatformGreenCounter(unittest.TestCase):
+    def test_lifecycle_output_has_a_runtime_platform_name(self):
+        self.assertTrue(lifecycle_platform_name())
+
+    def test_v12_platform_scope_covers_every_declared_core_language_lane(self):
+        self.assertEqual(
+            PLATFORM_EVIDENCE_RELEASE_SCOPE,
+            frozenset(
+                (lane["core"], lane["language"], lane.get("framework_id", ""))
+                for lane in LANES
+            ),
+        )
+
+    def green_matrix(self):
+        package_owners = {
+            **{operation: "mgc" for operation in NATIVE_PM_USER_OPERATIONS},
+            "resolve": "mgc",
+            "lock": "mgc",
+            "fetch": "mgc",
+            "verify": "mgc",
+            "store": "magicore-shared-cas",
+            "materialize": "mgc",
+        }
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "matrix_kind": "lifecycle",
+            "commit": "a" * 40,
+            "platform": "Windows",
+            "working_tree_clean": True,
+            "lanes": [
+                {
+                    "core": lane["core"],
+                    "language": lane["language"],
+                    "framework_id": lane.get("framework_id", ""),
+                    "verdict": "orchestration-lifecycle-passed",
+                    "toolchain_available": True,
+                    "required_dimensions": lane["required_dims"],
+                    "dimensions": {name: STATUS_NATIVE for name in ALL_DIMENSIONS},
+                    "lifecycle_owners": {
+                        name: "mgc-native" for name in lane["required_dims"]
+                    },
+                    "dependency_owner": "mgc-native",
+                    "install_owner": "native-engine",
+                    "native_pm_delegated": [],
+                    "native_pm_verdict": "native-pm-supported",
+                    "owner_by_operation": package_owners,
+                }
+                for lane in LANES
+            ],
+            "framework_catalog": [
+                {
+                    "core": lane["core"],
+                    "framework": lane["framework_id"],
+                    "status": "mgc-engine-path",
+                    "dependency_ownership": {
+                        operation: {"owner": "mgc-native"}
+                        for operation in ALL_DEPENDENCY_OPERATIONS
+                    },
+                    "evidence": "synthetic passing test fixture",
+                }
+                for lane in LANES
+                if lane.get("framework_id")
+            ],
+        }
+
+    def test_only_complete_release_scope_can_record_platform_green(self):
+        # A fully native hypothetical source contract may pass the gate. The
+        # current repository's real source contract remains delegated for
+        # build/test/run and is tested separately below.
+        with patch("lifecycle_capability_matrix.lifecycle_owner_for", return_value="mgc-native"):
+            self.assertEqual(
+                platform_evidence_errors(
+                    self.green_matrix(), "a" * 40, current_tree_clean=True
+                ),
+                [],
+            )
+
+    def test_current_checkout_must_still_be_clean_when_recording_green(self):
+        errors = platform_evidence_errors(
+            self.green_matrix(), "a" * 40, current_tree_clean=False
+        )
+        self.assertTrue(any("current checkout" in error for error in errors))
+
+    def test_platform_green_rejects_unproven_native_claim_outside_old_scope(self):
+        matrix = self.green_matrix()
+        matrix["lanes"].append(
+            {
+                "core": "lib",
+                "language": "java",
+                "dependency_owner": "mgc-native",
+                "native_pm_verdict": "not-native-pm",
+            }
+        )
+        errors = platform_evidence_errors(
+            matrix, "a" * 40, current_tree_clean=True
+        )
+        self.assertTrue(any("lib/java declares mgc-native" in error for error in errors))
+
+    def test_platform_green_rejects_unsupported_or_delegated_lane(self):
+        matrix = self.green_matrix()
+        lane = matrix["lanes"][0]
+        lane["dependency_owner"] = "delegated"
+        lane["install_owner"] = "plain-delegation"
+        lane["native_pm_verdict"] = "compatibility-passed"
+        errors = platform_evidence_errors(
+            matrix, "a" * 40, current_tree_clean=True
+        )
+        self.assertTrue(any("requires mgc-native ownership" in error for error in errors))
+
+    def test_platform_green_rejects_lane_without_its_required_toolchain(self):
+        matrix = self.green_matrix()
+        matrix["lanes"][0]["toolchain_available"] = False
+        errors = platform_evidence_errors(
+            matrix, "a" * 40, current_tree_clean=True
+        )
+        self.assertTrue(any("toolchain is unavailable" in error for error in errors))
+
+    def test_lane_cannot_shrink_source_required_dimensions(self):
+        matrix = self.green_matrix()
+        lane = next(
+            lane for lane in matrix["lanes"]
+            if (lane["core"], lane["language"]) == ("web", "javascript")
+        )
+        lane["required_dimensions"] = ["create"]
+        lane["dimensions"]["dev"] = STATUS_UNSUPPORTED
+        errors = platform_evidence_errors(
+            matrix, "a" * 40, current_tree_clean=True
+        )
+        self.assertTrue(any("required dimensions differ from source contract" in error for error in errors))
+        self.assertTrue(any("dev=unsupported" in error for error in errors))
+
+    def test_explicitly_non_applicable_dimension_may_be_unsupported(self):
+        matrix = self.green_matrix()
+        lane = next(
+            lane for lane in matrix["lanes"]
+            if (lane["core"], lane["language"]) == ("lib", "rust")
+        )
+        lane["dimensions"]["dev"] = STATUS_UNSUPPORTED
+        errors = platform_evidence_errors(
+            matrix, "a" * 40, current_tree_clean=True
+        )
+        self.assertFalse(any("dimension dev" in error for error in errors))
+
+    def test_unknown_dimension_cannot_be_added_outside_the_v12_contract(self):
+        matrix = self.green_matrix()
+        matrix["lanes"][0]["dimensions"]["shadow-security"] = STATUS_NATIVE
+        errors = platform_evidence_errors(
+            matrix, "a" * 40, current_tree_clean=True
+        )
+        self.assertTrue(any("unknown dimensions" in error for error in errors))
+
+    def test_dirty_or_unknown_source_tree_cannot_record_platform_green(self):
+        for value in (False, None):
+            with self.subTest(working_tree_clean=value):
+                matrix = self.green_matrix()
+                if value is None:
+                    del matrix["working_tree_clean"]
+                else:
+                    matrix["working_tree_clean"] = value
+                errors = platform_evidence_errors(
+                    matrix, "a" * 40, current_tree_clean=True
+                )
+                self.assertTrue(any("working tree" in error for error in errors))
+
+    def test_stack_overflow_lane_cannot_increment_green_counter(self):
+        matrix = self.green_matrix()
+        matrix["lanes"][0]["dimensions"]["create"] = STATUS_FAILED
+        matrix["lanes"][0]["verdict"] = "partial"
+        errors = platform_evidence_errors(
+            matrix, "a" * 40, current_tree_clean=True
+        )
+        self.assertTrue(any("create" in error for error in errors))
+
+    def test_missing_release_lane_cannot_increment_green_counter(self):
+        matrix = self.green_matrix()
+        matrix["lanes"].pop()
+        self.assertTrue(
+            platform_evidence_errors(
+                matrix, "a" * 40, current_tree_clean=True
+            )
+        )
+
+    def test_missing_full_framework_inventory_cannot_increment_green_counter(self):
+        matrix = self.green_matrix()
+        del matrix["framework_catalog"]
+        errors = platform_evidence_errors(
+            matrix, "a" * 40, current_tree_clean=True
+        )
+        self.assertTrue(any("framework catalog" in error for error in errors))
+
+    def test_framework_id_is_part_of_release_evidence_identity(self):
+        matrix = self.green_matrix()
+        cdk = next(
+            lane for lane in matrix["lanes"]
+            if lane["core"] == "clo" and lane.get("framework_id") == "cdk"
+        )
+        cdk["framework_id"] = ""
+        errors = platform_evidence_errors(
+            matrix, "a" * 40, current_tree_clean=True
+        )
+        self.assertTrue(any("outside global v1.2 scope" in error for error in errors))
+        self.assertTrue(any("clo/cdk" in error and "missing" in error for error in errors))
+
+    def test_delegated_required_lifecycle_dimension_blocks_promotion(self):
+        matrix = self.green_matrix()
+        lane = next(
+            lane for lane in matrix["lanes"]
+            if lane["core"] == "app" and lane["language"] == "flutter"
+        )
+        lane["lifecycle_owners"]["build"] = "plain-delegation"
+        errors = platform_evidence_errors(
+            matrix, "a" * 40, current_tree_clean=True
+        )
+        self.assertTrue(any("build" in error and "MGC-native" in error for error in errors))
+
+    def test_native_lifecycle_status_must_match_declared_owner(self):
+        matrix = self.green_matrix()
+        lane = next(
+            lane for lane in matrix["lanes"]
+            if lane["core"] == "app" and lane["language"] == "flutter"
+        )
+        lane["dimensions"]["build"] = STATUS_PLAIN
+        errors = platform_evidence_errors(
+            matrix, "a" * 40, current_tree_clean=True
+        )
+        self.assertTrue(any("status/owner mismatch for build" in error for error in errors))
+
+    def test_platform_evidence_rejects_owner_claim_not_in_source_registry(self):
+        matrix = self.green_matrix()
+        lane = next(
+            lane for lane in matrix["lanes"]
+            if lane["core"] == "app" and lane["language"] == "flutter"
+        )
+        lane["lifecycle_owners"]["build"] = "mgc-native"
+        lane["dimensions"]["build"] = STATUS_NATIVE
+        errors = platform_evidence_errors(
+            matrix, "a" * 40, current_tree_clean=True
+        )
+        self.assertTrue(
+            any("lifecycle owner differs from source contract for build" in error for error in errors)
+        )
+
+    def test_lifecycle_owner_status_mapping_is_fail_closed(self):
+        self.assertEqual(lifecycle_status_for_owner("mgc-native"), STATUS_NATIVE)
+        self.assertEqual(lifecycle_status_for_owner("plain-delegation"), STATUS_PLAIN)
+        self.assertEqual(lifecycle_status_for_owner("unknown"), STATUS_UNVERIFIED)
+
+    def test_external_test_and_build_wrappers_are_not_native_evidence(self):
+        for lane in LANES:
+            for dimension in ("test", "build", "run"):
+                with self.subTest(core=lane["core"], language=lane["language"], dimension=dimension):
+                    owner = lifecycle_owner_for(lane, dimension)
+                    self.assertEqual(owner, "plain-delegation")
+                    self.assertEqual(lifecycle_pass_status(lane, dimension), STATUS_PLAIN)
+
+    def test_only_explicit_mgc_dev_server_lane_gets_native_dev_owner(self):
+        web = next(
+            lane for lane in LANES
+            if lane["core"] == "web" and lane["language"] == "javascript"
+        )
+        other = next(lane for lane in LANES if lane is not web)
+        self.assertEqual(lifecycle_owner_for(web, "dev"), "mgc-native")
+        self.assertEqual(lifecycle_pass_status(web, "dev"), STATUS_NATIVE)
+        self.assertEqual(lifecycle_owner_for(other, "dev"), "unverified")
+        self.assertEqual(lifecycle_pass_status(other, "dev"), STATUS_UNVERIFIED)
+
+    def test_missing_lifecycle_owner_is_unverified_not_native(self):
+        lane = {"lifecycle_owners": {}}
+        self.assertEqual(lifecycle_owner_for(lane, "optimizer"), "unverified")
+        self.assertEqual(lifecycle_pass_status(lane, "optimizer"), STATUS_UNVERIFIED)
+
+    def test_matrix_from_another_checkout_cannot_increment_green_counter(self):
+        self.assertTrue(
+            platform_evidence_errors(
+                self.green_matrix(), "b" * 40, current_tree_clean=True
+            )
+        )
+
+    def test_matrix_from_another_schema_cannot_increment_green_counter(self):
+        matrix = self.green_matrix()
+        matrix["schema_version"] = SCHEMA_VERSION - 1
+        errors = platform_evidence_errors(
+            matrix, "a" * 40, current_tree_clean=True
+        )
+        self.assertTrue(any("schema_version" in error for error in errors))
+
+    def test_missing_required_dimension_cannot_increment_green_counter(self):
+        matrix = self.green_matrix()
+        del matrix["lanes"][0]["dimensions"]["install"]
+        self.assertTrue(
+            platform_evidence_errors(
+                matrix, "a" * 40, current_tree_clean=True
+            )
+        )
+
+    def test_record_green_rejects_unknown_platform_key(self):
+        with patch("lifecycle_capability_matrix._fail", side_effect=SystemExit):
+            with self.assertRaises(SystemExit):
+                record_platform_green("macos-arm64")
+
+    def test_record_green_refuses_dirty_checkout_without_writing_counter(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            matrix_path = Path(temp_dir) / "matrix.json"
+            matrix_path.write_text(json.dumps(self.green_matrix()), encoding="utf-8")
+            with (
+                patch.dict(
+                    "os.environ",
+                    {
+                        "MGC_LIFECYCLE_MATRIX_OUT": str(matrix_path),
+                        "MGC_PLATFORM_EVIDENCE_SHA": "a" * 40,
+                        "CI": "true",
+                    },
+                    clear=True,
+                ),
+                patch(
+                    "lifecycle_capability_matrix.subprocess.run",
+                    return_value=subprocess.CompletedProcess(
+                        ["git"], 0, stdout="a" * 40, stderr=""
+                    ),
+                ),
+                patch(
+                    "lifecycle_capability_matrix.lifecycle_working_tree_clean",
+                    return_value=False,
+                ),
+                patch("lifecycle_capability_matrix._platform_evidence_write") as write,
+                patch("lifecycle_capability_matrix._fail", side_effect=SystemExit),
+            ):
+                with self.assertRaises(SystemExit):
+                    record_platform_green("windows-latest")
+                write.assert_not_called()
+
+    def test_record_green_refuses_workflow_sha_mismatch_without_writing(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            matrix_path = Path(temp_dir) / "matrix.json"
+            matrix_path.write_text(json.dumps(self.green_matrix()), encoding="utf-8")
+            with (
+                patch.dict(
+                    "os.environ",
+                    {
+                        "MGC_LIFECYCLE_MATRIX_OUT": str(matrix_path),
+                        "MGC_PLATFORM_EVIDENCE_SHA": "b" * 40,
+                        "CI": "true",
+                    },
+                    clear=True,
+                ),
+                patch(
+                    "lifecycle_capability_matrix.subprocess.run",
+                    return_value=subprocess.CompletedProcess(
+                        ["git"], 0, stdout="a" * 40, stderr=""
+                    ),
+                ),
+                patch(
+                    "lifecycle_capability_matrix.lifecycle_working_tree_clean",
+                    return_value=True,
+                ),
+                patch("lifecycle_capability_matrix._platform_evidence_write") as write,
+                patch("lifecycle_capability_matrix._fail", side_effect=SystemExit),
+            ):
+                with self.assertRaises(SystemExit):
+                    record_platform_green("windows-latest")
+                write.assert_not_called()
+
+    def test_record_green_increments_only_a_clean_same_sha_matrix(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            matrix_path = Path(temp_dir) / "matrix.json"
+            matrix_path.write_text(json.dumps(self.green_matrix()), encoding="utf-8")
+            with (
+                patch.dict(
+                    "os.environ",
+                    {
+                        "MGC_LIFECYCLE_MATRIX_OUT": str(matrix_path),
+                        "MGC_PLATFORM_EVIDENCE_SHA": "a" * 40,
+                        "CI": "true",
+                    },
+                    clear=True,
+                ),
+                patch(
+                    "lifecycle_capability_matrix.subprocess.run",
+                    return_value=subprocess.CompletedProcess(
+                        ["git"], 0, stdout="a" * 40, stderr=""
+                    ),
+                ),
+                patch(
+                    "lifecycle_capability_matrix.lifecycle_working_tree_clean",
+                    return_value=True,
+                ),
+                patch(
+                    "lifecycle_capability_matrix.lifecycle_owner_for",
+                    return_value="mgc-native",
+                ),
+                patch(
+                    "lifecycle_capability_matrix._platform_evidence_load",
+                    return_value={"windows-latest": {"runs": 2}},
+                ),
+                patch("lifecycle_capability_matrix._platform_evidence_write") as write,
+            ):
+                self.assertEqual(record_platform_green("windows-latest"), 0)
+                written = write.call_args.args[0]
+                self.assertEqual(written["windows-latest"]["runs"], 3)
+                self.assertEqual(
+                    written["windows-latest"]["last_green_sha"], "a" * 40
+                )
+
+    def test_ci_green_record_rejects_missing_recorded_sha(self):
+        self.assertIsNotNone(
+            evidence_commit_error(
+                "a" * 40,
+                "a" * 40,
+                is_ci=True,
+                recorded_sha=None,
+                require_recorded=True,
+            )
+        )
+
+
+class ProvenanceMatrixCleanliness(unittest.TestCase):
+    def test_dirty_or_legacy_matrix_cannot_bind_to_current_head(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            matrix_path = Path(temp_dir) / "matrix.json"
+            base = {"commit": "a" * 40, "working_tree_clean": True}
+            for matrix, clean in (
+                (base, False),
+                ({"commit": "a" * 40}, True),
+            ):
+                with self.subTest(matrix=matrix, clean=clean):
+                    matrix_path.write_text(json.dumps(matrix), encoding="utf-8")
+                    with (
+                        patch("provenance_chain.MATRIX_PATH", matrix_path),
+                        patch("provenance_chain._working_tree_clean", return_value=clean),
+                    ):
+                        self.assertEqual(_matrix_sha_for_head("a" * 40), (None, False))
+
+
+class WorkingTreeCleanProbe(unittest.TestCase):
+    @patch("lifecycle_capability_matrix.subprocess.run")
+    def test_clean_probe_fails_closed_for_dirty_git_and_command_errors(self, run):
+        run.return_value.returncode = 0
+        run.return_value.stdout = ""
+        self.assertTrue(lifecycle_working_tree_clean())
+
+        run.return_value.stdout = " M cli/src/main.rs\n"
+        self.assertFalse(lifecycle_working_tree_clean())
+
+        run.return_value.stdout = ""
+        run.return_value.returncode = 128
+        self.assertFalse(lifecycle_working_tree_clean())
+
+        run.side_effect = OSError("git unavailable")
+        self.assertFalse(lifecycle_working_tree_clean())
+
+    @patch("lifecycle_capability_matrix.subprocess.run")
+    def test_matrix_source_must_remain_clean_at_the_same_commit(self, run):
+        clean = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        same_head = subprocess.CompletedProcess([], 0, stdout="a" * 40, stderr="")
+        other_head = subprocess.CompletedProcess([], 0, stdout="b" * 40, stderr="")
+        failed_git = subprocess.CompletedProcess([], 128, stdout="", stderr="fatal")
+
+        run.side_effect = [clean, same_head]
+        self.assertTrue(lifecycle_source_matches("a" * 40, True))
+
+        run.side_effect = [
+            subprocess.CompletedProcess([], 0, stdout=" M cli/src/main.rs", stderr="")
+        ]
+        self.assertFalse(lifecycle_source_matches("a" * 40, True))
+
+        run.side_effect = [clean, other_head]
+        self.assertFalse(lifecycle_source_matches("a" * 40, True))
+
+        run.side_effect = [clean, failed_git]
+        self.assertFalse(lifecycle_source_matches("a" * 40, True))
+
+        run.reset_mock()
+        self.assertFalse(lifecycle_source_matches("a" * 40, False))
+        run.assert_not_called()
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

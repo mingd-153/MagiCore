@@ -2,7 +2,57 @@
 //! Helper chính sách lifecycle — gom cổng env và trust để install orchestrator gọn hơn.
 
 use mgc_store::{Database, Layout};
-use mgc_types::MgError;
+use mgc_types::{MgError, PackageId};
+use std::collections::HashMap;
+use std::path::PathBuf;
+
+/// Resolved package identity paired with its materialized directory.
+/// Package identity comes from MGC's graph, never package-controlled JSON.
+/// Định danh lấy từ graph đã resolve, không tin trường JSON do package tự khai.
+#[derive(Debug, Clone)]
+pub struct LifecyclePackage {
+    pub package_id: PackageId,
+    pub directory: PathBuf,
+}
+
+impl LifecyclePackage {
+    pub fn new(package_id: PackageId, directory: PathBuf) -> Self {
+        Self {
+            package_id,
+            directory,
+        }
+    }
+}
+
+/// Read lifecycle hook presence without following package.json symlinks.
+/// Malformed or unreadable metadata is an install error, never "no scripts".
+/// Đọc hook không theo symlink; metadata hỏng không được coi là không có script.
+pub fn manifest_has_lifecycle_scripts(package_dir: &std::path::Path) -> Result<bool, MgError> {
+    Ok(crate::lifecycle::load_package_scripts(package_dir)?.has_hooks())
+}
+
+/// Resolve the single trust decision from MGC's resolved package identity.
+/// Manifest `name`/`version` are intentionally excluded because archives control them.
+/// Quyết định trust dùng PackageId của MGC; archive không được tự chọn khóa policy.
+pub fn decide_lifecycle_scripts(
+    package_id: &PackageId,
+    file_policy: Option<&mgc_config::project::ScriptsPolicy>,
+    trust_map: &HashMap<String, String>,
+    blanket_scripts: bool,
+) -> mgc_config::project::ScriptVerdict {
+    let resolved_key = package_id.to_string();
+    let trust_policy = trust_map
+        .get(&resolved_key)
+        .or_else(|| trust_map.get(package_id.name_str()))
+        .map(String::as_str);
+    mgc_config::project::decide_scripts(
+        package_id.name_str(),
+        &package_id.version().to_string(),
+        file_policy,
+        trust_policy,
+        blanket_scripts,
+    )
+}
 
 pub fn lifecycle_scripts_allowed() -> bool {
     std::env::var("MAGICORE_WEB_ALLOW_SCRIPTS")

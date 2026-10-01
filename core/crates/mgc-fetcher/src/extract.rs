@@ -192,8 +192,10 @@ pub fn extract_tarball_to_cas_and_link<R: Read>(
     if let Some((db, project_root, generation)) = claim {
         let mut conn = std::collections::HashSet::new();
         std::mem::swap(&mut conn, &mut imported.lock().expect("lock poisoned"));
-        let mut first_claim = true;
-        for name in conn {
+        let mut hashes: Vec<String> = conn.into_iter().collect();
+        hashes.sort_unstable();
+        let hash_refs: Vec<&str> = hashes.iter().map(String::as_str).collect();
+        if !hashes.is_empty() {
             // Fail-closed claims (Gate 11-A, P0-6 of vòng-11 audit): the
             // old code logged a claim failure as a warning and continued,
             // with a comment claiming the end-of-install promote would
@@ -216,19 +218,16 @@ pub fn extract_tarball_to_cas_and_link<R: Read>(
             // promote của install này nghỉ hưu. Install có claim mà ghi
             // claim fail PHẢI FAIL extraction — claim thừa an toàn, claim
             // thiếu là mất dữ liệu.)
-            db.cas_claim(project_root, generation, &name)?;
+            db.cas_claim_batch(project_root, generation, &hash_refs)?;
             // Test-only failpoint (Gate 11-B.2): park right after the FIRST
-            // claim commits — a kill here leaves a claim-ful staging
+            // tarball claim batch commits — a kill here leaves a claim-ful staging
             // generation (STALE when the baseline's promoted refset already
             // covers the hash, RETAINED otherwise — classifier decides).
-            // (Failpoint chỉ-cho-test: đỗ ngay sau khi claim ĐẦU TIÊN commit
+            // (Failpoint chỉ-cho-test: đỗ ngay sau batch claim đầu tiên commit
             // — kill ở đây để lại staging generation có claim (STALE khi
             // refset promoted của baseline đã phủ hash, còn không RETAINED —
             // classifier quyết định).)
-            if first_claim {
-                first_claim = false;
-                mgc_store::failpoint::hit("after-first-claim");
-            }
+            mgc_store::failpoint::hit("after-first-claim");
         }
     }
 

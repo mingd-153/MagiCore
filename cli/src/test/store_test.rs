@@ -5,6 +5,61 @@
 
 use super::*;
 
+#[test]
+fn web_store_operations_require_a_consistent_web_project_identity() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(
+        root.path().join("mgc.toml"),
+        "name='web-app'\necosystem='web'\n",
+    )
+    .unwrap();
+    std::fs::write(root.path().join(".mgc.core"), "web\n").unwrap();
+    assert!(ensure_web_store_owner(root.path()).is_ok());
+
+    let marker_only = tempfile::tempdir().unwrap();
+    std::fs::write(marker_only.path().join(".mgc.core"), "web\n").unwrap();
+    assert!(ensure_web_store_owner(marker_only.path()).is_ok());
+
+    let config_only = tempfile::tempdir().unwrap();
+    std::fs::write(
+        config_only.path().join("mgc.toml"),
+        "name='web-app'\necosystem='web'\n",
+    )
+    .unwrap();
+    assert!(ensure_web_store_owner(config_only.path()).is_err());
+
+    std::fs::write(
+        root.path().join("mgc.toml"),
+        "name='python-app'\necosystem='ai'\n",
+    )
+    .unwrap();
+    assert!(ensure_web_store_owner(root.path()).is_err());
+
+    let non_web = tempfile::tempdir().unwrap();
+    std::fs::write(
+        non_web.path().join("mgc.toml"),
+        "name='python-app'\necosystem='ai'\n",
+    )
+    .unwrap();
+    std::fs::write(non_web.path().join(".mgc.core"), "ai\n").unwrap();
+    assert!(ensure_web_store_owner(non_web.path()).is_err());
+}
+
+#[test]
+fn web_store_operations_reject_missing_or_conflicting_identity() {
+    let missing = tempfile::tempdir().unwrap();
+    assert!(ensure_web_store_owner(missing.path()).is_err());
+
+    let conflict = tempfile::tempdir().unwrap();
+    std::fs::write(
+        conflict.path().join("mgc.toml"),
+        "name='app'\necosystem='app'\n",
+    )
+    .unwrap();
+    std::fs::write(conflict.path().join(".mgc.core"), "web\n").unwrap();
+    assert!(ensure_web_store_owner(conflict.path()).is_err());
+}
+
 /// Current UNIX seconds — shared by the pid/lease-liveness tests.
 /// (Giây UNIX hiện tại — dùng chung cho test pid/lease-còn-sống.)
 fn now_secs() -> i64 {

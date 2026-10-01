@@ -1,5 +1,6 @@
 //! Gradle build.gradle / build.gradle.kts manifest parsing.
 
+use mgc_adapter_base::project_file::{atomic_write_project_regular, read_project_regular_text};
 use mgc_types::{Manifest, MgError, MgResult};
 use std::path::Path;
 
@@ -56,16 +57,108 @@ pub struct CatalogEntry {
 /// skipped honestly; only resolvable `module + version` pins surface.
 /// (Đọc version catalog TOML.)
 pub fn parse_version_catalog(project_root: &Path) -> Option<Vec<CatalogEntry>> {
-    let content = std::fs::read_to_string(project_root.join("gradle/libs.versions.toml")).ok()?;
-    let doc: toml::Value = toml::from_str(&content).ok()?;
+    let content = read_project_regular_text(
+        project_root,
+        Path::new("gradle/libs.versions.toml"),
+        "libs.versions.toml",
+    )
+    .ok()?;
+    parse_catalog_content(&content)
+}
+
+/// Bump one catalog pin to a new version: version-ref entries rewrite
+/// the `[versions]` value (shared refs bump together — reported), inline
+/// literals rewrite in place. Verifies by re-parse (the pin must read
+/// back the new version) and returns whether anything changed.
+/// (Nâng version catalog + verify bằng đọc lại.)
+pub fn bump_catalog_pin(
+    project_root: &Path,
+    group: &str,
+    artifact: &str,
+    new_version: &str,
+) -> MgResult<bool> {
+    let content = read_project_regular_text(
+        project_root,
+        Path::new("gradle/libs.versions.toml"),
+        "libs.versions.toml",
+    )?;
+    let entries = parse_catalog_content(&content)
+        .ok_or_else(|| MgError::Other("unsupported libs.versions.toml shape".to_string()))?;
+    let hit = entries
+        .iter()
+        .find(|e| e.group == group && e.artifact == artifact);
+    let Some(hit) = hit else {
+        return Ok(false);
+    };
+    if hit.version == new_version {
+        return Ok(false);
+    }
+    let mut editable: toml_edit::DocumentMut = content
+        .parse()
+        .map_err(|e| MgError::Other(format!("parse editable libs.versions.toml: {e}")))?;
+    if let Some(ref_name) = &hit.version_ref {
+        let source: toml::Value = toml::from_str(&content)
+            .map_err(|e| MgError::Other(format!("parse libs.versions.toml: {e}")))?;
+        if count_version_ref_uses(&source, ref_name) > 1 {
+            return Err(MgError::Unsupported {
+                core: "app",
+                capability: "bump-shared-gradle-version-ref",
+                guidance: format!(
+                    "version ref '{ref_name}' is shared by multiple catalog entries; refusing to change unrelated dependencies through a single-package update"
+                ),
+            });
+        }
+        // Shared ref: rewrite the single [versions] value.
+        editable["versions"][ref_name] = toml_edit::value(new_version);
+    } else {
+        // Inline literal: rewrite `group:name:old` → `group:name:new`
+        // inside [libraries] only (TOML-structure-aware, not blind text).
+        let library = &mut editable["libraries"][&hit.alias];
+        if let Some(value) = library.as_value_mut().filter(|value| value.is_str()) {
+            let mut replacement =
+                toml_edit::Value::from(format!("{group}:{artifact}:{new_version}"));
+            *replacement.decor_mut() = value.decor().clone();
+            *value = replacement;
+        } else if library.is_inline_table() {
+            library["version"] = toml_edit::value(new_version);
+        } else {
+            return Err(MgError::Other(format!(
+                "catalog pin {group}:{artifact} has unsupported editable shape"
+            )));
+        }
+    }
+    let next = editable.to_string();
+    atomic_write_project_regular(
+        project_root,
+        Path::new("gradle/libs.versions.toml"),
+        next.as_bytes(),
+    )?;
+    // Verify by re-parse: the pin must read back the new version.
+    let verified = read_project_regular_text(
+        project_root,
+        Path::new("gradle/libs.versions.toml"),
+        "libs.versions.toml",
+    )?;
+    let again = parse_catalog_content(&verified).unwrap_or_default();
+    let ok = again
+        .iter()
+        .any(|e| e.group == group && e.artifact == artifact && e.version == new_version);
+    if !ok {
+        return Err(MgError::Other(format!(
+            "catalog rewrite did not stick for {group}:{artifact} (fail-closed)"
+        )));
+    }
+    Ok(true)
+}
+
+fn parse_catalog_content(content: &str) -> Option<Vec<CatalogEntry>> {
+    let doc: toml::Value = toml::from_str(content).ok()?;
     let versions = doc.get("versions")?.as_table()?;
     let libraries = doc.get("libraries")?.as_table()?;
     let mut out = Vec::new();
     for (alias, spec) in libraries {
-        // (version_string, version_ref)
         let (module, version, version_ref): (String, String, Option<String>) = match spec {
             toml::Value::String(s) => {
-                // Inline `group:name:version`.
                 let mut parts = s.rsplitn(2, ':');
                 let (Some(version), Some(module)) = (parts.next(), parts.next()) else {
                     continue;
@@ -82,7 +175,6 @@ pub fn parse_version_catalog(project_root: &Path) -> Option<Vec<CatalogEntry>> {
                 match t.get("version") {
                     Some(toml::Value::String(v)) => (module.to_string(), v.clone(), None),
                     Some(other) => {
-                        // `version = { ref = "name" }`.
                         let Some(r) = other.get("ref").and_then(|x| x.as_str()) else {
                             continue;
                         };
@@ -114,87 +206,26 @@ pub fn parse_version_catalog(project_root: &Path) -> Option<Vec<CatalogEntry>> {
     Some(out)
 }
 
-/// Bump one catalog pin to a new version: version-ref entries rewrite
-/// the `[versions]` value (shared refs bump together — reported), inline
-/// literals rewrite in place. Verifies by re-parse (the pin must read
-/// back the new version) and returns whether anything changed.
-/// (Nâng version catalog + verify bằng đọc lại.)
-pub fn bump_catalog_pin(
-    project_root: &Path,
-    group: &str,
-    artifact: &str,
-    new_version: &str,
-) -> MgResult<bool> {
-    let path = project_root.join("gradle/libs.versions.toml");
-    let content = std::fs::read_to_string(&path)
-        .map_err(|e| MgError::Other(format!("read libs.versions.toml: {e}")))?;
-    let mut doc: toml::Value = toml::from_str(&content)
-        .map_err(|e| MgError::Other(format!("parse libs.versions.toml: {e}")))?;
-    let entries = parse_version_catalog(project_root).unwrap_or_default();
-    let hit = entries
-        .iter()
-        .find(|e| e.group == group && e.artifact == artifact);
-    let Some(hit) = hit else {
-        return Ok(false);
-    };
-    if hit.version == new_version {
-        return Ok(false);
-    }
-    if let Some(ref_name) = &hit.version_ref {
-        // Shared ref: rewrite the single [versions] value.
-        let versions = doc
-            .get_mut("versions")
-            .and_then(|v| v.as_table_mut())
-            .ok_or_else(|| MgError::Other("catalog has no [versions] table".to_string()))?;
-        versions.insert(
-            ref_name.clone(),
-            toml::Value::String(new_version.to_string()),
-        );
-    } else {
-        // Inline literal: rewrite `group:name:old` → `group:name:new`
-        // inside [libraries] only (TOML-structure-aware, not blind text).
-        let libraries = doc
-            .get_mut("libraries")
-            .and_then(|v| v.as_table_mut())
-            .ok_or_else(|| MgError::Other("catalog has no [libraries] table".to_string()))?;
-        let mut done = false;
-        for (_alias, spec) in libraries.iter_mut() {
-            match spec {
-                toml::Value::String(s) if s.starts_with(&format!("{group}:{artifact}:")) => {
-                    *s = format!("{group}:{artifact}:{new_version}");
-                    done = true;
-                }
-                toml::Value::Table(t) => {
-                    if t.get("module").and_then(|m| m.as_str())
-                        == Some(&format!("{group}:{artifact}"))
-                        && let Some(toml::Value::String(v)) = t.get_mut("version")
-                    {
-                        *v = new_version.to_string();
-                        done = true;
-                    }
-                }
-                _ => {}
-            }
+fn count_version_ref_uses(value: &toml::Value, ref_name: &str) -> usize {
+    match value {
+        toml::Value::Table(table) => {
+            let current = usize::from(
+                table
+                    .get("version")
+                    .and_then(|version| version.get("ref"))
+                    .and_then(toml::Value::as_str)
+                    == Some(ref_name),
+            );
+            current
+                + table
+                    .values()
+                    .map(|child| count_version_ref_uses(child, ref_name))
+                    .sum::<usize>()
         }
-        if !done {
-            return Err(MgError::Other(format!(
-                "catalog pin {group}:{artifact} not found for rewrite (fail-closed)"
-            )));
-        }
+        toml::Value::Array(items) => items
+            .iter()
+            .map(|child| count_version_ref_uses(child, ref_name))
+            .sum(),
+        _ => 0,
     }
-    let next = toml::to_string_pretty(&doc)
-        .map_err(|e| MgError::Other(format!("serialize libs.versions.toml: {e}")))?;
-    std::fs::write(&path, &next)
-        .map_err(|e| MgError::Other(format!("write libs.versions.toml: {e}")))?;
-    // Verify by re-parse: the pin must read back the new version.
-    let again = parse_version_catalog(project_root).unwrap_or_default();
-    let ok = again
-        .iter()
-        .any(|e| e.group == group && e.artifact == artifact && e.version == new_version);
-    if !ok {
-        return Err(MgError::Other(format!(
-            "catalog rewrite did not stick for {group}:{artifact} (fail-closed)"
-        )));
-    }
-    Ok(true)
 }

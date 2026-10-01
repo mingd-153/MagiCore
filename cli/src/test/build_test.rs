@@ -45,6 +45,59 @@ fn execution_lane_drives_default_build_target() {
 }
 
 #[test]
+fn standalone_rust_fast_path_requires_no_mgc_project_identity() {
+    let plain = tempfile::tempdir().unwrap();
+    fs::write(
+        plain.path().join("Cargo.toml"),
+        "[package]\nname='plain'\nversion='0.1.0'\n",
+    )
+    .unwrap();
+    assert!(should_use_legacy_rust_build(plain.path()).unwrap());
+
+    let configured = tempfile::tempdir().unwrap();
+    fs::write(
+        configured.path().join("Cargo.toml"),
+        "[package]\nname='ai-project'\nversion='0.1.0'\n",
+    )
+    .unwrap();
+    mgc_config::project::ProjectConfig::new("ai-project", "ai")
+        .save(configured.path())
+        .unwrap();
+    fs::remove_file(configured.path().join(".mgc.core")).unwrap();
+    assert!(!should_use_legacy_rust_build(configured.path()).unwrap());
+}
+
+#[test]
+fn build_rejects_legacy_compat_runtime_before_core_dispatch() {
+    let native = crate::commands::compat::CompatMode::Native;
+    assert!(ensure_native_build_mode(&native).is_ok());
+
+    for runtime in ["bun", "deno"] {
+        let mode = crate::commands::compat::CompatMode::Explicit(runtime.to_string());
+        let error = ensure_native_build_mode(&mode).unwrap_err();
+        assert!(
+            error.to_string().contains("native MagiCore runtime"),
+            "unexpected refusal for {runtime}: {error}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn build_manifest_presence_rejects_external_symlinks() {
+    let project = tempfile::tempdir().unwrap();
+    let external = tempfile::tempdir().unwrap();
+    fs::write(external.path().join("platformio.ini"), "[env:test]\n").unwrap();
+    std::os::unix::fs::symlink(
+        external.path().join("platformio.ini"),
+        project.path().join("platformio.ini"),
+    )
+    .unwrap();
+
+    assert!(project_manifest_present(project.path(), "platformio.ini").is_err());
+}
+
+#[test]
 fn detects_native_engine_crate_in_frontend_layouts() {
     let dir = tempfile::tempdir().unwrap();
     let crate_dir = dir.path().join("crates").join("engine");
@@ -122,6 +175,16 @@ fn framework_build_script_rejects_external_pm_wrappers_after_separator() {
 }
 
 #[test]
+fn framework_build_script_rejects_package_manager_javascript_entrypoint() {
+    let error = reject_external_package_manager_script(
+        "node ./node_modules/npm/bin/npm-cli.js install",
+        Path::new("/tmp/package.json"),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("delegates to 'npm'"));
+}
+
+#[test]
 fn tool_unavailable_false_for_known_tool_in_path() {
     assert!(!tool_unavailable("sh"));
 }
@@ -195,6 +258,149 @@ fn build_multi_fails_when_no_platform_artifact_is_created() {
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
+#[cfg(feature = "app")]
+#[test]
+fn build_multi_fails_when_any_requested_platform_was_skipped() {
+    assert!(super::finish_multi_build(1, &["ios (missing toolchain)".to_string()]).is_err());
+}
+
+#[cfg(feature = "app")]
+#[test]
+fn build_multi_rejects_malformed_platform_configuration_before_building() {
+    for source in [
+        "[app]\nlanguage = \"multi\"\nplatforms = \"ios\"\n",
+        "[app]\nlanguage = \"multi\"\nplatforms = []\n",
+        "[app]\nlanguage = \"multi\"\nplatforms = [\"ios\", 7]\n",
+        "[app]\nlanguage = \"multi\"\nplatforms = [\"ios\", \"ios\"]\n",
+        "[app]\nlanguage = \"multi\"\nplatforms = [\"ios\", \"macos\"]\n",
+    ] {
+        let config: toml::Value = toml::from_str(source).unwrap();
+        assert!(super::resolve_multi_platforms(&config).is_err(), "{source}");
+    }
+}
+
+#[cfg(feature = "app")]
+#[test]
+fn build_multi_defaults_only_when_platforms_are_omitted() {
+    let config: toml::Value = toml::from_str("[app]\nlanguage = \"multi\"\n").unwrap();
+    assert_eq!(
+        super::resolve_multi_platforms(&config).unwrap(),
+        ["android", "ios", "react-native", "flutter"]
+    );
+}
+
+#[cfg(feature = "app")]
+#[test]
+fn build_multi_preserves_explicit_platform_selection_and_order() {
+    let config: toml::Value =
+        toml::from_str("[app]\nlanguage = \"multi\"\nplatforms = [\"flutter\", \"ios\"]\n")
+            .unwrap();
+    assert_eq!(
+        super::resolve_multi_platforms(&config).unwrap(),
+        ["flutter", "ios"]
+    );
+}
+
+#[cfg(feature = "app")]
+#[test]
+fn app_build_does_not_guess_flutter_when_project_is_ambiguous() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(super::resolve_app_language(dir.path()).is_err());
+}
+
+#[cfg(feature = "app")]
+#[test]
+fn app_build_rejects_malformed_project_config_instead_of_falling_back() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("mgc.toml"), "[app\nlanguage = flutter").unwrap();
+    assert!(super::resolve_app_language(dir.path()).is_err());
+}
+
+#[cfg(feature = "app")]
+#[test]
+fn app_build_rejects_unknown_explicit_language() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(
+        dir.path().join("mgc.toml"),
+        "[app]\nlanguage = \"react-native\"\n",
+    )
+    .unwrap();
+    assert!(super::resolve_app_language(dir.path()).is_err());
+}
+
+#[cfg(feature = "app")]
+#[test]
+fn app_build_infers_groovy_gradle_project() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("build.gradle"), "plugins {}\n").unwrap();
+    assert_eq!(super::resolve_app_language(dir.path()).unwrap(), "kotlin");
+}
+
+#[cfg(feature = "app")]
+#[test]
+fn app_build_infers_swift_manifest() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(
+        dir.path().join("Package.swift"),
+        "// swift-tools-version: 5.9\n",
+    )
+    .unwrap();
+    assert_eq!(super::resolve_app_language(dir.path()).unwrap(), "swift");
+}
+
+#[cfg(feature = "app")]
+#[test]
+fn app_build_rejects_ambiguous_runtime_markers() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(
+        dir.path().join("Package.swift"),
+        "// swift-tools-version: 5.9\n",
+    )
+    .unwrap();
+    fs::write(dir.path().join("build.gradle"), "plugins {}\n").unwrap();
+    assert!(super::resolve_app_language(dir.path()).is_err());
+}
+
+#[cfg(feature = "app")]
+#[test]
+fn app_build_rejects_non_string_language() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("mgc.toml"), "[app]\nlanguage = 42\n").unwrap();
+    assert!(super::resolve_app_language(dir.path()).is_err());
+}
+
+#[cfg(all(unix, feature = "app"))]
+#[test]
+fn app_build_rejects_symlinked_config_and_framework_manifests() {
+    let project = tempfile::tempdir().unwrap();
+    let external = tempfile::tempdir().unwrap();
+
+    fs::write(
+        external.path().join("mgc.toml"),
+        "[app]\nlanguage = 'flutter'\n",
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(
+        external.path().join("mgc.toml"),
+        project.path().join("mgc.toml"),
+    )
+    .unwrap();
+    assert!(super::resolve_app_language(project.path()).is_err());
+
+    fs::remove_file(project.path().join("mgc.toml")).unwrap();
+    fs::write(
+        external.path().join("Package.swift"),
+        "// swift-tools-version: 5.9\n",
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(
+        external.path().join("Package.swift"),
+        project.path().join("Package.swift"),
+    )
+    .unwrap();
+    assert!(super::resolve_app_language(project.path()).is_err());
+}
+
 #[cfg(feature = "clo")]
 #[test]
 fn build_cloud_fails_when_toolchain_missing() {
@@ -224,19 +430,42 @@ fn game_build_fails_when_engine_is_not_implemented() {
 
 #[cfg(feature = "iot")]
 #[test]
-fn iot_build_fails_when_toolchain_missing() {
-    let tmp = std::env::temp_dir().join(format!("mgc-build-iot-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&tmp);
-    std::fs::create_dir_all(&tmp).unwrap();
-    std::fs::write(tmp.join("mgc.toml"), "ecosystem = \"iot\"\n").unwrap();
-    std::fs::write(
-        tmp.join("platformio.ini"),
+fn iot_build_refuses_platformio_without_native_backend() {
+    let project = tempfile::tempdir().unwrap();
+    fs::write(
+        project.path().join("platformio.ini"),
         "[env:esp32dev]\nplatform = espressif32\n",
     )
     .unwrap();
     let rt = tokio::runtime::Runtime::new().unwrap();
-    assert!(rt.block_on(super::build_iot(&tmp)).is_err());
-    let _ = std::fs::remove_dir_all(&tmp);
+    let error = rt
+        .block_on(super::build_iot(project.path()))
+        .expect_err("PlatformIO must not be invoked as a build backend");
+    assert!(
+        error
+            .to_string()
+            .contains("native PlatformIO build backend")
+    );
+}
+
+#[cfg(feature = "hardware")]
+#[test]
+fn hardware_build_refuses_platformio_without_native_backend() {
+    let project = tempfile::tempdir().unwrap();
+    fs::write(
+        project.path().join("platformio.ini"),
+        "[env:board]\nplatform = native\n",
+    )
+    .unwrap();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let error = rt
+        .block_on(super::build_hardware(project.path()))
+        .expect_err("PlatformIO must not be invoked as a build backend");
+    assert!(
+        error
+            .to_string()
+            .contains("native PlatformIO build backend")
+    );
 }
 
 #[cfg(feature = "lib")]
@@ -254,6 +483,35 @@ fn lib_ts_build_fails_when_tsc_missing() {
     let rt = tokio::runtime::Runtime::new().unwrap();
     assert!(rt.block_on(super::build_lib(&tmp)).is_err());
     let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[cfg(feature = "lib")]
+#[test]
+fn lib_java_maven_build_does_not_fall_through_to_typescript() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(
+        tmp.path().join("pom.xml"),
+        "<project><modelVersion>4.0.0</modelVersion></project>",
+    )
+    .unwrap();
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let error = rt
+        .block_on(super::build_lib(tmp.path()))
+        .expect_err("Java Maven build must not be mistaken for TypeScript");
+    let message = error.to_string();
+    assert!(
+        message.contains("Java build descriptor"),
+        "unexpected error: {message}"
+    );
+    assert!(
+        !message.contains("tsc"),
+        "unexpected TypeScript route: {message}"
+    );
+    assert!(
+        message.contains("refusing to route") && message.contains("Maven/Gradle"),
+        "the error must state the fail-closed boundary: {message}"
+    );
 }
 
 /// ng must run WITHOUT --preserve-symlinks: the flags break beasties

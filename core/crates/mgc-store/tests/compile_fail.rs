@@ -35,11 +35,26 @@ fn find_mgc_store_rlib() -> Option<PathBuf> {
     // (crate-local, core ws lồng, root ws) và chọn rlib có hash MỚI NHẤT
     // (bản cũ có thể chưa có field private).)
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let roots = [
+    let mut roots = Vec::new();
+    if let Some(configured) = std::env::var_os("CARGO_TARGET_DIR") {
+        let configured = PathBuf::from(configured);
+        if configured.is_absolute() {
+            roots.push(configured);
+        } else {
+            // Cargo resolves relative target directories from the workspace
+            // invocation directory; include each known workspace ancestor.
+            // Cargo resolve target tương đối từ thư mục workspace được gọi;
+            // thử các ancestor workspace đã biết để test chạy mọi cwd.
+            roots.push(manifest.join("../../..").join(&configured));
+            roots.push(manifest.join("../..").join(&configured));
+            roots.push(manifest.join(&configured));
+        }
+    }
+    roots.extend([
         manifest.join("target"),                  // crate-local target (rare)
         manifest.join("../..").join("target"),    // core/target (nested ws)
         manifest.join("../../..").join("target"), // root/target (main ws)
-    ];
+    ]);
     let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
     for root in &roots {
         let deps = root.join("debug").join("deps");

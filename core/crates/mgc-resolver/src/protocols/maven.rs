@@ -217,7 +217,7 @@ impl MavenProtocol {
         managed: &mut std::collections::HashMap<(String, String), String>,
         visited_parents: &mut std::collections::HashSet<String>,
     ) -> MgResult<Option<String>> {
-        let Some((group, artifact, version)) = parse_parent_coords(pom) else {
+        let Some((group, artifact, version)) = parse_parent_coords(pom)? else {
             return Ok(None);
         };
         let coordinate = format!("{group}:{artifact}:{version}");
@@ -237,10 +237,10 @@ impl MavenProtocol {
                 "GET {url} returned {status} — parent POM is required to resolve versions (fail-closed)"
             )));
         }
-        for (key, value) in collect_pom_properties(&parent_pom) {
+        for (key, value) in collect_pom_properties(&parent_pom)? {
             props.entry(key).or_insert(value);
         }
-        for (key, value) in collect_managed_versions(&parent_pom) {
+        for (key, value) in collect_managed_versions(&parent_pom)? {
             managed.entry(key).or_insert(value);
         }
         Ok(Some(parent_pom))
@@ -350,13 +350,13 @@ impl RegistryProtocol for MavenProtocol {
         }
 
         let mut markers = Vec::new();
-        let (deps_xml, packaging) = collect_pom_dependencies(&pom);
+        let (deps_xml, packaging) = collect_pom_dependencies(&pom)?;
         // Own-POM knowledge first; parent POMs merge lazily below, child
         // wins on every key (standard Maven inheritance).
         // (Tri thức POM hiện tại trước; POM cha merge lười bên dưới, con
         // thắng mọi key.)
-        let mut props = collect_pom_properties(&pom);
-        let mut managed = collect_managed_versions(&pom);
+        let mut props = collect_pom_properties(&pom)?;
+        let mut managed = collect_managed_versions(&pom)?;
         let mut visited_parents: std::collections::HashSet<String> =
             std::collections::HashSet::new();
         let mut deps = Vec::new();
@@ -605,6 +605,70 @@ pub struct PomDependency {
     pub optional: bool,
 }
 
+/// Validate Maven XML with an XML tokenizer before the small, bounded POM
+/// field scanners run. Comments are removed so examples/documentation cannot
+/// become fake dependencies; CDATA is converted to escaped text so markup in
+/// CDATA is never interpreted as structure. DTDs are rejected because
+/// external/general entity expansion is outside the supported POM contract.
+fn normalize_pom_xml(pom: &str) -> MgResult<String> {
+    use quick_xml::events::{BytesEnd, BytesText, Event};
+    use quick_xml::{Reader, Writer};
+
+    let mut reader = Reader::from_str(pom);
+    reader.config_mut().trim_text(false);
+    let mut writer = Writer::new(Vec::with_capacity(pom.len()));
+    loop {
+        let event = reader
+            .read_event()
+            .map_err(|error| MgError::Other(format!("invalid Maven POM XML: {error}")))?;
+        match event {
+            Event::Eof => break,
+            Event::Comment(_) => {}
+            Event::DocType(_) => {
+                return Err(MgError::Other(
+                    "Maven POM document types are unsupported; remove the DOCTYPE and retry".into(),
+                ));
+            }
+            Event::CData(text) => {
+                let decoded = text.decode().map_err(|error| {
+                    MgError::Other(format!("invalid Maven POM CDATA encoding: {error}"))
+                })?;
+                writer
+                    .write_event(Event::Text(BytesText::new(&decoded)))
+                    .map_err(|error| MgError::Other(format!("normalize Maven POM XML: {error}")))?;
+            }
+            Event::Start(mut start) => {
+                let local_name = start.local_name().into_inner().to_vec();
+                start.set_name(&local_name);
+                writer
+                    .write_event(Event::Start(start.into_owned()))
+                    .map_err(|error| MgError::Other(format!("normalize Maven POM XML: {error}")))?;
+            }
+            Event::Empty(mut empty) => {
+                let local_name = empty.local_name().into_inner().to_vec();
+                empty.set_name(&local_name);
+                writer
+                    .write_event(Event::Empty(empty.into_owned()))
+                    .map_err(|error| MgError::Other(format!("normalize Maven POM XML: {error}")))?;
+            }
+            Event::End(end) => {
+                let local_name =
+                    std::str::from_utf8(end.local_name().into_inner()).map_err(|error| {
+                        MgError::Other(format!("invalid Maven POM element name: {error}"))
+                    })?;
+                writer
+                    .write_event(Event::End(BytesEnd::new(local_name)))
+                    .map_err(|error| MgError::Other(format!("normalize Maven POM XML: {error}")))?;
+            }
+            other => writer
+                .write_event(other.into_owned())
+                .map_err(|error| MgError::Other(format!("normalize Maven POM XML: {error}")))?,
+        }
+    }
+    String::from_utf8(writer.into_inner())
+        .map_err(|error| MgError::Other(format!("Maven POM is not UTF-8 XML: {error}")))
+}
+
 /// Return the inner text of every `<tag>…</tag>` block (same-tag nesting is
 /// counted; self-closing and attribute-carrying open tags are handled).
 /// Trả nội dung bên trong của mọi khối `<tag>…</tag>` (đếm lồng cùng tên;
@@ -706,7 +770,9 @@ fn remove_element_blocks(xml: &str, tag: &str) -> String {
 /// Gom dependency thật của POM: khối `dependencyManagement` bị cắt trước;
 /// trả `(deps, packaging)`. Public để adapter parse pom.xml của project
 /// bằng CÙNG parser với engine.
-pub fn collect_pom_dependencies(pom: &str) -> (Vec<PomDependency>, Option<String>) {
+pub fn collect_pom_dependencies(pom: &str) -> MgResult<(Vec<PomDependency>, Option<String>)> {
+    let normalized = normalize_pom_xml(pom)?;
+    let pom = normalized.as_str();
     let packaging = element_blocks(pom, "packaging")
         .first()
         .map(|s| s.trim().to_string());
@@ -728,16 +794,37 @@ pub fn collect_pom_dependencies(pom: &str) -> (Vec<PomDependency>, Option<String
                     .first()
                     .map(|s| s.trim().to_string())
             };
+            let group = field("groupId");
+            let artifact = field("artifactId");
+            match (group.as_deref(), artifact.as_deref()) {
+                (Some(group), Some(artifact)) if !group.is_empty() && !artifact.is_empty() => {}
+                (None | Some(""), None | Some("")) => {
+                    return Err(MgError::Other(
+                        "Maven dependency is missing required groupId and artifactId; refusing to silently omit it from the resolved graph".to_string(),
+                    ));
+                }
+                (None | Some(""), _) => {
+                    return Err(MgError::Other(
+                        "Maven dependency is missing required groupId; refusing to silently omit it from the resolved graph".to_string(),
+                    ));
+                }
+                (_, None | Some("")) => {
+                    return Err(MgError::Other(
+                        "Maven dependency is missing required artifactId; refusing to silently omit it from the resolved graph".to_string(),
+                    ));
+                }
+                _ => {}
+            }
             deps.push(PomDependency {
-                group: field("groupId"),
-                artifact: field("artifactId"),
+                group,
+                artifact,
                 version: field("version"),
                 scope: field("scope"),
                 optional: field("optional").is_some_and(|v| v.eq_ignore_ascii_case("true")),
             });
         }
     }
-    (deps, packaging)
+    Ok((deps, packaging))
 }
 
 /// Properties of one POM: its `<properties>` entries plus the
@@ -745,7 +832,9 @@ pub fn collect_pom_dependencies(pom: &str) -> (Vec<PomDependency>, Option<String
 /// Later merges never overwrite keys already present (child wins).
 /// (Properties của một POM: entry `<properties>` cộng built-in
 /// `project.*`. Merge sau không bao giờ ghi đè key đã có (con thắng).)
-pub fn collect_pom_properties(pom: &str) -> std::collections::HashMap<String, String> {
+pub fn collect_pom_properties(pom: &str) -> MgResult<std::collections::HashMap<String, String>> {
+    let normalized = normalize_pom_xml(pom)?;
+    let pom = normalized.as_str();
     let mut props = std::collections::HashMap::new();
     for block in element_blocks(pom, "properties").iter().take(1) {
         for (key, value) in pom_direct_entries(block) {
@@ -770,7 +859,7 @@ pub fn collect_pom_properties(pom: &str) -> std::collections::HashMap<String, St
             .entry("project.version".to_string())
             .or_insert(version);
     }
-    props
+    Ok(props)
 }
 
 /// Direct `key → text` children of a block (nested blocks ignored).
@@ -813,7 +902,11 @@ fn pom_direct_entries(block: &str) -> Vec<(String, String)> {
 /// `dependencyManagement` versions with literal (non-`${}`) versions:
 /// `(group, artifact) → version`.
 /// (Version `dependencyManagement` dạng literal.)
-pub fn collect_managed_versions(pom: &str) -> std::collections::HashMap<(String, String), String> {
+pub fn collect_managed_versions(
+    pom: &str,
+) -> MgResult<std::collections::HashMap<(String, String), String>> {
+    let normalized = normalize_pom_xml(pom)?;
+    let pom = normalized.as_str();
     let mut managed = std::collections::HashMap::new();
     for management in element_blocks(pom, "dependencyManagement") {
         for block in element_blocks(management, "dependencies") {
@@ -832,23 +925,30 @@ pub fn collect_managed_versions(pom: &str) -> std::collections::HashMap<(String,
             }
         }
     }
-    managed
+    Ok(managed)
 }
 
 /// Coordinates of the `<parent>` block, if all three are literal.
 /// (Tọa độ khối `<parent>`, nếu cả ba đều literal.)
-pub fn parse_parent_coords(pom: &str) -> Option<(String, String, String)> {
-    let block = element_blocks(pom, "parent").first()?.to_string();
+pub fn parse_parent_coords(pom: &str) -> MgResult<Option<(String, String, String)>> {
+    let normalized = normalize_pom_xml(pom)?;
+    let pom = normalized.as_str();
+    let Some(block) = element_blocks(pom, "parent").first().map(|s| s.to_string()) else {
+        return Ok(None);
+    };
     let field = |tag: &str| {
         element_blocks(&block, tag)
             .first()
             .map(|s| s.trim().to_string())
     };
-    let (g, a, v) = (field("groupId")?, field("artifactId")?, field("version")?);
+    let (Some(g), Some(a), Some(v)) = (field("groupId"), field("artifactId"), field("version"))
+    else {
+        return Ok(None);
+    };
     if g.contains("${") || a.contains("${") || v.contains("${") {
-        return None;
+        return Ok(None);
     }
-    Some((g, a, v))
+    Ok(Some((g, a, v)))
 }
 
 /// Substitute `${key}` from props (iterated: values may nest one level).
@@ -888,16 +988,21 @@ pub fn substitute_properties(
 /// project's own coordinates.
 /// Tọa độ project `(groupId, artifactId)` của pom.xml: khối dependency bị
 /// cắt trước để artifactId lồng nhau không bao giờ che tọa độ của project.
-pub fn pom_project_coordinates(pom: &str) -> Option<(String, String)> {
+pub fn pom_project_coordinates(pom: &str) -> MgResult<Option<(String, String)>> {
+    let normalized = normalize_pom_xml(pom)?;
+    let pom = normalized.as_str();
     let stripped = remove_element_blocks(pom, "dependencyManagement");
     let stripped = remove_element_blocks(&stripped, "dependencies");
     let group = element_blocks(&stripped, "groupId")
         .first()
-        .map(|s| s.trim().to_string())?;
+        .map(|s| s.trim().to_string());
     let artifact = element_blocks(&stripped, "artifactId")
         .first()
-        .map(|s| s.trim().to_string())?;
-    Some((group, artifact))
+        .map(|s| s.trim().to_string());
+    let (Some(group), Some(artifact)) = (group, artifact) else {
+        return Ok(None);
+    };
+    Ok(Some((group, artifact)))
 }
 
 #[cfg(test)]
@@ -945,7 +1050,7 @@ mod tests {
             </dependency>
           </dependencies>
         </project>"#;
-        let (deps, packaging) = collect_pom_dependencies(pom);
+        let (deps, packaging) = collect_pom_dependencies(pom).unwrap();
         assert_eq!(packaging.as_deref(), Some("jar"));
         assert_eq!(deps.len(), 4, "managed entries must not be collected");
         let core = &deps[0];
@@ -1015,7 +1120,7 @@ mod tests {
             </profile>
           </profiles>
         </project>"#;
-        let (deps, _) = collect_pom_dependencies(pom);
+        let (deps, _) = collect_pom_dependencies(pom).unwrap();
         assert_eq!(deps.len(), 1, "only the top-level dep counts: {deps:?}");
         assert_eq!(deps[0].artifact.as_deref(), Some("core"));
     }

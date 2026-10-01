@@ -6,7 +6,11 @@
 use super::{OutputFormat, StrictMode, finish_and_print, run_adapter_audit};
 use crate::context::ProjectContext;
 
-pub(crate) async fn audit(ctx: &ProjectContext, fmt: OutputFormat) -> anyhow::Result<()> {
+pub(crate) async fn audit(
+    ctx: &ProjectContext,
+    fmt: OutputFormat,
+    strict: StrictMode,
+) -> anyhow::Result<()> {
     let report = run_adapter_audit(ctx).await?;
-    finish_and_print("iot", &report, StrictMode::from_env(), fmt).await
+    finish_and_print("iot", &report, strict, fmt).await
 }

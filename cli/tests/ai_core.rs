@@ -37,7 +37,7 @@ fn test_ai_commands_require_ai_project() {
     let (ok, out) = common::mgc_in(&dir, &["list-ai"]);
     assert!(!ok, "list-ai outside ai project must fail");
     assert!(
-        out.contains("Cannot detect an ai project"),
+        out.contains("cannot prove project core identity"),
         "expected detection error, got: {out}"
     );
 }

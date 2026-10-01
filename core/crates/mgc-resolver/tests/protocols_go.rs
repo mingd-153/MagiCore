@@ -70,11 +70,9 @@ fn build_module_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
 async fn mock_server() -> Option<mockito::ServerGuard> {
     match std::net::TcpListener::bind("127.0.0.1:0") {
         Ok(listener) => drop(listener),
-        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
-            eprintln!("warning: skipping go mock test because localhost bind is blocked");
-            return None;
-        }
-        Err(error) => panic!("failed to probe localhost bind: {error}"),
+        Err(error) => panic!(
+            "Go proxy mock tests require localhost; refusing to report skipped tests as passing: {error}"
+        ),
     }
     Some(mockito::Server::new_async().await)
 }

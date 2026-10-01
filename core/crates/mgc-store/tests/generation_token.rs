@@ -110,6 +110,133 @@ fn abort_promoted_token_is_hard_error_claims_intact() {
 }
 
 #[test]
+fn cas_claim_batch_is_atomic_and_rejects_non_staging_tokens() {
+    let db = TestDb::new();
+    let db = &db.db;
+    let generation = db.begin_cas_generation(PROJ_A).unwrap();
+
+    db.cas_claim_batch(PROJ_A, generation, &["hash-a", "hash-b", "hash-a"])
+        .unwrap();
+    assert_eq!(
+        db.list_cas_live_refs().unwrap(),
+        vec!["hash-a".to_string(), "hash-b".to_string()]
+    );
+
+    let error = db
+        .cas_claim_batch(PROJ_A, generation + 100, &["hash-forged"])
+        .unwrap_err();
+    assert!(matches!(error, CasGenerationError::UnknownToken { .. }));
+    assert_eq!(
+        db.list_cas_live_refs().unwrap(),
+        vec!["hash-a".to_string(), "hash-b".to_string()],
+        "invalid token must leave the entire claim set unchanged"
+    );
+
+    db.promote_cas_generation(PROJ_A, generation).unwrap();
+    let error = db
+        .cas_claim_batch(PROJ_A, generation, &["hash-late"])
+        .unwrap_err();
+    assert!(matches!(error, CasGenerationError::AlreadyPromoted { .. }));
+    assert_eq!(
+        db.list_cas_live_refs().unwrap(),
+        vec!["hash-a".to_string(), "hash-b".to_string()],
+        "promoted tokens must not accept late claims"
+    );
+}
+
+#[test]
+fn cas_claim_batch_reports_failing_insert_and_rolls_back_prior_claims() {
+    let db = TestDb::new();
+    let generation = db.db.begin_cas_generation(PROJ_A).unwrap();
+    db.db
+        .conn()
+        .execute_batch(
+            "CREATE TRIGGER reject_claim_for_test
+             BEFORE INSERT ON cas_blob_refs
+             WHEN NEW.hash = 'hash-reject'
+             BEGIN
+                 SELECT RAISE(ABORT, 'injected claim failure');
+             END;",
+        )
+        .unwrap();
+
+    let error = db
+        .db
+        .cas_claim_batch(
+            PROJ_A,
+            generation,
+            &["hash-first", "hash-reject", "hash-last"],
+        )
+        .unwrap_err();
+    assert!(
+        matches!(error, CasGenerationError::Io(ref message)
+            if message.contains("insert claim 2/3")
+                && message.contains("injected claim failure")),
+        "claim batch must identify the operation and item that failed: {error}"
+    );
+    let claim_count: i64 = db
+        .db
+        .conn()
+        .query_row(
+            "SELECT COUNT(*) FROM cas_blob_refs
+             WHERE project_root = ?1 AND generation = ?2",
+            rusqlite::params![PROJ_A, generation],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        claim_count, 0,
+        "failed claim batches must roll back all rows"
+    );
+}
+
+#[test]
+fn concurrent_claim_batches_preserve_every_package_file_claim() {
+    const WORKERS: usize = 64;
+    const CLAIMS_PER_WORKER: usize = 512;
+
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = Arc::new(dir.path().join("store.db"));
+    let generation = {
+        let db = Database::open(&db_path).unwrap();
+        db.begin_cas_generation(PROJ_A).unwrap()
+    };
+    let barrier = Arc::new(Barrier::new(WORKERS));
+    let handles: Vec<_> = (0..WORKERS)
+        .map(|worker| {
+            let db_path = Arc::clone(&db_path);
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                let db = Database::open(&db_path).unwrap();
+                let claims: Vec<String> = (0..CLAIMS_PER_WORKER)
+                    .map(|index| format!("hash-w{worker}-{index}"))
+                    .collect();
+                let claim_refs: Vec<&str> = claims.iter().map(String::as_str).collect();
+                barrier.wait();
+                db.cas_claim_batch(PROJ_A, generation, &claim_refs)
+                    .unwrap_or_else(|error| {
+                        panic!("worker {worker} failed its claim batch: {error}")
+                    });
+                claims
+            })
+        })
+        .collect();
+
+    let expected: std::collections::HashSet<String> = handles
+        .into_iter()
+        .flat_map(|handle| handle.join().unwrap())
+        .collect();
+    let db = Database::open(&db_path).unwrap();
+    let actual: std::collections::HashSet<String> =
+        db.list_cas_live_refs().unwrap().into_iter().collect();
+    assert_eq!(expected.len(), WORKERS * CLAIMS_PER_WORKER);
+    assert_eq!(
+        actual, expected,
+        "concurrent claim batches must lose no CAS references"
+    );
+}
+
+#[test]
 fn abort_unknown_token_is_idempotent_noop() {
     let db = TestDb::new();
     let db = &db.db;

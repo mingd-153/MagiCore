@@ -6,14 +6,31 @@
 use mgc_resolver::protocols::sha256_hex;
 use mgc_resolver::protocols::{CratesProtocol, RegistryProtocol};
 
+#[tokio::test]
+async fn crates_missing_index_checksum_fails_resolution() {
+    let Some(mut server) = mock_server().await else {
+        return;
+    };
+    server
+        .mock("GET", "/se/rd/serde")
+        .with_status(200)
+        .with_body(crate_line("serde", "1.0.0", false, "", ""))
+        .create_async()
+        .await;
+
+    let error = CratesProtocol::with_download_base(&server.url(), &server.url())
+        .resolve("serde", "^1.0")
+        .await
+        .expect_err("crates.io index entry without cksum must not resolve");
+    assert!(error.to_string().contains("cksum"), "{error}");
+}
+
 async fn mock_server() -> Option<mockito::ServerGuard> {
     match std::net::TcpListener::bind("127.0.0.1:0") {
         Ok(listener) => drop(listener),
-        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
-            eprintln!("warning: skipping crates mock test because localhost bind is blocked");
-            return None;
-        }
-        Err(error) => panic!("failed to probe localhost bind: {error}"),
+        Err(error) => panic!(
+            "crates.io mock tests require localhost; refusing to report skipped tests as passing: {error}"
+        ),
     }
     Some(mockito::Server::new_async().await)
 }

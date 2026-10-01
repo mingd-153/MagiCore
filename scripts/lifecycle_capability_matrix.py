@@ -6,10 +6,12 @@ The audit matrix (audit_capability_matrix.py) proves ADVISORY evidence
 per lane (clean/vulnerable/tool-failure). It can NEVER justify a
 "language supported" claim about the PRODUCT — lifecycle support is a
 separate dimension with its own evidence: create → detect → resolve →
-lock → fetch → install(materialize) → test → build → run → dev → audit
-→ store → offline → optimizer → recovery.
+lock → fetch → verify → install/materialize → add/remove/update/list →
+frozen/offline reinstall → store/GC → test → build → run → dev → audit →
+optimizer → recovery.
 
-Schema v2 (Gate 11-C, 2026-09-15): 16 dimensions, each recorded in a
+Schema v6 (framework-qualified lane identity added 2026-09-29): 23
+dimensions, each recorded in a
 SIX-VALUE status vocabulary — native-pass (mgc itself owns the
 capability), managed-delegation-pass (mgc orchestrates a toolchain it
 manages, e.g. redirected CARGO_HOME/UV_CACHE_DIR), plain-delegation-pass
@@ -28,11 +30,11 @@ capability. Fail-closed: any binary crash/unparseable step aborts.
 Sinh ma trận năng lực LIFECYCLE từ bằng chứng — tách khỏi matrix audit
 (P0-2). Matrix audit chứng minh evidence advisory từng lane, KHÔNG BAO
 GIỜ suy ra được năng lực product; lifecycle là dimension riêng với
-evidence riêng: create → detect → resolve → lock → fetch →
-install(materialize) → test → build → run → dev → audit → store →
-offline → optimizer → recovery.
+evidence riêng: create → detect → resolve → lock → fetch → verify →
+install/materialize → add/remove/update/list → frozen/offline reinstall →
+store/GC → test → build → run → dev → audit → optimizer → recovery.
 
-Schema v2 (Gate 11-C): 16 dimension, mỗi dimension ghi bằng MỘT TRONG
+Schema v6: 23 dimension, mỗi dimension ghi bằng MỘT TRONG
 SÁU trạng thái — native-pass (mgc tự giữ năng lực), managed-delegation-
 pass (mgc điều phối toolchain mình quản, vd CARGO_HOME/UV_CACHE_DIR
 chuyển hướng), plain-delegation-pass (mgc gọi-through toolchain không
@@ -48,11 +50,27 @@ import datetime
 import time
 import json
 import os
+import platform
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
+from typing import Optional
+
+ALL_DEPENDENCY_OPERATIONS = (
+    "install", "add", "remove", "update", "list", "resolve", "lock",
+    "fetch", "verify", "store", "materialize", "frozen-install",
+    "offline-reinstall", "gc",
+)
+NATIVE_INSTALL_PIPELINE_OPERATIONS = frozenset(
+    {"resolve", "lock", "fetch", "verify", "store", "materialize", "frozen-install"}
+)
+NATIVE_OPERATIONS_EXCEPT_GC = frozenset(ALL_DEPENDENCY_OPERATIONS) - {"gc"}
+NATIVE_OPERATIONS_EXCEPT_GC_AND_OFFLINE = frozenset(ALL_DEPENDENCY_OPERATIONS) - {
+    "gc", "offline-reinstall"
+}
 
 # Lifecycle lanes and their steps. Each step is an argv list run with
 # cwd = the sandbox project dir. Steps are ordered; a lane records the
@@ -66,6 +84,8 @@ LANES = [
     {
         "core": "lib",
         "language": "rust",
+        "framework_ids": ["rust"],
+        "framework_id": "rust",
         "scaffold": ["create-lib", "rust", "test-lib"],
         "steps": [
             ("install", ["install"]),
@@ -100,6 +120,7 @@ LANES = [
             "resolve": "mgc",                # mgc sparse-index engine resolves
             "lock": "mgc",                   # mgc.lock v3 (native-resolve)
             "fetch": "mgc",                  # mgc downloads the .crate
+            "verify": "mgc",                 # mgc checks crates.io checksum — mgc xác minh checksum crates.io
             "store": "magicore-shared-cas",  # blake3 CAS import
             "materialize": "mgc",            # mgc writes registry/{cache,src} layout
         },
@@ -107,6 +128,8 @@ LANES = [
     {
         "core": "lib",
         "language": "python",
+        "framework_ids": ["python"],
+        "framework_id": "python",
         "scaffold": ["create-lib", "python", "test-lib"],
         # lib/python needs pytest (mgc test) and build (python -m build)
         # provisioned before its lifecycle steps run.
@@ -138,6 +161,7 @@ LANES = [
             "resolve": "mgc",                # mgc JSON API engine resolves
             "lock": "mgc",                   # mgc.lock v3 (native-resolve)
             "fetch": "mgc",                  # mgc downloads wheel/sdist
+            "verify": "mgc",                 # mgc checks PyPI wheel digests — mgc xác minh digest wheel PyPI
             "store": "magicore-shared-cas",  # blake3 CAS import
             "materialize": "mgc",            # mgc writes pypi/wheels layout
         },
@@ -145,6 +169,8 @@ LANES = [
     {
         "core": "lib",
         "language": "typescript",
+        "framework_ids": ["ts"],
+        "framework_id": "ts",
         "scaffold": ["create-lib", "typescript", "test-lib"],
         "steps": [
             ("install", ["install"]),
@@ -166,6 +192,7 @@ LANES = [
             "resolve": "mgc",                # web engine resolves the graph
             "lock": "mgc",                   # mgc.lock
             "fetch": "mgc",                  # mgc fetcher + CAS
+            "verify": "mgc",                 # web engine checks registry integrity — web engine xác minh integrity registry
             "store": "magicore-shared-cas",  # global shared CAS
             "materialize": "mgc",            # mgc materializes node_modules
         },
@@ -173,6 +200,8 @@ LANES = [
     {
         "core": "lib",
         "language": "go",
+        "framework_ids": ["go"],
+        "framework_id": "go",
         "scaffold": ["create-lib", "go", "test-lib"],
         "steps": [
             ("install", ["install"]),
@@ -195,6 +224,7 @@ LANES = [
             "resolve": "mgc",                # GoMod proxy engine resolves the graph
             "lock": "mgc",                   # mgc.lock v3 (native-resolve)
             "fetch": "mgc",                  # mgc downloads @v zips
+            "verify": "mgc",                 # mgc checks ziphash/sumdb — mgc xác minh ziphash/sumdb
             "store": "magicore-shared-cas",  # blake3 CAS import
             "materialize": "mgc",            # GOMODCACHE layout for offline builds
         },
@@ -202,6 +232,8 @@ LANES = [
     {
         "core": "lib",
         "language": "java",
+        "framework_ids": ["java"],
+        "framework_id": "java",
         "scaffold": ["create-lib", "java", "test-lib"],
         "steps": [
             ("install", ["install"]),
@@ -224,6 +256,7 @@ LANES = [
             "resolve": "mgc",                # Maven engine resolves the POM graph
             "lock": "mgc",                   # mgc.lock v3 (native-resolve)
             "fetch": "mgc",                  # mgc downloads jars
+            "verify": "mgc",                 # mgc checks published SHA-256/SHA-1 — mgc xác minh SHA-256/SHA-1 đã publish
             "store": "magicore-shared-cas",  # sha256/sha1-verified CAS import
             "materialize": "mgc",            # M2 repository layout for offline builds
         },
@@ -231,6 +264,8 @@ LANES = [
     {
         "core": "lib",
         "language": "dotnet",
+        "framework_ids": ["dotnet"],
+        "framework_id": "dotnet",
         "scaffold": ["create-lib", "dotnet", "test-lib"],
         "steps": [
             ("install", ["install"]),
@@ -253,6 +288,7 @@ LANES = [
             "resolve": "mgc",               # NuGet v3 engine resolves
             "lock": "mgc",                  # mgc.lock v3 (native-resolve)
             "fetch": "mgc",                 # mgc downloads nupkgs
+            "verify": "mgc",                # mgc checks NuGet hashes — mgc xác minh hash NuGet
             "store": "magicore-shared-cas", # sha512-verified CAS import
             "materialize": "mgc",           # global-packages layout for offline restore
         },
@@ -287,6 +323,7 @@ LANES = [
         # (Engine WEB (chính mgc) giữ resolve+lock+fetch+CAS — install
         # native-engine duy nhất hôm nay (taxonomy P0-D).)
         "install_owner": "native-engine",
+        "lifecycle_owner_overrides": {"dev": "mgc-native"},
         "recovery_probe": True,
         # P0-D: the web engine IS mgc — the flagship mgc-native lane.
         # (P0-D: engine web CHÍNH LÀ mgc — lane mgc-native chủ lực.)
@@ -295,6 +332,7 @@ LANES = [
             "resolve": "mgc",                # web engine resolves the graph
             "lock": "mgc",                   # mgc.lock
             "fetch": "mgc",                  # mgc fetcher + CAS
+            "verify": "mgc",                 # web engine checks registry integrity — web engine xác minh integrity registry
             "store": "magicore-shared-cas",  # global shared CAS
             "materialize": "mgc",            # mgc materializes node_modules
         },
@@ -329,6 +367,48 @@ LANES = [
             "source_file": "src/App.tsx",
             "source_edit": "// dev-probe touch — marker HMR rebuild\n",
         },
+    },
+    {
+        "core": "web",
+        "language": "vanilla",
+        "framework_ids": ["vanilla"],
+        "framework_id": "vanilla",
+        "scaffold": ["create-web", "vanilla", "test-web-vanilla"],
+        "required_markers": ["index.html"],
+        "steps": [("install", ["install"]), ("test", ["test"]), ("build", ["build"])],
+        "delegated": [],
+        "required_dims": ["create", "install", "test", "build"],
+        "install_owner": "native-engine",
+        "dependency_owner": "mgc-native",
+        "owner_by_operation": {},
+    },
+    {
+        "core": "web",
+        "language": "ts",
+        "framework_ids": ["ts"],
+        "framework_id": "ts",
+        "scaffold": ["create-web", "vanilla", "test-web-ts", "--ts"],
+        "project_dir": "test-web-ts",
+        "required_markers": ["index.html", "src/main.ts", "tsconfig.json"],
+        "steps": [("install", ["install"]), ("test", ["test"]), ("build", ["build"])],
+        "delegated": [],
+        "required_dims": ["create", "install", "test", "build"],
+        "install_owner": "native-engine",
+        "dependency_owner": "mgc-native",
+        "owner_by_operation": {},
+    },
+    {
+        "core": "web",
+        "language": "node",
+        "framework_ids": ["node"],
+        "framework_id": "node",
+        "scaffold": ["create-web", "express", "test-web-node"],
+        "steps": [("install", ["install"]), ("test", ["test"]), ("build", ["build"])],
+        "delegated": [],
+        "required_dims": ["create", "install", "test", "build"],
+        "install_owner": "native-engine",
+        "dependency_owner": "mgc-native",
+        "owner_by_operation": {},
     },
     {
         "core": "ai",
@@ -373,6 +453,7 @@ LANES = [
             "resolve": "mgc",                # PyPI JSON API engine resolves
             "lock": "mgc",                   # mgc.lock v3 (native-resolve)
             "fetch": "mgc",                  # mgc downloads wheels
+            "verify": "mgc",                 # mgc checks wheel digest/RECORD — mgc xác minh digest/RECORD của wheel
             "store": "magicore-shared-cas",  # verified CAS import
             "materialize": "mgc",            # unpacked site dirs for import
         },
@@ -400,6 +481,7 @@ LANES = [
             "resolve": "mgc",                # pub.dev JSON API engine resolves
             "lock": "mgc",                   # mgc.lock v3 (native-resolve)
             "fetch": "mgc",                  # mgc downloads archives
+            "verify": "mgc",                 # mgc checks pub archive SHA-256 — mgc xác minh SHA-256 archive pub
             "store": "magicore-shared-cas",  # verified CAS import
             "materialize": "mgc",            # pub cache layout for offline builds
         },
@@ -420,24 +502,15 @@ LANES = [
         "scaffold": ["create-app", "swift", "test-app"],
         "steps": [("install", ["install"])],
         "required_dims": ["create", "install"],
-        # C0 (T0.3, 2026-09-17): the invoked install lane runs
-        # `swift package resolve` for real — delegated, never mgc-native,
-        # even though a native SwiftPM registry engine exists for
-        # registry packages (unwired to the lane; Phase C). Git-only
-        # dependencies stay default-blocked.
-        # (C0: lane install chạy `swift package resolve` thật —
-        # delegated.)
-        "install_owner": "plain-delegation",
-        # P0-D/T0.4: swift owns the app/swift dependency lifecycle.
-        "dependency_owner": "delegated",
-        "note": "lane delegates to `swift package resolve` (C0-gated); native SwiftPM registry engine exists but is unwired to the lane (Phase C); git-only deps default-blocked",
-        "owner_by_operation": {
-            "resolve": "swift",
-            "lock": "swift",
-            "fetch": "swift",
-            "store": "swift-package-cache",
-            "materialize": "swift",
-        },
+        # The app CLI now routes registry dependencies through MGC's Swift
+        # resolver/fetch/verify/materializer. Source/Git dependencies remain
+        # explicitly unsupported; install ownership is not full ecosystem parity.
+        # (CLI app dùng resolver/fetch/verify/materializer Swift của MGC;
+        # dependency source/Git vẫn unsupported.)
+        "install_owner": "native-engine",
+        "dependency_owner": "mgc-native",
+        "note": "MGC-native Swift registry install; add/remove/update/list remain unsupported; Git dependencies are rejected",
+        "owner_by_operation": {},
     },
     {
         "core": "app",
@@ -447,22 +520,12 @@ LANES = [
         "scaffold": ["create-app", "objc", "test-app"],
         "steps": [("install", ["install"])],
         "required_dims": ["create", "install"],
-        # C0 (T0.3, 2026-09-17): the invoked install lane runs
-        # `xcodebuild -resolvePackageDependencies` for real — delegated;
-        # no ObjC-native resolve engine exists at all.
-        # (C0: lane install chạy xcodebuild thật — delegated; không có
-        # engine resolve ObjC native nào.)
-        "install_owner": "plain-delegation",
-        # P0-D/T0.4: xcodebuild owns the app/objc dependency lifecycle.
-        "dependency_owner": "delegated",
-        "note": "lane delegates to `xcodebuild -resolvePackageDependencies` (C0-gated); no ObjC-native engine exists",
-        "owner_by_operation": {
-            "resolve": "xcodebuild",
-            "lock": "xcodebuild",
-            "fetch": "xcodebuild",
-            "store": "xcode-derived-data",
-            "materialize": "xcodebuild",
-        },
+        # Objective-C dependency install is rejected before external tools.
+        # (Cài dependency Objective-C bị từ chối trước khi gọi tool ngoài.)
+        "install_owner": "unsupported",
+        "dependency_owner": "unsupported",
+        "note": "unsupported: no MGC-native ObjC resolver/materializer and no compatibility spawn in this lane",
+        "owner_by_operation": {},
     },
     {
         "core": "app",
@@ -480,17 +543,11 @@ LANES = [
         # the lane as-invoked supports no install lifecycle: unsupported.
         # (C0: React Native sở hữu PER-TIER (không nhãn native đơn dòng):
         # lane install không có runner nên lỗi — unsupported.)
-        "install_owner": "plain-delegation",
+        "install_owner": "unsupported",
         # P0-D/T0.4: no install lifecycle exists on the invoked lane.
         "dependency_owner": "unsupported",
         "note": "per-tier: js=web-pipeline, android=Maven-engine, ios=CocoaPods-CDN-verify; invoked lane has no runner and errors (fail-closed); iOS tier fail-closed without Podfile.lock",
-        "owner_by_operation": {
-            "resolve": "mgc-per-tier",
-            "lock": "unsupported-no-runner",
-            "fetch": "unsupported-no-runner",
-            "store": "unsupported-no-runner",
-            "materialize": "unsupported-no-runner",
-        },
+        "owner_by_operation": {},
     },
     # ===== Evidence-only lanes (P0-6, Tech Lead 2026-09-15) =====
     # Five lanes RECORD evidence but NEVER gate a release. Their external
@@ -527,19 +584,14 @@ LANES = [
         ],
         "delegated": [],
         "required_dims": ["create", "install", "test", "build"],
-        "install_owner": "plain-delegation",
-        # P0-D: bevy-rust delegates the dependency lifecycle to cargo
-        # (`cargo fetch` runs for real; mgc only orchestrates).
-        # (P0-D: bevy-rust ủy quyền lifecycle dependency cho cargo
-        # (`cargo fetch` chạy thật; mgc chỉ điều phối).)
-        "dependency_owner": "delegated",
-        "owner_by_operation": {
-            "resolve": "cargo",
-            "lock": "cargo",
-            "fetch": "cargo",
-            "store": "cargo-target-cache",
-            "materialize": "cargo",
-        },
+        "install_owner": "native-engine",
+        # The CLI routes dependency installation through MGC's Lib/Rust
+        # engine; Cargo remains a compiler/build boundary, not the installer.
+        # (CLI route cài dependency qua engine Lib/Rust của MGC; Cargo chỉ
+        # là ranh giới compiler/build, không phải installer.)
+        "dependency_owner": "mgc-native",
+        "note": "CLI routes Bevy dependencies through MGC Lib/Rust resolver; build/test still use compiler toolchain",
+        "owner_by_operation": {},
     },
     {
         "core": "iot",
@@ -560,19 +612,14 @@ LANES = [
         ],
         "delegated": [],
         "required_dims": ["create", "install", "test", "build"],
-        "install_owner": "plain-delegation",
-        # P0-D: the embedded toolchains own the lifecycle (cargo fetch /
-        # pio pkg install / west update) — delegated.
-        # (P0-D: toolchain embedded giữ lifecycle (cargo fetch / pio pkg
-        # install / west update) — delegated.)
-        "dependency_owner": "delegated",
-        "owner_by_operation": {
-            "resolve": "cargo",
-            "lock": "cargo",
-            "fetch": "cargo",
-            "store": "cargo-target-cache",
-            "materialize": "cargo",
-        },
+        "install_owner": "native-engine",
+        # ESP32-Rust's CLI dependency route uses MGC's Lib/Rust engine;
+        # PlatformIO/Zephyr lanes remain unsupported.
+        # (ESP32-Rust dùng engine Lib/Rust của MGC; PlatformIO/Zephyr
+        # vẫn unsupported.)
+        "dependency_owner": "mgc-native",
+        "note": "ESP32-Rust dependencies route through MGC Lib/Rust resolver; board compiler/toolchain is a separate build boundary",
+        "owner_by_operation": {},
     },
     {
         "core": "clo",
@@ -589,20 +636,41 @@ LANES = [
             ("test", ["test"]),
             ("build", ["build"]),
         ],
-        "delegated": ["install"],
+        "delegated": [],
         "required_dims": ["create", "install", "test", "build"],
-        "install_owner": "plain-delegation",
-        # P0-D: terraform owns providers/modules (`init`+`get`) —
-        # delegated (cloud passthrough, honest).
-        # (P0-D: terraform giữ provider/module (`init`+`get`) — delegated.)
-        "dependency_owner": "delegated",
-        "owner_by_operation": {
-            "resolve": "terraform",
-            "lock": "terraform",           # .terraform.lock.hcl
-            "fetch": "terraform",          # terraform init downloads providers
-            "store": "terraform-provider-cache",
-            "materialize": "terraform",
-        },
+        "install_owner": "unsupported",
+        # The C0 gate rejects Terraform dependency operations; do not label
+        # the lane as delegated merely because Terraform exists upstream.
+        # (C0 từ chối dependency Terraform; không gắn delegated chỉ vì có
+        # tool Terraform ở upstream.)
+        "dependency_owner": "unsupported",
+        "owner_by_operation": {},
+    },
+    {
+        "core": "clo",
+        "language": "cdk",
+        "framework_ids": ["cdk"],
+        "framework_id": "cdk",
+        "scaffold": ["create-clo", "cdk", "test-cloud-cdk"],
+        "steps": [("install", ["install"]), ("test", ["test"]), ("build", ["build"])],
+        "delegated": [],
+        "required_dims": ["create", "install", "test", "build"],
+        "install_owner": "native-engine",
+        "dependency_owner": "mgc-native",
+        "owner_by_operation": {},
+    },
+    {
+        "core": "clo",
+        "language": "pulumi",
+        "framework_ids": ["pulumi"],
+        "framework_id": "pulumi",
+        "scaffold": ["create-clo", "pulumi", "test-cloud-pulumi"],
+        "steps": [("install", ["install"]), ("test", ["test"]), ("build", ["build"])],
+        "delegated": [],
+        "required_dims": ["create", "install", "test", "build"],
+        "install_owner": "native-engine",
+        "dependency_owner": "mgc-native",
+        "owner_by_operation": {},
     },
     {
         "core": "hardware",
@@ -654,7 +722,7 @@ LANES = [
         # đen; managed-delegation bắt được nghĩa "mgc quản cơ khí" mà
         # không claim pipeline registry. Owner per-operation nói thẳng:
         # op registry là `unsupported-…`, store/materialize nêu generator.)
-        "install_owner": "managed-delegation",
+        "install_owner": "unsupported",
         # P0-D: hardware is a scaffold/generator core (P0-5 — the adapter
         # returns Unsupported for the whole registry surface): the only
         # materialization is mgc's own bundled-template generator, so the
@@ -666,13 +734,7 @@ LANES = [
         # scaffold-only, KHÔNG phải delegated (không toolchain ngoài) và
         # KHÔNG phải mgc-native (không lifecycle registry).)
         "dependency_owner": "scaffold-only",
-        "owner_by_operation": {
-            "resolve": "unsupported-no-registry-graph",   # adapter.rs:55 Unsupported
-            "lock": "unsupported-no-lockfile",            # no lockfile surface
-            "fetch": "unsupported-nothing-to-fetch",      # adapter.rs:67 Unsupported
-            "store": "magicore-bundled-templates",        # templates ship inside mgc
-            "materialize": "mgc-add-hardware-generator",  # add-hardware writes the tree
-        },
+        "owner_by_operation": {},
     },
     {
         "core": "cicd",
@@ -721,37 +783,288 @@ LANES = [
         # thống ngoài không quản lý (provider + con người) — đúng nghĩa
         # plain-delegation. Owner per-operation nói thẳng: op registry là
         # `unsupported-…`, store/materialize thuộc CI provider.)
-        "install_owner": "plain-delegation",
+        "install_owner": "unsupported",
         # P0-D: cicd is a generator lane (P0-5 — the adapter returns
         # Unsupported for the registry surface; pipelines are hand-owned
         # afterwards): scaffold-only.
         # (P0-D: cicd là lane generator (P0-5 — adapter trả Unsupported
         # cho mặt registry; pipeline do người quản sau đó): scaffold-only.)
         "dependency_owner": "scaffold-only",
-        "owner_by_operation": {
-            "resolve": "unsupported-no-registry-graph",  # adapter.rs:65 Unsupported
-            "lock": "unsupported-no-lockfile",           # no lockfile surface
-            "fetch": "unsupported-nothing-to-fetch",     # adapter.rs:75 Unsupported
-            "store": "ci-provider-owned",                # provider owns caches/artifacts
-            "materialize": "ci-provider-owned",          # workflows run on the provider
-        },
+        "owner_by_operation": {},
     },
 ]
+
+# Locked v1.2 applicability contract. The generated matrix may report every
+# known dimension, but only dimensions declared here are release-required for
+# that core/language lane. Keeping this registry in source prevents a JSON
+# producer from shrinking `required_dimensions`; it also avoids treating an
+# intentionally non-applicable operation (for example `dev` for a library)
+# as a failed implementation. Every declared lane must appear exactly once.
+LANE_REQUIRED_DIMENSIONS = {
+    (lane["core"], lane["language"], lane.get("framework_id", "")): tuple(
+        lane["required_dims"]
+    )
+    for lane in LANES
+}
+
+
+def required_dimensions_for_lane(core, language, framework_id=""):
+    """Return the source-controlled release dimensions for one lane."""
+    return LANE_REQUIRED_DIMENSIONS.get((core, language, framework_id or ""))
+
+# Per-lane user-operation owners are declarations, not runtime evidence.
+# They mirror `DepOp::owner_for` and are compared with `mgc capabilities`
+# during the real-binary matrix run. Unprobed operation dimensions remain
+# `unverified` below, so this metadata can never promote a lane by itself.
+NATIVE_USER_OPERATION_LANES = {
+    ("web", "javascript"): set(ALL_DEPENDENCY_OPERATIONS),
+    ("web", "vanilla"): set(ALL_DEPENDENCY_OPERATIONS),
+    ("web", "ts"): set(ALL_DEPENDENCY_OPERATIONS),
+    ("web", "node"): set(ALL_DEPENDENCY_OPERATIONS),
+    ("ai", "python"): set(NATIVE_OPERATIONS_EXCEPT_GC_AND_OFFLINE),
+    ("app", "flutter"): {"install", "add", "remove", "update"},
+    ("app", "swift"): {"install"},
+    ("lib", "rust"): {"install", "add", "remove", "update"},
+    ("lib", "python"): {"install", "add", "remove", "update", "list"},
+    ("lib", "typescript"): set(NATIVE_OPERATIONS_EXCEPT_GC),
+    ("lib", "go"): {"install", "add", "remove", "update"},
+    ("lib", "java"): {"install", "add", "remove", "update"},
+    ("lib", "dotnet"): {"install", "add", "remove", "update"},
+    ("game", "rust"): {"install", "add", "remove", "update"},
+    ("iot", "rust"): {"install", "add", "remove", "update"},
+    ("clo", "terraform"): set(),
+    ("clo", "cdk"): set(NATIVE_OPERATIONS_EXCEPT_GC),
+    ("clo", "pulumi"): set(NATIVE_OPERATIONS_EXCEPT_GC),
+    ("hardware", "benchmark"): set(),
+    ("cicd", "github-actions"): set(),
+    ("app", "objc"): set(),
+    ("app", "react-native"): set(),
+}
+
+for _lane in LANES:
+    _key = (_lane["core"], _lane["language"])
+    if _key not in NATIVE_USER_OPERATION_LANES:
+        raise ValueError(f"dependency operation ownership missing for lane {_key}")
+    _native_ops = NATIVE_USER_OPERATION_LANES[_key]
+    # Offline reinstall is its own capability: Web/TS and the verified
+    # Lib/Python wheel-cache lane enforce cache-only installation. Other
+    # native online installers still download from registries and must not
+    # inherit an offline claim.
+    _offline_native = _key in {
+        ("web", "javascript"), ("web", "typescript"), ("web", "vanilla"),
+        ("web", "ts"), ("web", "node"), ("lib", "typescript"),
+        ("lib", "python"), ("clo", "cdk"), ("clo", "pulumi"),
+    }
+    _lane["dependency_owner"] = (
+        "mgc-native" if "install" in _native_ops
+        else "scaffold-only" if _key == ("hardware", "benchmark")
+        else "unsupported"
+    )
+    _lane["install_owner"] = (
+        "native-engine" if "install" in _native_ops
+        else "unsupported"
+    )
+    _owners = {}
+    for _op in ALL_DEPENDENCY_OPERATIONS:
+        if _key == ("hardware", "benchmark") and _op == "list":
+            _owners[_op] = "scaffold-only"
+        elif _op == "offline-reinstall" and _offline_native:
+            _owners[_op] = "mgc"
+        elif _op in _native_ops or (
+            _op in NATIVE_INSTALL_PIPELINE_OPERATIONS and "install" in _native_ops
+        ):
+            _owners[_op] = "magicore-shared-cas" if _op == "store" else "mgc"
+        else:
+            _owners[_op] = "unsupported-no-runner"
+    _lane["owner_by_operation"] = _owners
+    _manifest_variants = {
+        ("lib", "rust"): "rust/cargo-toml",
+        ("lib", "python"): "python/pep621-native",
+        ("lib", "typescript"): "ts/package-json",
+        ("lib", "go"): "go/go-mod",
+        ("lib", "java"): "java/maven-pom",
+        ("lib", "dotnet"): "dotnet/csproj",
+        ("ai", "python"): "python/mgc-pyproject",
+    }
+    if _key in _manifest_variants:
+        _lane["manifest_variant"] = _manifest_variants[_key]
+del _lane, _key, _native_ops, _owners, _op
 
 # Binary step timeout (seconds) — overridable via MGC_LIFECYCLE_STEP_TIMEOUT.
 # Timeout mỗi bước binary — ghi đè qua MGC_LIFECYCLE_STEP_TIMEOUT.
 STEP_TIMEOUT_DEFAULT_S = 600
 
-# Schema v2 (Gate 11-C): the 16 lifecycle dimensions. The v1 names
-# `cache-reuse`/`offline-reinstall` are renamed `store`/`offline` so the
-# `.dimensions` list is the canonical 16-name contract — a consumer of the
+# Schema v4: 23 lifecycle dimensions. Fetching bytes is not proof that MGC
+# verified artifact integrity before storing or materializing.
+# (Schema v4: tải bytes không chứng minh MGC đã xác minh integrity trước
+# khi lưu hoặc materialize.)
+# `cache-reuse`/`offline` legacy names are replaced by explicit operations
+# `store` and `offline-reinstall` so the
+# `.dimensions` list is the canonical 23-name contract — a consumer of the
 # JSON can rely on the order and the names below.
-# (Schema v2 (Gate 11-C): 16 dimension lifecycle. Tên v1 `cache-reuse`/
-# `offline-reinstall` đổi thành `store`/`offline` để `.dimensions` là hợp
-# đồng 16 tên chuẩn — consumer của JSON dựa được vào tên và thứ tự dưới.)
-ALL_DIMENSIONS = ["create", "install", "test", "build", "run", "dev", "audit",
-                  "store", "offline", "detect", "resolve", "lock", "fetch",
-                  "materialize", "optimizer", "recovery"]
+# (Schema v4: 23 dimension lifecycle. Tên cũ `cache-reuse`/`offline`
+# đổi thành operation rõ `store`/`offline-reinstall` để `.dimensions` là hợp
+# đồng 23 tên chuẩn — consumer của JSON dựa được vào tên và thứ tự dưới.)
+ALL_DIMENSIONS = ["create", "install", "add", "remove", "update", "list",
+                  "test", "build", "run", "dev", "audit", "store",
+                  "offline-reinstall", "detect", "resolve", "lock", "fetch",
+                  "verify", "materialize", "frozen-install", "gc",
+                  "optimizer", "recovery"]
+
+LIFECYCLE_OWNER_VALUES = frozenset(
+    {"mgc-native", "managed-delegation", "plain-delegation", "unsupported", "unverified"}
+)
+LIFECYCLE_STEP_OWNER_DEFAULTS = {
+    # The CLI routes these to external project test/build toolchains today.
+    # Marking them plain-delegated prevents the wrapper command itself from
+    # laundering successful subprocess execution into native evidence.
+    "test": "plain-delegation",
+    "build": "plain-delegation",
+    # `mgc run` starts a project runtime; the runtime remains an external
+    # execution dependency even though MGC owns the process boundary.
+    "run": "plain-delegation",
+}
+
+# A source declaration cannot promote an arbitrary lifecycle subprocess to
+# MGC-native. Each exception must be bound to an exact lane and operation
+# with a dedicated runtime probe; today only the Web JavaScript dev server
+# has that evidence (HTTP/HMR probe). Build/test/run remain delegated until
+# an implementation and operation-specific evidence are added together.
+# Không được nâng lifecycle subprocess tùy ý thành MGC-native bằng khai báo.
+# Mỗi ngoại lệ phải gắn với lane + operation chính xác và probe runtime riêng;
+# hiện chỉ Web JavaScript dev server có evidence HTTP/HMR.
+NATIVE_LIFECYCLE_OWNER_EVIDENCE = frozenset({
+    ("web", "javascript", "", "dev"),
+})
+
+
+def lifecycle_owner_for(lane, dimension):
+    """Return the declared owner of a lifecycle dimension, fail-closed."""
+    override = lane.get("lifecycle_owner_overrides", {}).get(dimension)
+    if override:
+        return override
+    if dimension == "create":
+        return "mgc-native"
+    if dimension == "install":
+        return {
+            "native-engine": "mgc-native",
+            "managed-delegation": "managed-delegation",
+            "plain-delegation": "plain-delegation",
+            "unsupported": "unsupported",
+        }.get(lane.get("install_owner", ""), "unverified")
+    return LIFECYCLE_STEP_OWNER_DEFAULTS.get(dimension, "unverified")
+
+
+def lifecycle_pass_status(lane, dimension):
+    """Map lifecycle owner to evidence status; unknown ownership never passes."""
+    owner = lifecycle_owner_for(lane, dimension)
+    return lifecycle_status_for_owner(owner)
+
+
+def lifecycle_status_for_owner(owner):
+    """Map an explicit lifecycle owner to its only valid passing status."""
+    if owner == "mgc-native":
+        return STATUS_NATIVE
+    if owner == "managed-delegation":
+        return STATUS_MANAGED
+    if owner == "plain-delegation":
+        return STATUS_PLAIN
+    if owner == "unsupported":
+        return STATUS_UNSUPPORTED
+    return STATUS_UNVERIFIED
+
+
+def validate_lane_registry(lanes=LANES):
+    """Reject ambiguous or internally inconsistent lifecycle lane declarations."""
+    lane_keys = set()
+    framework_keys = set()
+    for lane in lanes:
+        core_language = (lane.get("core"), lane.get("language"))
+        if not all(core_language):
+            raise ValueError(f"lane is missing core/language identity: {lane!r}")
+        framework_id = lane.get("framework_id") or ""
+        key = (*core_language, framework_id)
+        if key in lane_keys:
+            raise ValueError(f"duplicate core/language/framework lane: {key}")
+        lane_keys.add(key)
+
+        required = lane.get("required_dims")
+        if not required or len(required) != len(set(required)):
+            raise ValueError(f"lane has empty or duplicate required dimensions: {key}")
+        unknown_required = sorted(set(required) - set(ALL_DIMENSIONS))
+        if unknown_required:
+            raise ValueError(
+                f"lane has unknown required dimension(s) {unknown_required}: {key}"
+            )
+        overrides = lane.get("lifecycle_owner_overrides", {})
+        if not isinstance(overrides, dict):
+            raise ValueError(f"lane lifecycle_owner_overrides must be an object: {key}")
+        invalid_override_dims = sorted(set(overrides) - set(ALL_DIMENSIONS))
+        if invalid_override_dims:
+            raise ValueError(
+                f"lane has unknown lifecycle owner override dimensions "
+                f"{invalid_override_dims}: {key}"
+            )
+        invalid_override_owners = {
+            dim: owner for dim, owner in overrides.items()
+            if not isinstance(owner, str) or owner not in LIFECYCLE_OWNER_VALUES
+        }
+        if invalid_override_owners:
+            raise ValueError(
+                f"lane has invalid lifecycle owner override(s) "
+                f"{invalid_override_owners}: {key}"
+            )
+        unproven_native_overrides = {
+            dim: owner
+            for dim, owner in overrides.items()
+            if owner == "mgc-native"
+            and (*key, dim) not in NATIVE_LIFECYCLE_OWNER_EVIDENCE
+        }
+        if unproven_native_overrides:
+            raise ValueError(
+                "native lifecycle owner override lacks evidence for exact "
+                f"lane/operation {unproven_native_overrides}: {key}"
+            )
+        invalid_owners = {
+            dim: lifecycle_owner_for(lane, dim)
+            for dim in required
+                if lifecycle_owner_for(lane, dim) not in LIFECYCLE_OWNER_VALUES
+        }
+        if invalid_owners:
+            raise ValueError(f"lane has invalid lifecycle owner(s) {invalid_owners}: {key}")
+
+        step_names = [step[0] for step in lane.get("steps", ())]
+        unknown_steps = sorted(set(step_names) - set(ALL_DIMENSIONS))
+        if unknown_steps:
+            raise ValueError(f"lane has unknown lifecycle step(s) {unknown_steps}: {key}")
+        duplicate_steps = sorted(
+            name for name in set(step_names) if step_names.count(name) > 1
+        )
+        if duplicate_steps:
+            raise ValueError(f"lane has duplicate lifecycle step(s) {duplicate_steps}: {key}")
+
+        framework_ids = lane.get("framework_ids", ())
+        if framework_ids and not framework_id:
+            raise ValueError(
+                f"lane with framework_ids requires an exact framework_id: {core_language}"
+            )
+        if framework_id and list(framework_ids) != [framework_id]:
+            raise ValueError(
+                "framework_id must match the lane's single framework_ids entry: "
+                f"{core_language}"
+            )
+        for framework in framework_ids:
+            framework_key = (core_language[0], framework)
+            if framework_key in framework_keys:
+                raise ValueError(
+                    f"duplicate core/framework lifecycle lane: "
+                    f"{framework_key[0]}/{framework_key[1]}"
+                )
+            framework_keys.add(framework_key)
+    return True
+
+
+validate_lane_registry()
 
 # The SIX-VALUE status vocabulary (Gate 11-C). Only the three *-pass
 # statuses satisfy a required dimension; `unverified` (skipped/env-missing)
@@ -768,10 +1081,59 @@ STATUS_UNVERIFIED = "unverified"
 STATUS_UNSUPPORTED = "unsupported"
 STATUS_FAILED = "failed"
 PASS_STATUSES = (STATUS_NATIVE, STATUS_MANAGED, STATUS_PLAIN)
+ALL_STATUSES = frozenset(
+    (*PASS_STATUSES, STATUS_UNVERIFIED, STATUS_UNSUPPORTED, STATUS_FAILED)
+)
 
-# JSON schema version (v2: 16 dimensions + status vocabulary).
-# (Phiên bản schema JSON (v2: 16 dimension + bộ trạng thái).)
-SCHEMA_VERSION = 2
+# JSON schema version v7: framework-qualified lanes, per-dimension lifecycle
+# ownership, and the full compiled framework-qualification inventory.
+# (Schema JSON v7: lane có framework identity, owner lifecycle từng chiều,
+# và inventory qualification framework đầy đủ lấy từ binary đã biên dịch.)
+SCHEMA_VERSION = 7
+
+REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
+FRAMEWORK_QUALIFICATION_EVIDENCE = []
+
+
+def lifecycle_platform_name() -> str:
+    """Return the host OS name recorded in generated lifecycle evidence."""
+    return platform.system()
+
+
+def lifecycle_working_tree_clean() -> bool:
+    """Return true only when Git can prove there are no tracked or untracked edits.
+    Chỉ trả true khi Git chứng minh không có thay đổi tracked hoặc untracked.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=all"],
+            capture_output=True,
+            text=True,
+            cwd=REPOSITORY_ROOT,
+            check=False,
+        )
+    except OSError:
+        return False
+    return result.returncode == 0 and not result.stdout.strip()
+
+
+def lifecycle_source_matches(commit: str, clean_before_run: bool) -> bool:
+    """Require clean source both before and after collection at one commit.
+    Bắt buộc source sạch trước/sau khi thu thập và giữ cùng một commit.
+    """
+    if not clean_before_run or not commit or not lifecycle_working_tree_clean():
+        return False
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            cwd=REPOSITORY_ROOT,
+            check=False,
+        )
+    except OSError:
+        return False
+    return result.returncode == 0 and result.stdout.strip() == commit
 
 # P0-D (2026-09-16): per-lane DEPENDENCY OWNER — judged from the ADAPTER
 # CODE, never from aspiration. One of exactly four values per lane:
@@ -790,6 +1152,99 @@ SCHEMA_VERSION = 2
 # mgc-native; lane delegated trần ở verdict native-pm MỚI
 # `compatibility-passed`; scaffold-only/unsupported đọc `unsupported`.)
 DEPENDENCY_OWNER_VOCABULARY = ("mgc-native", "delegated", "scaffold-only", "unsupported")
+
+# A package-manager ownership claim needs evidence for the dependency engine,
+# not just the surrounding create/test/build workflow.
+# (Claim sở hữu package manager cần evidence cho dependency engine, không
+# chỉ cho workflow create/test/build bao quanh.)
+NATIVE_PM_USER_OPERATIONS = (
+    "install",
+    "add",
+    "remove",
+    "update",
+    "list",
+    "frozen-install",
+    "offline-reinstall",
+    "gc",
+)
+NATIVE_PM_REQUIRED_DIMENSIONS = (
+    *NATIVE_PM_USER_OPERATIONS,
+    "resolve",
+    "lock",
+    "fetch",
+    "verify",
+    "store",
+    "materialize",
+)
+
+
+def native_pm_supported(dependency_owner, install_owner, delegated, dimensions, operation_owners):
+    """Require native evidence for each package-engine boundary.
+    (Chỉ đạt khi từng ranh giới package-engine có evidence native.)"""
+    expected_owners = {
+        **{operation: "mgc" for operation in NATIVE_PM_USER_OPERATIONS},
+        "resolve": "mgc",
+        "lock": "mgc",
+        "fetch": "mgc",
+        "verify": "mgc",
+        "store": "magicore-shared-cas",
+        "materialize": "mgc",
+    }
+    return (
+        dependency_owner == "mgc-native"
+        and install_owner == "native-engine"
+        and not delegated
+        and all(dimensions.get(name) == STATUS_NATIVE for name in NATIVE_PM_REQUIRED_DIMENSIONS)
+        and all(operation_owners.get(name) == owner for name, owner in expected_owners.items())
+    )
+
+
+def native_pm_claim_scope(lanes):
+    """Return every lane that declares MGC-native dependency ownership.
+    (Trả mọi lane tự khai MGC sở hữu dependency native.)"""
+    return {
+        (lane["core"], lane["language"], lane.get("framework_id", ""))
+        for lane in lanes
+        if lane.get("dependency_owner") == "mgc-native"
+    }
+
+
+def native_pm_claim_errors(lanes):
+    """Reject each native ownership claim without complete runtime evidence.
+    (Từ chối claim native nếu thiếu bằng chứng runtime đầy đủ.)"""
+    failures = []
+    for lane in lanes:
+        if lane.get("dependency_owner") != "mgc-native":
+            continue
+        if lane.get("native_pm_verdict") != "native-pm-supported":
+            failures.append(
+                f"{lane['core']}/{lane['language']} declares mgc-native but "
+                f"native_pm_verdict = {lane.get('native_pm_verdict')}"
+            )
+    return failures
+
+
+def evidence_commit_error(
+    checkout_sha,
+    expected_sha,
+    *,
+    is_ci=False,
+    recorded_sha=None,
+    require_recorded=False,
+):
+    """Reject CI evidence whose checked-out source differs from the run SHA."""
+    if not checkout_sha:
+        return "matrix checkout did not resolve a commit SHA"
+    if is_ci and not expected_sha:
+        return "GITHUB_SHA is required when generating lifecycle evidence in CI"
+    if expected_sha and checkout_sha.lower() != expected_sha.lower():
+        return f"matrix checkout SHA {checkout_sha} does not match workflow SHA {expected_sha}"
+    if is_ci and require_recorded:
+        if not recorded_sha:
+            return "MGC_PLATFORM_EVIDENCE_SHA is required when recording CI green evidence"
+        if recorded_sha.lower() != expected_sha.lower():
+            return "platform evidence SHA does not match workflow GITHUB_SHA"
+    return None
 
 # ---------------------------------------------------------------------------
 # P0-3 platform-evidence counter (Tech Lead 2026-09-16): windows-latest
@@ -816,6 +1271,20 @@ PLATFORM_EVIDENCE_PATH = os.path.join(
     os.pardir, "docs", "specs", "lifecyclePlatformEvidence.json",
 )
 PLATFORM_EVIDENCE_PROMOTION_THRESHOLD = 3
+PLATFORM_EVIDENCE_OS_NAMES = {
+    "windows-latest": "Windows",
+    "macos-latest": "Darwin",
+    "ubuntu-latest": "Linux",
+}
+
+# V1.2 promotion scope is the complete declared platform, not the old six-lane
+# RC subset. Adding a lane therefore expands the gate automatically.
+# (Phạm vi promotion V1.2 là toàn nền tảng đã khai báo, không phải sáu lane
+# RC cũ. Thêm lane tự động mở rộng gate.)
+PLATFORM_EVIDENCE_RELEASE_SCOPE = frozenset(
+    (lane["core"], lane["language"], lane.get("framework_id", ""))
+    for lane in LANES
+)
 
 
 # Manifest markers per language: the file that PROVES the scaffold
@@ -833,6 +1302,11 @@ SCAFFOLD_MARKERS = {
     "java": ["pom.xml", "build.gradle", "build.gradle.kts"],
     "dotnet": ["*.csproj", "*.sln"],
     "javascript": ["package.json"],
+    "vanilla": ["index.html"],
+    "ts": ["index.html"],
+    "node": ["package.json"],
+    "cdk": ["package.json"],
+    "pulumi": ["package.json", "Pulumi.yaml"],
     "flutter": ["pubspec.yaml"],
     # Evidence-only lane markers (P0-6): the file that PROVES the scaffold
     # produced the right artifact for these lanes.
@@ -848,7 +1322,9 @@ SCAFFOLD_MARKERS = {
 }
 
 
-def scaffold_language_matches(sandbox: str, project_dir: str, language: str) -> bool:
+def scaffold_language_matches(
+    sandbox: str, project_dir: str, language: str, required_markers=None
+) -> bool:
     """Verify the scaffolded project carries a manifest of the REQUESTED
     language (anti-fake-scaffold guard, P0-2 honesty contract).
     Xác minh project được sinh có manifest của ĐÚNG ngôn ngữ yêu cầu
@@ -857,6 +1333,8 @@ def scaffold_language_matches(sandbox: str, project_dir: str, language: str) -> 
     if not markers:
         return True  # unknown language — cannot verify, do not guess
     root = os.path.join(sandbox, project_dir)
+    if required_markers:
+        return all(os.path.isfile(os.path.join(root, marker)) for marker in required_markers)
     for marker in markers:
         if marker.startswith("*"):
             # Glob suffix (e.g. *.csproj) — any file matching counts.
@@ -870,9 +1348,9 @@ def scaffold_language_matches(sandbox: str, project_dir: str, language: str) -> 
 
 
 # ---------------------------------------------------------------------------
-# Gate 11-C fine-grained evidence helpers (schema v2 dimensions: detect,
+# Gate 11-C fine-grained evidence helpers (schema v7 dimensions: detect,
 # resolve, lock, fetch, materialize, optimizer, recovery).
-# (Hàm phụ trợ bằng chứng tinh-fine Gate 11-C cho các dimension schema v2.)
+# (Hàm phụ trợ bằng chứng chi tiết Gate 11-C cho các dimension schema v7.)
 # ---------------------------------------------------------------------------
 
 
@@ -891,6 +1369,7 @@ def _owner_pass_status(lane: dict) -> str:
         "native-engine": STATUS_NATIVE,
         "managed-delegation": STATUS_MANAGED,
         "plain-delegation": STATUS_PLAIN,
+        "unsupported": STATUS_UNSUPPORTED,
     }.get(lane.get("install_owner", ""), STATUS_PLAIN)
 
 
@@ -1013,7 +1492,9 @@ def _lockfile_entry_count(path: str, kind: str):
     return None
 
 
-def _materialize_marker(project_dir: str, language: str):
+def _materialize_marker(
+    project_dir: str, language: str, environment: Optional[dict[str, str]] = None
+):
     """Return (label, path) whose non-emptiness PROVES the dependency tree
     landed after install, or (None, None) when this ecosystem has no
     observable marker — which records `unverified`, never a pass.
@@ -1026,25 +1507,27 @@ def _materialize_marker(project_dir: str, language: str):
         return (".venv", os.path.join(project_dir, ".venv"))
     if language == "rust":
         # Rust deps never land in-project — cargo materializes them into
-        # the mgc-managed CARGO_HOME (~/.magicore/store/cargo, see
+        # the MGC-managed global store ($HOME/.magicore/store/cargo, see
         # adapters/lib/src/install/shared_store.rs). That managed store is
         # the materialization surface for this lane.
         # (Deps Rust không bao giờ về trong project — cargo materialize
         # vào CARGO_HOME do mgc quản (~/.magicore/store/cargo). Store quản
         # lý đó là mặt materialize của lane này.)
-        home = os.path.expanduser("~")
-        return ("managed-cargo-home", os.path.join(home, ".magicore", "store", "cargo"))
+        home = (environment or os.environ).get("HOME") or os.path.expanduser("~")
+        return ("mgc-cargo-store", os.path.join(home, ".magicore", "store", "cargo"))
     if language == "go":
         # The go module cache lives at GOMODCACHE — observable only when
         # the go toolchain is on PATH; otherwise unverified.
         # (Module cache của go nằm ở GOMODCACHE — chỉ quan sát được khi go
         # có trên PATH; không thì unverified.)
-        go = shutil.which("go")
+        env = environment or os.environ
+        go = shutil.which("go", path=env.get("PATH"))
         if go is None:
             return (None, None)
         try:
             proc = subprocess.run(
-                [go, "env", "GOMODCACHE"], capture_output=True, text=True, timeout=30
+                [go, "env", "GOMODCACHE"], capture_output=True, text=True,
+                timeout=30, env=env,
             )
         except (OSError, subprocess.TimeoutExpired):
             return (None, None)
@@ -1111,9 +1594,7 @@ def _recovery_probe(mgc_bin: str, project_path: str, sandbox: str,
     # crash+repair scenario runs against ITS OWN store, never the user's.
     # (Store per-project cô lập (khuôn kill-matrix): toàn kịch bản
     # crash+repair chạy trên store RIÊNG, không bao giờ store của user.)
-    iso_cache = os.path.join(rec_project, ".magicore-recovery")
-    env = os.environ.copy()
-    env["MGC_CACHE_DIR"] = iso_cache
+    env = recovery_environment(sandbox, rec_project)
 
     def _doctor(*extra: str):
         proc = subprocess.run(
@@ -1253,20 +1734,20 @@ def _fail(message: str, detail: str = "") -> None:
 # (Các operation mà mỗi lane PHẢI khai báo owner riêng (Gate 11-C): một
 # nhãn install_owner mỗi lane KHÔNG đủ để mô tả ecosystem — audit đòi
 # tách năng lực.)
-REQUIRED_OWNER_OPERATIONS = ["resolve", "lock", "fetch", "store", "materialize"]
+REQUIRED_OWNER_OPERATIONS = list(ALL_DEPENDENCY_OPERATIONS)
 
 
 def validate_lane_owners() -> int:
     """Gate 11-C owner gate: every lane declares install_owner AND an
-    owner for each install operation, and the per-operation owners agree
+    owner for each install operation including integrity verification, and the per-operation owners agree
     with the coarse install_owner label (native-engine lanes must have
-    mgc/magicore owning resolve, lock, fetch, store, materialize — any
+    mgc/magicore owning resolve, lock, fetch, verify, store, materialize — any
     native-toolchain owner in that set contradicts the label and BLOCKS).
     Trả về 0 khi sạch; in lỗi và trả 1 khi có lane vi phạm.
     Cổng owner Gate 11-C: mọi lane khai install_owner VÀ owner cho từng
-    operation install; owner per-operation phải khớp nhãn install_owner
+    operation install và xác minh integrity; owner per-operation phải khớp nhãn install_owner
     thô (lane native-engine phải có mgc/magicore giữ resolve, lock,
-    fetch, store, materialize — owner toolchain-native trong tập đó mâu
+    fetch, verify, store, materialize — owner toolchain-native trong tập đó mâu
     thuẫn với nhãn và BỊ CHẶN)."""
     violations = []
     for lane in LANES:
@@ -1275,7 +1756,7 @@ def validate_lane_owners() -> int:
         if not owner:
             violations.append(f"{tag}: missing install_owner")
             continue
-        if owner not in ("native-engine", "managed-delegation", "plain-delegation"):
+        if owner not in ("native-engine", "managed-delegation", "plain-delegation", "unsupported"):
             violations.append(f"{tag}: unknown install_owner '{owner}'")
         ops = lane.get("owner_by_operation", {})
         if not ops:
@@ -1284,23 +1765,15 @@ def validate_lane_owners() -> int:
         for op in REQUIRED_OWNER_OPERATIONS:
             if not ops.get(op):
                 violations.append(f"{tag}: owner_by_operation missing '{op}'")
-        # Consistency: a native-engine lane must have mgc/magicore owning
-        # EVERY operation — a native toolchain owner anywhere contradicts
-        # the native-engine label.
-        # (Nhất quán: lane native-engine phải có mgc/magicore giữ MỌI
-        # operation — owner toolchain-native ở bất kỳ đâu mâu thuẫn với
-        # nhãn native-engine.)
+        # The coarse install label describes only Install. Each other
+        # operation is checked independently against the compiled binary;
+        # it must not inherit a native claim from Install.
         if owner == "native-engine":
-            for op in REQUIRED_OWNER_OPERATIONS:
-                op_owner = ops.get(op, "")
-                if op_owner and not (
-                    op_owner.startswith("mgc") or op_owner.startswith("magicore")
-                ):
-                    violations.append(
-                        f"{tag}: install_owner=native-engine but '{op}' is owned by "
-                        f"'{op_owner}' — contradiction (install pass cannot launder "
-                        f"into native-{op} pass)"
-                    )
+            install_owner = ops.get("install", "")
+            if not (install_owner.startswith("mgc") or install_owner.startswith("magicore")):
+                violations.append(f"{tag}: install_owner=native-engine but install is not MGC-owned")
+        elif owner == "unsupported" and not ops.get("install", "").startswith("unsupported"):
+            violations.append(f"{tag}: install_owner=unsupported but install is not unsupported")
         # A delegation label must show the toolchain actually owning the
         # operations (at least fetch) — otherwise the delegation label is
         # unverified.
@@ -1341,13 +1814,10 @@ def validate_lane_owners() -> int:
 #           requirements.lock) — adapters/ai/src/adapter.rs:57/61/65.
 #   app   → TRUE×3: implemented (flutter pub orchestration) —
 #           adapters/app/src/adapter.rs:52/56/60.
-#   game  → resolve/fetch FALSE: MgError::Unsupported, "managed by the
-#           engine's own toolchain" (adapters/game/src/adapter.rs:58/70);
-#           install TRUE via engine exec only (bevy → `cargo fetch`,
-#           adapter.rs:78; Godot/Unity/Unreal fail-closed).
-#   iot   → resolve/fetch FALSE: MgError::Unsupported —
-#           adapters/iot/src/adapter.rs:58/70; install TRUE via toolchain
-#           exec (cargo/pio/west, adapter.rs:80).
+#   game  → adapter protocol lacks generic resolve/fetch, but the Bevy CLI
+#           route invokes the Lib/Rust native engine (install/game.rs).
+#   iot   → adapter protocol lacks generic resolve/fetch, but esp32-rust
+#           CLI route invokes the Lib/Rust native engine (install/iot.rs).
 #   clo   → resolve/fetch FALSE outside the embedded web engine —
 #           terraform/CDK modules are fetched by `terraform init`
 #           (adapters/cloud/src/adapter.rs:78/93); install TRUE
@@ -1358,10 +1828,8 @@ def validate_lane_owners() -> int:
 #   cicd  → FALSE×3: MgError::Unsupported for resolve/fetch/install
 #           (adapters/cicd/src/adapter.rs:65/75/83), plus write_manifest
 #           (:52); add/remove/update → "cicd has no package manager".
-# (Bảng capability production cứng từ adapter THẬT — taxonomy lane phải
-# khớp bảng này, không khớp khát vọng: lane nào adapter trả Unsupported
-# cho install/resolve/fetch thì cấm native-engine và cấm owner mgc cho
-# op đó — đúng false-positive P0-5 của hardware/cicd.)
+# (Bảng năng lực adapter theo core; CLI route override phải được nêu đích
+# danh vì một adapter Unsupported không phủ định một route MGC khác.)
 # ---------------------------------------------------------------------------
 ADAPTER_REGISTRY_CAPABILITIES = {
     "web":      {"resolve": True,  "fetch": True,  "install": True},
@@ -1375,19 +1843,32 @@ ADAPTER_REGISTRY_CAPABILITIES = {
     "cicd":     {"resolve": False, "fetch": False, "install": False},
 }
 
+# Some CLI dependency lanes intentionally route through the shared Lib
+# resolver instead of their core adapter. Keep these explicit so a core
+# adapter's unsupported package trait cannot erase (or invent) the actual
+# CLI implementation route. Runtime capabilities cross-check is still
+# required before treating this table as evidence.
+CLI_NATIVE_DEPENDENCY_ROUTES = {
+    ("game", "rust"): "cli/src/commands/core/install/game.rs -> Lib/Rust adapter",
+    ("iot", "rust"): "cli/src/commands/core/install/iot.rs -> Lib/Rust adapter",
+    # Cloud CDK/Pulumi embed the MGC WebAdapter for JS package lifecycle;
+    # this exception is framework-scoped. Terraform/Cloudflare remain
+    # unsupported and do not inherit the cloud core's embedded route.
+    # (Cloud CDK/Pulumi nhúng WebAdapter của MGC cho JS package lifecycle;
+    # ngoại lệ theo framework, không áp dụng cho Terraform/Cloudflare.)
+    ("clo", "cdk"): "adapters/cloud/src/adapter.rs -> embedded WebAdapter",
+    ("clo", "pulumi"): "adapters/cloud/src/adapter.rs -> embedded WebAdapter",
+}
+
 
 def validate_adapter_consistency() -> int:
-    """P0-5 consistency gate (Tech Lead verdict 2026-09-16): the lane
-    taxonomy must match the PRODUCTION adapters' real capabilities — an
-    adapter that returns MgError::Unsupported for install/resolve/fetch
-    can never back a `native-engine` label or an mgc-owned per-operation
-    claim. Fail-closed: any mismatch (or an unknown core row) blocks with
-    exit 1.
-    Cổng nhất quán P0-5: taxonomy lane phải khớp capability THẬT của
-    adapter production — adapter trả MgError::Unsupported cho
-    install/resolve/fetch thì không bao giờ được đứng sau nhãn
-    native-engine hay claim owner mgc. Fail-closed: lệch (hoặc core chưa
-    có dòng bảng) là chặn exit 1."""
+    """Cross-check the lane against its adapter or explicit CLI route.
+    Generic adapter capability cannot disprove a separate MGC-native CLI
+    route, but such an exception must name a real source file and is still
+    checked operation-by-operation against the compiled binary.
+    (Đối chiếu lane với adapter hoặc CLI route tường minh. Adapter chung
+    không phủ định route MGC riêng, nhưng ngoại lệ phải trỏ tới source thật
+    và vẫn bị cross-check từng operation với binary.)"""
     violations = []
     for lane in LANES:
         tag = f"{lane['core']}/{lane['language']}"
@@ -1401,6 +1882,21 @@ def validate_adapter_consistency() -> int:
                 f"{tag}: core '{lane['core']}' missing from "
                 "ADAPTER_REGISTRY_CAPABILITIES — add the adapter's real row"
             )
+            continue
+        route_source = CLI_NATIVE_DEPENDENCY_ROUTES.get((lane["core"], lane["language"]))
+        if route_source:
+            # These CLI paths are verified against the binary's DepGate
+            # operation table below; the generic adapter itself remains
+            # unsupported for the registry protocol surface.
+            source_path = route_source.split(" ->", 1)[0]
+            source_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                source_path,
+            )
+            if not os.path.isfile(source_path):
+                violations.append(
+                    f"{tag}: declared native CLI route source is missing: {route_source}"
+                )
             continue
         owner = lane.get("install_owner", "")
         ops = lane.get("owner_by_operation", {})
@@ -1423,8 +1919,8 @@ def validate_adapter_consistency() -> int:
             print(f"ADAPTER CONSISTENCY GATE VIOLATION: {v}", file=sys.stderr)
         return 1
     print(
-        f"adapter consistency gate: {len(LANES)} lanes match "
-        "production adapter capabilities (P0-5)"
+        f"adapter/CLI-route consistency gate: {len(LANES)} lanes have "
+        "a declared implementation route (P0-5)"
     )
     return 0
 
@@ -1468,24 +1964,25 @@ def validate_dependency_owners() -> int:
 
 
 def check_dep_gate_consistency(binary_ownership: dict, lanes: list) -> list:
-    """Pure cross-check: matrix lane `dependency_owner` vs the binary's
-    `mgc capabilities --json` dependency_ownership table (install op).
-    Both directions fail — a lane claiming native the binary denies is
-    laundering, and a lane denying native the binary proves is stale.
-    `unsupported` on the binary side accepts matrix `unsupported` or
-    `scaffold-only` (both mean "no supported install lifecycle").
+    """Cross-check every package operation against the compiled CLI truth.
+    A coarse `install` match is insufficient: CRUD/list/frozen/offline/GC
+    can differ by ecosystem. Missing binary cells and missing lane owners
+    fail closed; an unsupported binary cell cannot be laundered as native.
     (Đối chiếu thuần: `dependency_owner` của lane matrix với bảng của
     binary. Cả hai chiều đều fail.)
-    `binary_ownership`: {core: {"install": owner, "languages": {lang:
-    owner}}} with owners mgc-native | delegated | unsupported. Matrix
-    lane languages map to gate languages (typescript->ts,
+    `binary_ownership`: {core: {"operations": {op: owner}, "languages":
+    {lang: {op: owner}}, "frameworks": {id: {op: owner}}}. A lane with
+    `framework_id` must match that exact qualification record; it cannot
+    fall back to a broader language/core owner.
+    Matrix lane languages map to gate languages (typescript->ts,
     react-native->rn, others identical).
     Returns the violation list (empty = consistent)."""
-    expected = {
-        "mgc-native": ("mgc-native",),
-        "delegated": ("delegated",),
-        "unsupported": ("unsupported", "scaffold-only"),
-    }
+    def matches(binary_owner, matrix_owner):
+        if binary_owner == "mgc-native":
+            return matrix_owner == "mgc" or matrix_owner == "magicore-shared-cas"
+        if binary_owner == "scaffold-only":
+            return matrix_owner == "scaffold-only"
+        return binary_owner == "unsupported" and str(matrix_owner).startswith("unsupported")
     # Matrix-taxonomy → gate-ecosystem ids, PER CORE: the matrix names a
     # lane by its toolchain language while the firewall matches the
     # lane's detected ecosystem id. (lib, typescript) scaffolds a
@@ -1494,6 +1991,8 @@ def check_dep_gate_consistency(binary_ownership: dict, lanes: list) -> list:
     # (iot, rust) scaffolds esp32-rust (gate "esp32-rust"). Every other
     # (core, language) pair already spells the gate id.
     language_alias = {
+        ("web", "javascript"): "js",
+        ("web", "typescript"): "ts",
         ("lib", "typescript"): "ts",
         ("app", "react-native"): "rn",
         ("game", "rust"): "bevy",
@@ -1508,46 +2007,97 @@ def check_dep_gate_consistency(binary_ownership: dict, lanes: list) -> list:
             violations.append(f"{tag}: core missing from binary ownership table")
             continue
         gate_lang = language_alias.get((lane["core"], lane["language"]), lane["language"])
-        truth = entry.get("languages", {}).get(gate_lang)
-        if truth is None:
-            truth = entry.get("install")
-        if truth is None:
-            violations.append(f"{tag}: install ownership missing from binary table")
+        truth_ops = None
+        manifest_variant = lane.get("manifest_variant")
+        if manifest_variant:
+            truth_ops = entry.get("variants", {}).get(manifest_variant)
+        framework_id = lane.get("framework_id")
+        if framework_id:
+            truth_ops = entry.get("frameworks", {}).get(framework_id)
+            if not isinstance(truth_ops, dict):
+                violations.append(
+                    f"{tag}: framework '{framework_id}' missing from binary qualification table"
+                )
+                continue
+        if truth_ops is None:
+            truth_ops = entry.get("languages", {}).get(gate_lang)
+        if truth_ops is None:
+            truth_ops = entry.get("operations")
+        if not isinstance(truth_ops, dict):
+            violations.append(f"{tag}: operation ownership missing from binary table")
             continue
-        if claimed not in expected.get(truth, ()):
+        matrix_ops = lane.get("owner_by_operation", {})
+        binary_install = truth_ops.get("install")
+        expected_claim = {
+            "mgc-native": "mgc-native",
+            "scaffold-only": "scaffold-only",
+            "unsupported": "unsupported",
+        }.get(binary_install)
+        claim_matches = claimed == expected_claim or (
+            binary_install == "unsupported" and claimed == "scaffold-only"
+        )
+        if not claim_matches:
             violations.append(
-                f"{tag}: matrix claims '{claimed}' but the binary owns "
-                f"install as '{truth}'"
+                f"{tag}: matrix claims '{claimed}' but binary install owner is "
+                f"'{binary_install or 'missing'}'"
             )
+        for operation in ALL_DEPENDENCY_OPERATIONS:
+            binary_owner = truth_ops.get(operation)
+            matrix_owner = matrix_ops.get(operation)
+            if binary_owner is None:
+                violations.append(f"{tag}: binary operation owner missing '{operation}'")
+            elif matrix_owner is None:
+                violations.append(f"{tag}: matrix operation owner missing '{operation}'")
+            elif not matches(binary_owner, matrix_owner):
+                violations.append(
+                    f"{tag}: operation '{operation}' matrix owner '{matrix_owner}' "
+                    f"does not match binary owner '{binary_owner}'"
+                )
     return violations
 
 
 def validate_dep_gate_consistency(mgc_bin=None) -> int:
     """T0.4 binary↔matrix consistency gate: shell `mgc capabilities` and
     require every lane's `dependency_owner` to agree with the C0 firewall
-    table for the install op. No binary → honest UNAVAILABLE record
-    (internal taxonomy gates above still enforced; release-gating runs
-    MUST provide the binary).
+    table for the install op. It also captures the complete framework
+    qualification inventory from this compiled binary; catalogued
+    frameworks without native ownership and a lifecycle lane stay visible
+    and block promotion. No binary fails closed in release-gating runs.
     (Cổng nhất quán T0.4: gọi `mgc capabilities` và bắt mọi lane khớp
     bảng tường lửa C0 ở op install. Không có binary → ghi UNAVAILABLE
     trung thực.)"""
     import subprocess
 
-    candidates = []
-    if mgc_bin:
-        candidates.append(mgc_bin)
+    # An explicitly selected binary is part of the evidence identity. Never
+    # replace a missing path with a different local binary: that would let a
+    # stale/debug binary silently satisfy a CI or release check.
+    # (Binary được chỉ định là một phần identity của evidence; không fallback
+    # sang binary debug khác khi đường dẫn được chọn bị thiếu.)
     env_bin = os.environ.get("MGC_BIN")
-    if env_bin:
-        candidates.append(env_bin)
-    candidates.append("./target/debug/mgc")
+    candidates = (
+        [mgc_bin]
+        if mgc_bin is not None
+        else [env_bin]
+        if env_bin
+        else ["./target/debug/mgc"]
+    )
     binary = next((c for c in candidates if os.path.isfile(c)), None)
     if binary is None:
+        if (
+            os.environ.get("MGC_ALLOW_MISSING_DEP_GATE_BINARY") == "1"
+            and not os.environ.get("CI")
+        ):
+            print(
+                "dep-gate cross-check: STATIC-ONLY (explicit local opt-in; "
+                "not release evidence)"
+            )
+            return 0
         print(
-            "dep-gate cross-check: UNAVAILABLE (no mgc binary) — "
-            "internal taxonomy gates still enforced; release runs must "
-            "provide the binary"
+            "DEP-GATE CROSS-CHECK VIOLATION: no compiled mgc binary; "
+            "runtime ownership validation is mandatory",
+            file=sys.stderr,
         )
-        return 0
+        return 1
     try:
         raw = subprocess.run(
             [binary, "capabilities"], capture_output=True, text=True, timeout=120
@@ -1562,19 +2112,43 @@ def validate_dep_gate_consistency(mgc_bin=None) -> int:
             file=sys.stderr,
         )
         return 1
+    global FRAMEWORK_QUALIFICATION_EVIDENCE
     try:
         payload = json.loads(raw.stdout)
         ownership = {}
+        framework_rows = []
         for core in payload["cores"]:
             table = core["dependency_ownership"]
+            def owners(cells):
+                return {operation: value["owner"] for operation, value in cells.items()}
+
             entry = {
-                "install": table["operations"]["install"]["owner"],
+                "operations": owners(table["operations"]),
                 "languages": {
-                    language: cells["install"]["owner"]
+                    language: owners(cells)
                     for language, cells in table.get("languages", {}).items()
                 },
+                "frameworks": {
+                    row["framework"]: owners(row["dependency_ownership"])
+                    for row in core.get("framework_qualification", [])
+                },
             }
+            for framework in core.get("framework_qualification", []):
+                framework_rows.append({
+                    "core": core["core"],
+                    "framework": framework["framework"],
+                    "status": framework["status"],
+                    "dependency_ownership": framework["dependency_ownership"],
+                    "evidence": framework.get("evidence", ""),
+                    "required_manifest": framework.get("required_manifest"),
+                })
+            for variant, cells in table.get("manifest_variants", {}).items():
+                language = variant.split("/", 1)[0]
+                entry.setdefault("variants", {})[variant] = owners(cells)
             ownership[core["core"]] = entry
+        FRAMEWORK_QUALIFICATION_EVIDENCE = sorted(
+            framework_rows, key=lambda row: (row["core"], row["framework"])
+        )
     except (ValueError, KeyError, TypeError) as err:
         print(
             "DEP-GATE CROSS-CHECK VIOLATION: unparseable capabilities "
@@ -1587,44 +2161,111 @@ def validate_dep_gate_consistency(mgc_bin=None) -> int:
         for v in violations:
             print(f"DEP-GATE CROSS-CHECK VIOLATION: {v}", file=sys.stderr)
         return 1
-    print(f"dep-gate cross-check: {len(LANES)} lanes agree with the binary")
+    print(
+        f"dep-gate cross-check: {len(LANES)} lanes agree with the binary; "
+        f"captured {len(FRAMEWORK_QUALIFICATION_EVIDENCE)} framework records"
+    )
     return 0
 
 
+def framework_catalog_errors(catalog, lanes):
+    """Require every binary-reported framework to be fully owned and lane-tested.
+    (Bắt mọi framework trong binary phải có ownership native đầy đủ và lane E2E.)"""
+    if not isinstance(catalog, list) or not catalog:
+        return ["compiled capability output has no framework catalog"]
+    errors = []
+    by_key = {}
+    valid_statuses = {"mgc-engine-path", "scaffold-only"}
+    lane_keys = {
+        (lane.get("core"), lane.get("framework_id"))
+        for lane in lanes
+        if isinstance(lane, dict) and lane.get("framework_id")
+    }
+    for row in catalog:
+        if not isinstance(row, dict):
+            errors.append("framework catalog contains a malformed row")
+            continue
+        core, framework = row.get("core"), row.get("framework")
+        if not isinstance(core, str) or not core or not isinstance(framework, str) or not framework:
+            errors.append("framework catalog row has invalid identity")
+            continue
+        key = (core, framework)
+        if key in by_key:
+            errors.append(f"duplicate framework catalog identity {core}/{framework}")
+            continue
+        by_key[key] = row
+        status = row.get("status")
+        if not isinstance(status, str) or status not in valid_statuses:
+            errors.append(f"{core}/{framework} has unknown qualification status {status!r}")
+        elif status != "mgc-engine-path":
+            errors.append(f"{core}/{framework} is scaffold-only, not lifecycle-qualified")
+        if key not in lane_keys:
+            errors.append(f"{core}/{framework} has no lifecycle evidence lane")
+        ownership = row.get("dependency_ownership")
+        if not isinstance(ownership, dict):
+            errors.append(f"{core}/{framework} has no dependency ownership table")
+            continue
+        unknown_ops = sorted(set(ownership) - set(ALL_DEPENDENCY_OPERATIONS))
+        if unknown_ops:
+            errors.append(
+                f"{core}/{framework} has unknown dependency operations: "
+                + ", ".join(unknown_ops)
+            )
+        for operation in ALL_DEPENDENCY_OPERATIONS:
+            cell = ownership.get(operation)
+            owner = cell.get("owner") if isinstance(cell, dict) else None
+            if owner != "mgc-native":
+                errors.append(
+                    f"{core}/{framework} operation {operation} is not MGC-native "
+                    f"(owner={owner!r})"
+                )
+    for lane in lanes:
+        if not isinstance(lane, dict) or not lane.get("framework_id"):
+            continue
+        key = (lane.get("core"), lane.get("framework_id"))
+        if key not in by_key:
+            errors.append(
+                f"lifecycle lane {key[0]}/{key[1]} is not present in framework catalog"
+            )
+    return errors
+
+
 def print_dependency_owner_summary() -> None:
-    """Validate-only report: per-lane dependency_owner table with the
-    verdict ceiling it imposes, plus a machine-readable JSON block on
+    """Print declared ownership without implying runtime verification.
+    (In ownership đã khai, không ám chỉ đã xác minh runtime.)
+    Validate-only report includes evidence requirements and JSON on
     stdout so a consumer never parses the human table.
-    (Báo cáo validate-only: bảng dependency_owner từng lane kèm trần
-    verdict nó áp, cộng khối JSON máy-đọc trên stdout để consumer không
-    bao giờ phải parse bảng người-đọc.)"""
-    ceiling = {
-        "mgc-native": "native-pm-supported (ceiling)",
-        "delegated": "compatibility-passed (ceiling)",
+    (Báo cáo validate-only nêu ownership và evidence cần có, kèm JSON
+    trên stdout để consumer không phải parse bảng người-đọc.)"""
+    evidence_label = {
+        "mgc-native": "native evidence required; not a verdict",
+        "delegated": "compatibility only; never native",
         "scaffold-only": "unsupported",
         "unsupported": "unsupported",
     }
     print("=== dependency_owner summary (P0-D) ===")
     print(
         f"  {'lane':<24} {'dependency_owner':<16} "
-        f"{'install_owner':<20} verdict ceiling"
+        f"{'install_owner':<20} evidence status"
     )
     for lane in LANES:
         tag = f"{lane['core']}/{lane['language']}"
         print(
             f"  {tag:<24} {lane['dependency_owner']:<16} "
             f"{lane.get('install_owner', '-'):<20} "
-            f"{ceiling[lane['dependency_owner']]}"
+            f"{evidence_label[lane['dependency_owner']]}"
         )
     print(
         json.dumps(
             {
                 "dependency_owner_gate": "pass",
+                "native_pm_verdict": "not-evaluated-without-lifecycle-evidence",
                 "lanes": [
                     {
                         "core": lane["core"],
                         "language": lane["language"],
                         "dependency_owner": lane["dependency_owner"],
+                        "native_pm_verdict": "not-evaluated-without-lifecycle-evidence",
                     }
                     for lane in LANES
                 ],
@@ -1671,17 +2312,55 @@ def record_platform_green(os_name: str) -> int:
     dấu SHA + giờ UTC của lần chạy. Nguồn SHA: env
     MGC_PLATFORM_EVIDENCE_SHA (CI truyền GITHUB_SHA), dự phòng
     `git rev-parse HEAD` cho lần chạy local.)"""
+    if os_name not in PLATFORM_EVIDENCE_OS_NAMES:
+        _fail(f"refusing to record unknown platform evidence key: {os_name}")
+    matrix_path = os.environ.get(
+        "MGC_LIFECYCLE_MATRIX_OUT",
+        "docs/specs/lifecycleCapabilityMatrix.json",
+    )
+    try:
+        with open(matrix_path, "r", encoding="utf-8") as matrix_file:
+            matrix = json.load(matrix_file)
+    except (OSError, ValueError) as exc:
+        _fail(f"cannot read lifecycle matrix before recording platform green: {exc}")
+    checkout = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        cwd=REPOSITORY_ROOT,
+        check=False,
+    )
+    checkout_sha = checkout.stdout.strip() if checkout.returncode == 0 else ""
+    current_tree_clean = lifecycle_working_tree_clean()
+    expected_platform = PLATFORM_EVIDENCE_OS_NAMES[os_name]
+    errors = platform_evidence_errors(
+        matrix,
+        checkout_sha,
+        expected_platform=expected_platform,
+        current_tree_clean=current_tree_clean,
+    )
+    workflow_sha = (os.environ.get("MGC_PLATFORM_EVIDENCE_SHA") or "").strip()
+    commit_error = evidence_commit_error(
+        checkout_sha,
+        workflow_sha or None,
+        is_ci=os.environ.get("CI", "").lower() in {"true", "1", "yes"},
+        recorded_sha=workflow_sha or None,
+        require_recorded=os.environ.get("CI", "").lower() in {"true", "1", "yes"},
+    )
+    if commit_error:
+        errors.append(commit_error)
+    if errors:
+        _fail(
+            f"refusing to record {os_name} as green: lifecycle evidence is not green",
+            "\n".join(errors),
+        )
+
     evidence = _platform_evidence_load()
     entry = evidence.get(os_name)
     if not isinstance(entry, dict):
         entry = {}
     entry["runs"] = int(entry.get("runs", 0)) + 1
-    sha = (os.environ.get("MGC_PLATFORM_EVIDENCE_SHA") or "").strip()
-    if not sha:
-        proc = subprocess.run(
-            ["git", "rev-parse", "HEAD"], capture_output=True, text=True
-        )
-        sha = (proc.stdout or "").strip()
+    sha = workflow_sha or checkout_sha
     entry["last_green_sha"] = sha or "unknown"
     entry["last_green_at"] = datetime.datetime.now(
         datetime.timezone.utc
@@ -1718,6 +2397,369 @@ def reset_platform_counter(os_name: str) -> int:
     return 0
 
 
+def platform_evidence_errors(
+    matrix, checkout_sha, *, expected_platform=None, current_tree_clean=None
+):
+    """Return failures that must block a platform-green streak increment."""
+    errors = []
+    if not isinstance(matrix, dict) or matrix.get("matrix_kind") != "lifecycle":
+        return ["matrix is missing or is not lifecycle evidence"]
+    if matrix.get("schema_version") != SCHEMA_VERSION:
+        errors.append(
+            f"matrix schema_version {matrix.get('schema_version')!r} "
+            f"does not match required schema {SCHEMA_VERSION}"
+        )
+    if matrix.get("working_tree_clean") is not True:
+        errors.append(
+            "matrix was generated from a dirty or unknown working tree; "
+            "platform promotion requires a clean source checkout"
+        )
+    if current_tree_clean is not True:
+        errors.append(
+            "current checkout is dirty or Git could not verify cleanliness; "
+            "platform promotion requires a clean source checkout"
+        )
+    matrix_sha = matrix.get("commit")
+    if not checkout_sha or matrix_sha != checkout_sha:
+        errors.append(
+            f"matrix commit {matrix_sha!r} does not match checkout {checkout_sha!r}"
+        )
+    if expected_platform and matrix.get("platform") != expected_platform:
+        errors.append(
+            f"matrix platform {matrix.get('platform')!r} does not match "
+            f"runner platform {expected_platform!r}"
+        )
+    lanes = matrix.get("lanes")
+    if not isinstance(lanes, list):
+        return errors + ["matrix lanes are missing or malformed"]
+    indexed = {}
+    for lane in lanes:
+        if not isinstance(lane, dict):
+            errors.append("matrix contains a malformed lane record")
+            continue
+        core_language = (lane.get("core"), lane.get("language"))
+        framework_id = lane.get("framework_id", "") or ""
+        if (
+            not all(isinstance(part, str) and part for part in core_language)
+            or not isinstance(framework_id, str)
+        ):
+            errors.append("matrix contains a lane with invalid core/language identity")
+            continue
+        key = (*core_language, framework_id)
+        if key in indexed:
+            errors.append(f"matrix contains duplicate lane {key}")
+        indexed[key] = lane
+    for core, language, framework_id in sorted(
+        set(indexed) - PLATFORM_EVIDENCE_RELEASE_SCOPE
+    ):
+        tag = f"{core}/{language}" + (f"#{framework_id}" if framework_id else "")
+        errors.append(f"matrix contains lane outside global v1.2 scope {tag}")
+    for core, language, framework_id in sorted(PLATFORM_EVIDENCE_RELEASE_SCOPE):
+        tag = f"{core}/{language}" + (f"#{framework_id}" if framework_id else "")
+        lane = indexed.get((core, language, framework_id))
+        if lane is None:
+            errors.append(f"platform release-scope lane {tag} is missing")
+            continue
+        if lane.get("toolchain_available") is not True:
+            errors.append(f"platform lane {tag} toolchain is unavailable or unverified")
+        required = lane.get("required_dimensions")
+        dimensions = lane.get("dimensions")
+        if (
+            not isinstance(required, list)
+            or not required
+            or not all(isinstance(name, str) and name for name in required)
+            or len(set(required)) != len(required)
+        ):
+            errors.append(f"platform release-scope lane {tag} has no required dimensions")
+            continue
+        source_required = required_dimensions_for_lane(core, language, framework_id)
+        if source_required is None:
+            errors.append(f"platform release-scope lane {tag} has no source applicability contract")
+            continue
+        source_lane = next(
+            (
+                candidate for candidate in LANES
+                if candidate["core"] == core
+                and candidate["language"] == language
+                and (candidate.get("framework_id", "") or "") == framework_id
+            ),
+            None,
+        )
+        if source_lane is None:
+            errors.append(f"platform release-scope lane {tag} has no source owner contract")
+            continue
+        if tuple(required) != source_required:
+            errors.append(
+                f"platform release-scope lane {tag} required dimensions differ from source contract: "
+                f"matrix={required!r}, source={list(source_required)!r}"
+            )
+        if not isinstance(dimensions, dict):
+            errors.append(f"platform release-scope lane {tag} has malformed dimensions")
+            continue
+        unknown_dimensions = sorted(set(dimensions) - set(ALL_DIMENSIONS))
+        if unknown_dimensions:
+            errors.append(
+                f"platform release-scope lane {tag} has unknown dimensions: "
+                + ", ".join(unknown_dimensions)
+            )
+        missing_dimensions = sorted(set(ALL_DIMENSIONS) - set(dimensions))
+        if missing_dimensions:
+            errors.append(
+                f"platform release-scope lane {tag} is missing v1.2 dimensions: "
+                + ", ".join(missing_dimensions)
+            )
+        invalid_dimensions = sorted(
+            name for name, status in dimensions.items() if status not in ALL_STATUSES
+        )
+        if invalid_dimensions:
+            errors.append(
+                f"platform release-scope lane {tag} has invalid dimension statuses: "
+                + ", ".join(
+                    f"{name}={dimensions.get(name)!r}" for name in invalid_dimensions
+                )
+            )
+        enforced_required = source_required
+        failed = [name for name in enforced_required if dimensions.get(name) not in PASS_STATUSES]
+        if failed:
+            errors.append(
+                f"platform release-scope lane {tag} has non-passing required dimensions: "
+                + ", ".join(f"{name}={dimensions.get(name, 'missing')}" for name in failed)
+            )
+        if lane.get("verdict") != "orchestration-lifecycle-passed":
+            errors.append(
+                f"platform release-scope lane {tag} verdict is "
+                f"{lane.get('verdict')!r}, not orchestration-lifecycle-passed"
+            )
+        lifecycle_owners = lane.get("lifecycle_owners")
+        if not isinstance(lifecycle_owners, dict):
+            errors.append(f"platform lane {tag} is missing lifecycle owner evidence")
+        else:
+            unknown_owner_dimensions = sorted(set(lifecycle_owners) - set(ALL_DIMENSIONS))
+            if unknown_owner_dimensions:
+                errors.append(
+                    f"platform lane {tag} has unknown lifecycle owner dimensions: "
+                    + ", ".join(unknown_owner_dimensions)
+                )
+            invalid_owners = {
+                dimension: owner for dimension, owner in lifecycle_owners.items()
+                if not isinstance(owner, str) or owner not in LIFECYCLE_OWNER_VALUES
+            }
+            if invalid_owners:
+                errors.append(
+                    f"platform lane {tag} has invalid lifecycle owners: {invalid_owners!r}"
+                )
+            for dimension in source_required:
+                owner = lifecycle_owners.get(dimension)
+                if not isinstance(owner, str) or owner not in LIFECYCLE_OWNER_VALUES:
+                    errors.append(
+                        f"platform lane {tag} has missing or invalid lifecycle owner "
+                        f"for {dimension}: {owner!r}"
+                    )
+                else:
+                    source_owner = lifecycle_owner_for(source_lane, dimension)
+                    if owner != source_owner:
+                        errors.append(
+                            f"platform lane {tag} lifecycle owner differs from source "
+                            f"contract for {dimension}: matrix={owner!r}, "
+                            f"source={source_owner!r}"
+                        )
+                if isinstance(owner, str) and owner in LIFECYCLE_OWNER_VALUES and owner != "mgc-native":
+                    errors.append(
+                        f"platform lane {tag} required dimension {dimension} is not "
+                        f"MGC-native (owner={owner})"
+                    )
+                elif dimensions.get(dimension) != lifecycle_status_for_owner(owner):
+                    errors.append(
+                        f"platform lane {tag} status/owner mismatch for {dimension}: "
+                        f"status={dimensions.get(dimension)!r}, owner={owner!r}"
+                    )
+        if lane.get("dependency_owner") != "mgc-native":
+            errors.append(
+                f"platform lane {tag} requires mgc-native ownership, got "
+                f"{lane.get('dependency_owner')!r}"
+            )
+        if not native_pm_supported(
+            lane.get("dependency_owner"),
+            lane.get("install_owner"),
+            lane.get("native_pm_delegated", []),
+            dimensions,
+            lane.get("owner_by_operation", {}),
+        ):
+            errors.append(
+                f"platform lane {tag} lacks complete native package-manager evidence"
+            )
+        if lane.get("native_pm_verdict") != "native-pm-supported":
+            errors.append(
+                f"platform lane {tag} native-PM verdict is "
+                f"{lane.get('native_pm_verdict')!r}, not native-pm-supported"
+            )
+    errors.extend(native_pm_claim_errors(lanes))
+    errors.extend(framework_catalog_errors(matrix.get("framework_catalog"), lanes))
+    return errors
+
+
+def lifecycle_environment(sandbox: str, project_path: str) -> dict[str, str]:
+    """Keep MagiCore and common toolchain write paths inside each lane.
+    (Giới hạn đường ghi MagiCore và cache toolchain phổ biến trong sandbox.)"""
+    env = os.environ.copy()
+    host_home = env.get("HOME") or os.path.expanduser("~")
+    home = os.path.join(sandbox, ".home")
+    cache = os.path.join(sandbox, ".cache")
+    data = os.path.join(sandbox, ".data")
+    temp = os.path.join(sandbox, ".tmp")
+    cargo_home = os.path.join(sandbox, ".cargo-home")
+    go_path = os.path.join(sandbox, ".go")
+    env["HOME"] = home
+    env["USERPROFILE"] = home
+    env["TMPDIR"] = temp
+    env["TMP"] = temp
+    env["TEMP"] = temp
+    env["XDG_CACHE_HOME"] = cache
+    env["XDG_CONFIG_HOME"] = os.path.join(home, ".config")
+    env["XDG_DATA_HOME"] = data
+    env["XDG_STATE_HOME"] = os.path.join(home, ".local", "state")
+    env["PYTHONPYCACHEPREFIX"] = os.path.join(cache, "python-bytecode")
+    env["CARGO_HOME"] = cargo_home
+    env["CARGO_TARGET_DIR"] = os.path.join(sandbox, ".cargo-target")
+    # Rustup's proxy binaries need the installed toolchain metadata even when
+    # CARGO_HOME is lane-isolated. Keep that host toolchain read-only; never
+    # fall back to downloading/installing a toolchain during matrix execution.
+    # (Proxy rustup cần metadata toolchain đã cài dù CARGO_HOME được cô lập.
+    # Chỉ đọc toolchain host; không tải/cài toolchain trong lúc chạy matrix.)
+    rustup_home = env.get("RUSTUP_HOME")
+    if not rustup_home or not os.path.isdir(rustup_home):
+        rustup_home = os.path.join(host_home, ".rustup")
+    if os.path.isdir(rustup_home):
+        env["RUSTUP_HOME"] = rustup_home
+    else:
+        env.pop("RUSTUP_HOME", None)
+    env["RUSTUP_AUTO_INSTALL"] = "0"
+    env["PIP_CACHE_DIR"] = os.path.join(cache, "pip")
+    env["UV_CACHE_DIR"] = os.path.join(cache, "uv")
+    env["npm_config_cache"] = os.path.join(cache, "npm")
+    env["DENO_DIR"] = os.path.join(cache, "deno")
+    env["BUN_INSTALL_CACHE_DIR"] = os.path.join(cache, "bun")
+    env["GOPATH"] = go_path
+    env["GOMODCACHE"] = os.path.join(go_path, "pkg", "mod")
+    env["GOCACHE"] = os.path.join(cache, "go-build")
+    env["GRADLE_USER_HOME"] = os.path.join(cache, "gradle")
+    env["DOTNET_CLI_HOME"] = os.path.join(home, ".dotnet")
+    env["ANDROID_USER_HOME"] = os.path.join(home, ".android")
+    env["PUB_CACHE"] = os.path.join(cache, "pub")
+    env["NUGET_PACKAGES"] = os.path.join(cache, "nuget")
+    env["SWIFT_MODULECACHE_PATH"] = os.path.join(cache, "swift-modules")
+    # GlobalPaths derives ~/.magicore from HOME (dirs::home_dir); there is
+    # no MAGICORE_STORE_ROOT override in the production path implementation.
+    # (GlobalPaths lấy ~/.magicore từ HOME; code production không đọc biến
+    # MAGICORE_STORE_ROOT.)
+    env.pop("MAGICORE_STORE_ROOT", None)
+    env["MGC_CACHE_DIR"] = os.path.join(project_path, ".magicore")
+    # Several tools (notably Go) require TMPDIR to exist before startup.
+    # Create only lane-owned tool/cache directories; project state remains
+    # owned by the real `mgc` commands under test.
+    # (Một số tool, đặc biệt Go, cần TMPDIR tồn tại trước khi khởi chạy.
+    # Chỉ tạo thư mục tool/cache thuộc lane; project state để mgc quản lý.)
+    for key in (
+        "HOME",
+        "XDG_CACHE_HOME",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "XDG_STATE_HOME",
+        "PYTHONPYCACHEPREFIX",
+        "CARGO_HOME",
+        "CARGO_TARGET_DIR",
+        "PIP_CACHE_DIR",
+        "UV_CACHE_DIR",
+        "npm_config_cache",
+        "DENO_DIR",
+        "BUN_INSTALL_CACHE_DIR",
+        "GOPATH",
+        "GOMODCACHE",
+        "GOCACHE",
+        "GRADLE_USER_HOME",
+        "DOTNET_CLI_HOME",
+        "ANDROID_USER_HOME",
+        "PUB_CACHE",
+        "NUGET_PACKAGES",
+        "SWIFT_MODULECACHE_PATH",
+        "TMPDIR",
+    ):
+        os.makedirs(env[key], exist_ok=True)
+    return env
+
+
+def recovery_environment(sandbox: str, project_path: str) -> dict[str, str]:
+    """Give crash-recovery probes a private store below their project.
+    (Cấp store riêng bên dưới project cho probe phục hồi crash.)"""
+    env = lifecycle_environment(sandbox, project_path)
+    recovery_root = os.path.join(project_path, ".magicore-recovery")
+    recovery_home = os.path.join(recovery_root, "home")
+    env["HOME"] = recovery_home
+    env["USERPROFILE"] = recovery_home
+    env["MGC_CACHE_DIR"] = recovery_root
+    return env
+
+
+def python_venv_environment(environment: dict[str, str], venv_root: str) -> dict[str, str]:
+    """Activate a lane-local Python venv without mutating the caller env.
+    (Kích hoạt venv riêng của lane, không sửa env của tiến trình gọi.)"""
+    env = environment.copy()
+    scripts_dir = "Scripts" if os.name == "nt" else "bin"
+    venv_bin = os.path.join(venv_root, scripts_dir)
+    env["VIRTUAL_ENV"] = venv_root
+    env["PIP_REQUIRE_VIRTUALENV"] = "true"
+    env["PATH"] = venv_bin + os.pathsep + env.get("PATH", "")
+    return env
+
+
+def provision_python_build_tools(
+    sandbox: str, project_path: str, environment: dict[str, str], timeout_s: int
+) -> tuple[subprocess.CompletedProcess, dict[str, str]]:
+    """Install pinned test/build tools only into a lane-owned virtualenv.
+    (Cài tool test/build đã pin vào virtualenv riêng, không đụng Python host.)"""
+    launcher = shutil.which("python", path=environment.get("PATH")) or shutil.which(
+        "python3", path=environment.get("PATH")
+    )
+    if launcher is None:
+        raise FileNotFoundError("python launcher not found on PATH")
+
+    venv_root = os.path.join(sandbox, ".mgc-lifecycle-python")
+    created = subprocess.run(
+        [launcher, "-m", "venv", venv_root],
+        capture_output=True,
+        text=True,
+        cwd=project_path,
+        env=environment,
+        timeout=timeout_s,
+    )
+    if created.returncode != 0:
+        return created, environment
+
+    scripts_dir = "Scripts" if os.name == "nt" else "bin"
+    python_bin = os.path.join(
+        venv_root, scripts_dir, "python.exe" if os.name == "nt" else "python"
+    )
+    venv_env = python_venv_environment(environment, venv_root)
+    installed = subprocess.run(
+        [
+            python_bin,
+            "-m",
+            "pip",
+            "install",
+            "-q",
+            "build==1.3.0",
+            "pytest==8.4.2",
+            "setuptools==80.9.0",
+        ],
+        capture_output=True,
+        text=True,
+        cwd=project_path,
+        env=venv_env,
+        timeout=timeout_s,
+    )
+    return installed, venv_env
+
+
 def run_lane(mgc_bin: str, lane: dict) -> dict:
     """Execute one lane's lifecycle steps in a fresh sandbox; record
     per-dimension status: passed / delegated / failed / absent.
@@ -1727,6 +2769,9 @@ def run_lane(mgc_bin: str, lane: dict) -> dict:
     sandbox = tempfile.mkdtemp(prefix=f"mgc-lc-{lane['core']}-{lane['language']}-")
     dims: dict[str, str] = {}
     detail = {"sandbox": sandbox}
+    project_dir = lane.get("project_dir", lane["scaffold"][-1])
+    project_path = os.path.join(sandbox, project_dir)
+    lane_env = lifecycle_environment(sandbox, project_path)
 
     # Evidence-only lanes may depend on an external toolchain that is often
     # absent (terraform, cross rust targets, ...). Probe BEFORE the
@@ -1756,7 +2801,7 @@ def run_lane(mgc_bin: str, lane: dict) -> dict:
         try:
             proc = subprocess.run(
                 [mgc_bin] + argv, capture_output=True, text=True,
-                cwd=cwd, timeout=timeout_s,
+                cwd=cwd, env=lane_env, timeout=timeout_s,
             )
             return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
         except subprocess.TimeoutExpired:
@@ -1776,7 +2821,6 @@ def run_lane(mgc_bin: str, lane: dict) -> dict:
     # The scaffolded project directory (scaffold NAME arg) is where
     # every lifecycle step runs.
     # Thư mục project được scaffold (đối số NAME) là nơi chạy mọi bước.
-    project_dir = lane["scaffold"][-1]
     if rc != 0:
         dims["create"] = STATUS_FAILED
         # The scaffold never produced a project — detect was never
@@ -1785,7 +2829,9 @@ def run_lane(mgc_bin: str, lane: dict) -> dict:
         # unverified, không bao giờ pass (fail-closed).)
         dims["detect"] = STATUS_UNVERIFIED
         detail["create_output"] = out[-2000:]
-    elif not scaffold_language_matches(sandbox, project_dir, lane["language"]):
+    elif not scaffold_language_matches(
+        sandbox, project_dir, lane["language"], lane.get("required_markers")
+    ):
         dims["create"] = STATUS_FAILED
         # detect FAILED: the scaffold voice picked the WRONG toolchain —
         # this mismatch IS the detect dimension's failure evidence.
@@ -1810,6 +2856,7 @@ def run_lane(mgc_bin: str, lane: dict) -> dict:
         # SCAFFOLD_MARKERS).)
         dims["detect"] = STATUS_NATIVE
 
+    blocked_lifecycle_steps: dict[str, str] = {}
     for step in lane.get("pre_steps", []):
         # Lane preparation INSIDE the project BEFORE the lifecycle steps
         # (mgc subcommands or provisioned tools). A failing prep is a
@@ -1829,19 +2876,31 @@ def run_lane(mgc_bin: str, lane: dict) -> dict:
             # (Bơm dependency THẬT bằng `mgc add-ai`, không uv.)
             try:
                 proc = subprocess.run(
-                [mgc_bin, "add-ai", "six@1.17.0"], capture_output=True, text=True,
-                    cwd=os.path.join(sandbox, project_dir), timeout=timeout_s,
+                    [mgc_bin, "add-ai", "six@1.17.0"],
+                    capture_output=True,
+                    text=True,
+                    cwd=project_path, env=lane_env, timeout=timeout_s,
                 )
             except FileNotFoundError:
                 _fail("pre_step 'mgc_add_real_dependency' requires the mgc binary — provisioning bug")
             except subprocess.TimeoutExpired:
                 _fail(f"mgc add-ai prep timed out after {timeout_s}s")
             if proc.returncode != 0:
-                dims["install"] = "failed"
-                detail["install_output"] = (
+                dims["add"] = STATUS_FAILED
+                detail["add_output"] = (
                     "mgc add-ai (real dependency fixture) failed: "
                     + (proc.stdout or "") + (proc.stderr or "")
                 )[-2000:]
+                for lifecycle_step, _ in lane["steps"]:
+                    blocked_lifecycle_steps[lifecycle_step] = (
+                        "required real-dependency fixture setup failed; "
+                        "this step was not run against an empty project"
+                    )
+            else:
+                dims["add"] = _owner_pass_status(lane)
+                detail["add_output"] = (
+                    "MagiCore added the required real dependency fixture"
+                )
         elif step == "provision_py_build_tools":
             # `python -m build` needs the build module; `mgc test`
             # needs pytest. Install with the LAUNCHER the lanes will
@@ -1854,60 +2913,51 @@ def run_lane(mgc_bin: str, lane: dict) -> dict:
             # có, không thì python3 — đúng cách resolve của lane build
             # mgc), để module và launcher không lệch nhau trên máy
             # nhiều python.
-            launcher = "python3"
-            if shutil.which("python") is not None:
-                launcher = "python"
             try:
-                proc = subprocess.run(
-                    [launcher, "-m", "pip", "install", "-q", "build==1.3.0", "pytest==8.4.2", "setuptools==80.9.0"],
-                    capture_output=True, text=True,
-                    cwd=os.path.join(sandbox, project_dir), timeout=timeout_s,
+                proc, lane_env = provision_python_build_tools(
+                    sandbox, project_path, lane_env, timeout_s
                 )
-            except FileNotFoundError:
+            except (FileNotFoundError, OSError):
                 _fail("pre_step 'provision_py_build_tools' requires a python launcher on PATH")
             except subprocess.TimeoutExpired:
                 _fail(f"py build tools install timed out after {timeout_s}s")
             if proc.returncode != 0:
-                dims["build"] = "failed"
-                dims["test"] = "failed"
-                detail["build_output"] = (
+                detail["toolchain_setup_output"] = (
                     "provision_py_build_tools failed: "
                     + (proc.stdout or "") + (proc.stderr or "")
                 )[-2000:]
+                for lifecycle_step in ("test", "build"):
+                    if any(name == lifecycle_step for name, _ in lane["steps"]):
+                        blocked_lifecycle_steps[lifecycle_step] = (
+                            "lane-local test/build tool provisioning failed; "
+                            "the step was not run without its prerequisite"
+                        )
         else:
             _fail(f"unknown pre_step: {step}")
 
     for step, argv in lane["steps"]:
+        if step in blocked_lifecycle_steps:
+            dims[step] = STATUS_UNVERIFIED
+            detail[f"{step}_output"] = blocked_lifecycle_steps[step]
+            continue
         if dims.get("create") != STATUS_NATIVE:
             # The lane broke before this step: SKIPPED, never a pass —
             # a skip records `unverified`, which satisfies nothing
-            # (fail-closed, schema v2).
+            # (fail-closed, schema v7).
             # (Lane vỡ trước bước này: SKIP, không bao giờ là pass — skip
-            # ghi `unverified`, không thỏa điều gì (fail-closed, schema v2).)
+            # ghi `unverified`, không thỏa điều gì (fail-closed, schema v7).)
             dims[step] = STATUS_UNVERIFIED
             continue
         rc, out = run_step(argv, subdir=project_dir)
         if rc != 0:
             dims[step] = STATUS_FAILED
             detail[f"{step}_output"] = out[-2000:]
-        elif step == "install" or step in lane.get("delegated", []):
-            # Success follows the OWNER taxonomy: an install (or delegated
-            # step) success records exactly who owns it — native-engine
-            # lanes record native-pass, managed stays managed, plain stays
-            # plain. "Install passed" can never be read as more native
-            # than the lane's declared ownership (Gate 11-C).
-            # (Thành công theo taxonomy CHỦ SỞ HỮU: install (hoặc bước
-            # delegated) thành công ghi đúng owner — lane native-engine
-            # ghi native-pass, managed vẫn managed, plain vẫn plain.
-            # "Install passed" không bao giờ được đọc là native hơn quyền
-            # sở hữu lane khai (Gate 11-C).)
-            dims[step] = _owner_pass_status(lane)
         else:
-            # Non-install steps (test/build) run under mgc's own
-            # orchestration → native-pass.
-            # (Bước không-install (test/build) chạy dưới điều phối của
-            # chính mgc → native-pass.)
-            dims[step] = STATUS_NATIVE
+            # A successful wrapper command is not evidence of native
+            # implementation. Record the declared owner of this operation;
+            # external test/build/run toolchains remain delegated even when
+            # MGC successfully orchestrates them.
+            dims[step] = lifecycle_pass_status(lane, step)
 
     # `run` probe (P0 finding #6): long-lived production entry — start
     # `mgc run <script>`, wait for a REAL HTTP roundtrip on the probe
@@ -1934,6 +2984,7 @@ def run_lane(mgc_bin: str, lane: dict) -> dict:
                 [mgc_bin] + argv,
                 cwd=os.path.join(sandbox, project_dir),
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                env=lane_env,
                 start_new_session=(os.name != "nt"),
             )
         except FileNotFoundError:
@@ -2030,7 +3081,7 @@ def run_lane(mgc_bin: str, lane: dict) -> dict:
         # vd test registry-server).
         _sweep_port_leak()
         if dims.get("run") != STATUS_FAILED:
-            dims["run"] = STATUS_NATIVE if served else STATUS_FAILED
+            dims["run"] = lifecycle_pass_status(lane, "run") if served else STATUS_FAILED
             if not served:
                 detail["run_output"] = (
                     "run probe: no HTTP 200 on localhost:%d before timeout" % port
@@ -2057,6 +3108,7 @@ def run_lane(mgc_bin: str, lane: dict) -> dict:
                 [mgc_bin, "dev"],
                 cwd=project_path,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                env=lane_env,
                 start_new_session=(os.name != "nt"),
             )
         except FileNotFoundError:
@@ -2194,7 +3246,7 @@ def run_lane(mgc_bin: str, lane: dict) -> dict:
 
         if dims.get("dev") != STATUS_FAILED:
             if dev_served and rebuilt and hmr_ok:
-                dims["dev"] = STATUS_NATIVE
+                dims["dev"] = lifecycle_pass_status(lane, "dev")
             else:
                 dims["dev"] = STATUS_FAILED
                 detail["dev_output"] = (
@@ -2257,7 +3309,9 @@ def run_lane(mgc_bin: str, lane: dict) -> dict:
         # materialize: the dependency tree landed where the ecosystem
         # actually puts it.
         # (materialize: cây dependency đã về đúng nơi ecosystem đặt nó.)
-        label, marker = _materialize_marker(project_path, lane["language"])
+        label, marker = _materialize_marker(
+            project_path, lane["language"], environment=lane_env
+        )
         if label is None:
             dims["materialize"] = STATUS_UNVERIFIED
             detail["materialize_output"] = (
@@ -2367,6 +3421,33 @@ def run_lane(mgc_bin: str, lane: dict) -> dict:
     for dim in ALL_DIMENSIONS:
         dims.setdefault(dim, STATUS_UNSUPPORTED)
 
+    # Integrity verification is an explicit evidence dimension, not inferred
+    # from fetching or a source-level implementation. No lane-specific
+    # tampered-artifact probe exists in this matrix yet, so record unverified.
+    # (Xác minh integrity là dimension evidence riêng, không suy từ fetch hay
+    # code tồn tại. Matrix chưa có probe artifact bị sửa theo từng lane nên ghi
+    # unverified.)
+    dims["verify"] = STATUS_UNVERIFIED
+    detail["verify_output"] = (
+        "no lane-specific tampered-artifact rejection probe is implemented; "
+        "source-level verifier presence is not runtime evidence"
+    )
+
+    # CRUD/list/frozen/offline/GC have no lane-specific execution probes yet.
+    # Keep each operation explicit and unverified; install evidence cannot
+    # stand in for the rest of the package-manager contract.
+    # (Chưa có probe riêng CRUD/list/frozen/offline/GC theo lane. Ghi từng
+    # operation là unverified; evidence install không thay thế phần còn lại.)
+    for operation in NATIVE_PM_USER_OPERATIONS:
+        if operation == "install":
+            continue
+        if operation in dims and dims[operation] != STATUS_UNSUPPORTED:
+            continue
+        dims[operation] = STATUS_UNVERIFIED
+        detail[f"{operation.replace('-', '_')}_output"] = (
+            "no lane-specific execution probe exists for this package operation"
+        )
+
     shutil.rmtree(sandbox, ignore_errors=True)
     return {"dims": dims, "detail": detail, "toolchain_available": True}
 
@@ -2381,15 +3462,42 @@ def main() -> int:
     # promotion CI tiêu thụ. Đặt trong CHÍNH script này để schema counter
     # chỉ có một ngôi nhà duy nhất.)
     cli_args = sys.argv[1:]
+    is_ci = os.environ.get("GITHUB_ACTIONS", "").lower() == "true"
+    commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        cwd=REPOSITORY_ROOT,
+    ).stdout.strip()
+    source_tree_clean_before_run = lifecycle_working_tree_clean()
     if cli_args:
         if cli_args[0] in ("--record-green", "--reset") and len(cli_args) == 2:
             if cli_args[0] == "--record-green":
+                provenance_error = evidence_commit_error(
+                    commit,
+                    os.environ.get("GITHUB_SHA"),
+                    is_ci=is_ci,
+                    recorded_sha=os.environ.get("MGC_PLATFORM_EVIDENCE_SHA"),
+                    require_recorded=True,
+                )
+                if provenance_error:
+                    _fail(provenance_error)
                 return record_platform_green(cli_args[1])
+            # Reset only removes a positive streak claim. Keep this recovery
+            # path available even after a SHA mismatch so failed/misbound CI
+            # cannot leave an old green streak looking consecutive.
             return reset_platform_counter(cli_args[1])
         _fail(
             f"unknown arguments: {' '.join(cli_args)} "
             "(expected --record-green <os> / --reset <os>)"
         )
+    provenance_error = evidence_commit_error(
+        commit,
+        os.environ.get("GITHUB_SHA"),
+        is_ci=is_ci,
+    )
+    if provenance_error:
+        _fail(provenance_error)
     # Resolve to an ABSOLUTE path: steps run with cwd = sandbox, so a
     # relative binary path would resolve inside the sandbox and vanish.
     # Quy về đường dẫn TUYỆT ĐỐI: bước chạy với cwd = sandbox nên đường
@@ -2454,17 +3562,18 @@ def main() -> int:
     # (Fail-closed (P0-5): cổng vi phạm TỪ CHỐI collect — code cũ bỏ qua
     # return code, cho taxonomy gắn nhãn sai chạm tới matrix dù comment
     # bên trên hứa điều ngược lại.)
+    dep_gate_rc = validate_dep_gate_consistency(mgc_bin)
     if (
         validate_lane_owners() != 0
         or validate_adapter_consistency() != 0
         or validate_dependency_owners() != 0
+        or dep_gate_rc != 0
     ):
         _fail(
             "lane owner/adapter-consistency/dependency-owner gates failed — "
             "refusing to collect a matrix from mislabeled taxonomy"
         )
 
-    commit = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
     now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     results = []
@@ -2483,8 +3592,13 @@ def main() -> int:
         results.append({
             "core": lane["core"],
             "language": lane["language"],
+            "framework_id": lane.get("framework_id", ""),
             "dimensions": r["dims"],
             "required_dimensions": lane["required_dims"],
+            "lifecycle_owners": {
+                dimension: lifecycle_owner_for(lane, dimension)
+                for dimension in lane["required_dims"]
+            },
             # P0-6 (Tech Lead 2026-09-15): lanes are SPLIT by gate role —
             # `release-blocking` lanes gate the RC, `evidence-only` lanes
             # record what the ecosystem does today and NEVER gate. The
@@ -2555,11 +3669,10 @@ def main() -> int:
     #   who owns the cache. The bare word "supported" invited marketing
     #   to read delegation as full native support; the new name says
     #   exactly what the evidence proves: the ORCHESTRATION passed.
-    # - `native-pm-supported`: every required dimension is `passed` AND
-    #   the lane's install owner is `native-engine` (mgc ITSELF owns the
-    #   install — shared store, CAS, lockfile), no dimension rides a
-    #   native toolchain. This is the ONLY verdict that can back a
-    #   "native multi-language package manager" claim.
+    # - `native-pm-supported`: every dependency-engine dimension in
+    #   NATIVE_PM_REQUIRED_DIMENSIONS is native-pass, operation owners are
+    #   MGC/CAS, and no package manager is delegated. General create/test/
+    #   build passes alone cannot establish this claim.
     # A lane with any delegated install can still be an orchestrator but
     # is NEVER native-pm — the two claims gate different marketing and
     # different release gates.
@@ -2569,11 +3682,11 @@ def main() -> int:
     # — mgc điều phối lane trọn vẹn, bất kể ai giữ cache; từ "supported"
     # trần từng mời marketing đọc delegation thành native-support đầy
     # đủ, tên mới nói đúng cái bằng chứng chứng minh: ORCHESTRATION
-    # pass. `native-pm-supported`: mọi dimension required là `passed`
-    # VÀ chủ sở hữu install của lane là `native-engine` (chính mgc giữ
-    # install — shared store, CAS, lockfile), không dimension nào đi nhờ
-    # toolchain gốc. Đây là verdict DUY NHẤT đủ chứng minh claim "native
-    # multi-language package manager". Lane có install delegated vẫn là
+    # pass. `native-pm-supported`: mọi dependency-engine dimension trong
+    # NATIVE_PM_REQUIRED_DIMENSIONS phải native-pass, owner từng operation
+    # là MGC/CAS, và không delegated package manager. Pass create/test/build
+    # đơn thuần không chứng minh claim này. Đây là verdict DUY NHẤT đủ
+    # chứng minh claim "native multi-language package manager". Lane có install delegated vẫn là
     # orchestrator nhưng KHÔNG BAO GIỜ native-pm — hai claim gate khác
     # nhau về marketing lẫn release.
     def _satisfied(status):
@@ -2582,6 +3695,7 @@ def main() -> int:
     for r in results:
         dims = r["dimensions"]
         required = r.pop("required_dimensions")
+        r["required_dimensions"] = required
         native_pm_delegated = r.get("native_pm_delegated", [])
         install_owner = r.get("install_owner", "plain-delegation")
         # P0-6: an evidence-only lane whose external toolchain is absent
@@ -2607,24 +3721,25 @@ def main() -> int:
         # `compatibility-passed` verdict (toolchain compatibility proven,
         # ownership NOT mgc's); `scaffold-only`/`unsupported` lanes read
         # `unsupported`. The install-OWNER taxonomy (P0-D vòng-9) and the
-        # native-dimension requirement remain additional gates for
-        # native-pm-supported.
+        # Native dependency dimensions and per-operation ownership are also
+        # required; broad lifecycle requirements alone are insufficient.
         # (Verdict native-PM (cổng P0-D): `native-pm-supported` CHỈ khi
         # dependency_owner của lane là `mgc-native` — toolchain ủy quyền
         # không bao giờ đủ cho claim native dù dimension điểm thế nào.
         # Lane delegated trần ở verdict MỚI `compatibility-passed` (chứng
         # minh tương thích toolchain, KHÔNG phải sở hữu của mgc);
-        # `scaffold-only`/`unsupported` đọc `unsupported`. Taxonomy chủ
-        # sở hữu install (P0-D vòng-9) và yêu cầu dimension native vẫn là
-        # các cổng bổ sung cho native-pm-supported.)
+        # `scaffold-only`/`unsupported` đọc `unsupported`; các chiều
+        # dependency-engine và owner từng operation cũng phải được chứng minh.)
         dep_owner = r.get("dependency_owner", "")
         r["native_pm_verdict"] = (
             "native-pm-supported"
-            if required
-            and dep_owner == "mgc-native"
-            and all(dims[d] == STATUS_NATIVE for d in required)
-            and not native_pm_delegated
-            and install_owner == "native-engine"
+            if native_pm_supported(
+                dep_owner,
+                install_owner,
+                native_pm_delegated,
+                dims,
+                r.get("owner_by_operation", {}),
+            )
             else "compatibility-passed"
             if dep_owner == "delegated"
             and required
@@ -2638,11 +3753,17 @@ def main() -> int:
         "schema_version": SCHEMA_VERSION,
         "generated_at": now,
         "commit": commit,
+        "working_tree_clean": lifecycle_source_matches(
+            commit, source_tree_clean_before_run
+        ),
+        "platform": lifecycle_platform_name(),
         "matrix_kind": "lifecycle",
-        # The six-value status vocabulary (Gate 11-C schema v2) so every
+        "release_scope": [list(item) for item in sorted(PLATFORM_EVIDENCE_RELEASE_SCOPE)],
+        "framework_catalog": FRAMEWORK_QUALIFICATION_EVIDENCE,
+        # The six-value status vocabulary (Gate 11-C schema v7) so every
         # consumer interprets statuses identically — only *-pass statuses
         # satisfy, unverified/unsupported/failed satisfy nothing.
-        # (Bộ 6 trạng thái (Gate 11-C schema v2) để mọi consumer đọc
+        # (Bộ 6 trạng thái (Gate 11-C schema v7) để mọi consumer đọc
         # trạng thái thống nhất — chỉ trạng thái *-pass thỏa,
         # unverified/unsupported/failed không thỏa gì.)
         "status_vocabulary": list(PASS_STATUSES) + [

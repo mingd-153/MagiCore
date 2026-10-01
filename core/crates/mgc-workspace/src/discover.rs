@@ -3,7 +3,7 @@
 use crate::{
     WorkspaceEdge, WorkspaceGraph, WorkspaceNode, WorkspacePackageManifest, read_package_manifest,
 };
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// Layout dirs — mặc định apps/ + packages/, đọc từ magicore.workspace.toml [layout].
 #[derive(Debug, Clone)]
@@ -16,22 +16,104 @@ pub struct DiscoverOptions {
 pub fn discover_workspace_targets(project_root: &Path) -> anyhow::Result<Vec<PathBuf>> {
     let options = workspace_layout(project_root)?;
     let mut targets = Vec::new();
-    collect_projects(project_root.join(&options.apps_dir), &mut targets)?;
-    collect_projects(project_root.join(&options.packages_dir), &mut targets)?;
+    let apps_dir = resolve_workspace_layout_dir(project_root, &options.apps_dir, "apps_dir")?;
+    let packages_dir =
+        resolve_workspace_layout_dir(project_root, &options.packages_dir, "packages_dir")?;
+    collect_projects(apps_dir, &mut targets)?;
+    collect_projects(packages_dir, &mut targets)?;
     targets.sort();
     targets.dedup();
     Ok(targets)
 }
 
+/// Read a workspace config only when it is a regular, non-symlink file.
+/// Đọc cấu hình workspace chỉ khi đó là file thường, không phải symlink.
+pub fn read_workspace_config(project_root: &Path) -> anyhow::Result<Option<String>> {
+    let path = project_root.join("magicore.workspace.toml");
+    let metadata = match std::fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    if metadata.file_type().is_symlink() {
+        anyhow::bail!(
+            "workspace config '{}' must not be a symlink",
+            path.display()
+        );
+    }
+    if !metadata.is_file() {
+        anyhow::bail!(
+            "workspace config '{}' must be a regular file",
+            path.display()
+        );
+    }
+    let contents =
+        mgc_adapter_base::project_file::read_regular_text(&path, "magicore.workspace.toml")?;
+    Ok(Some(contents))
+}
+
+/// Resolve a workspace layout entry as a project-local, non-symlink directory.
+/// Chỉ phân giải layout tương đối trong project và từ chối mọi symlink.
+pub fn resolve_workspace_layout_dir(
+    project_root: &Path,
+    configured_path: &str,
+    field_name: &str,
+) -> anyhow::Result<PathBuf> {
+    let relative = Path::new(configured_path);
+    if relative.as_os_str().is_empty()
+        || relative.is_absolute()
+        || relative
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        anyhow::bail!(
+            "workspace layout path '{field_name}' must be a non-empty relative path without parent or root components"
+        );
+    }
+
+    let mut candidate = project_root.to_path_buf();
+    for component in relative.components() {
+        candidate.push(component.as_os_str());
+        match std::fs::symlink_metadata(&candidate) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                anyhow::bail!(
+                    "workspace layout path '{field_name}' must not traverse symlink '{}'",
+                    candidate.display()
+                );
+            }
+            Ok(metadata) if !metadata.is_dir() => return Ok(candidate),
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(candidate),
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(candidate)
+}
+
+/// Check whether a path is a directory without following its final symlink.
+/// Kiểm tra thư mục mà không đi theo symlink ở thành phần cuối.
+pub fn workspace_entry_is_directory(path: &Path) -> anyhow::Result<bool> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            anyhow::bail!(
+                "workspace directory '{}' must not be a symlink",
+                path.display()
+            );
+        }
+        Ok(metadata) => Ok(metadata.is_dir()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
+
 /// Đọc layout config; không có file → mặc định apps/ + packages/.
 pub fn workspace_layout(project_root: &Path) -> anyhow::Result<DiscoverOptions> {
-    let workspace_path = project_root.join("magicore.workspace.toml");
-    if !workspace_path.exists() {
+    let Some(contents) = read_workspace_config(project_root)? else {
         return Ok(DiscoverOptions {
             apps_dir: "apps".to_string(),
             packages_dir: "packages".to_string(),
         });
-    }
+    };
     #[derive(serde::Deserialize)]
     struct Config {
         #[serde(default)]
@@ -44,7 +126,6 @@ pub fn workspace_layout(project_root: &Path) -> anyhow::Result<DiscoverOptions> 
         #[serde(default)]
         packages_dir: Option<String>,
     }
-    let contents = std::fs::read_to_string(&workspace_path)?;
     let config: Config = toml::from_str(&contents)?;
     Ok(DiscoverOptions {
         apps_dir: config
@@ -62,13 +143,13 @@ pub fn workspace_layout(project_root: &Path) -> anyhow::Result<DiscoverOptions> 
 
 /// Thu thập thư mục có manifest (package.json / backend manifest) — đệ quy.
 fn collect_projects(root: PathBuf, out: &mut Vec<PathBuf>) -> anyhow::Result<()> {
-    if !root.exists() || !root.is_dir() {
+    if !workspace_entry_is_directory(&root)? {
         return Ok(());
     }
     for entry in std::fs::read_dir(&root)? {
         let entry = entry?;
         let path = entry.path();
-        if !path.is_dir() {
+        if !workspace_entry_is_directory(&path)? {
             continue;
         }
         if path.join("package.json").exists() || has_backend_manifest(&path) {

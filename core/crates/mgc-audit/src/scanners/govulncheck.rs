@@ -424,8 +424,7 @@ pub fn read_go_mod_requires(raw: &str) -> (Vec<OsvPin>, Vec<String>) {
 /// Query direct require pins and mark the limited coverage honestly.
 /// Query pin require trực tiếp và ghi nhận rõ giới hạn phạm vi.
 async fn audit_go_osv_fallback(project_root: &Path) -> MgResult<AuditReport> {
-    let raw = std::fs::read_to_string(project_root.join("go.mod"))
-        .map_err(|e| MgError::Other(format!("read go.mod: {e}")))?;
+    let raw = super::read_bounded_project_input(&project_root.join("go.mod"), "go.mod")?;
     let (pins, mut skipped) = read_go_mod_requires(&raw);
     if pins.is_empty() {
         skipped.push(

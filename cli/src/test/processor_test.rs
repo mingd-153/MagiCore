@@ -1381,11 +1381,6 @@ const FRESHNESS_BACKLOG: &[(&str, &str, &str)] = &[
     ),
     (
         "sveltekit",
-        "@sveltejs/adapter-auto",
-        "adapter 3 pairs kit 2 early era; 7 needs kit-compat + build E2E",
-    ),
-    (
-        "sveltekit",
         "@sveltejs/vite-plugin-svelte",
         "plugin 4 pairs vite 6; 7 needs build E2E",
     ),
@@ -1485,9 +1480,18 @@ fn template_major(range: &str) -> Option<u64> {
     t.split('.').next()?.parse().ok()
 }
 
-async fn npm_latest_major(name: &str) -> Option<u64> {
+async fn npm_latest_major(client: &reqwest::Client, name: &str) -> Option<u64> {
     let url = format!("https://registry.npmjs.org/{}", name.replace('/', "%2f"));
-    let body: serde_json::Value = reqwest::get(&url).await.ok()?.json().await.ok()?;
+    let body: serde_json::Value = client
+        .get(&url)
+        .send()
+        .await
+        .ok()?
+        .error_for_status()
+        .ok()?
+        .json()
+        .await
+        .ok()?;
     body.pointer("/dist-tags/latest")?
         .as_str()?
         .split('.')
@@ -1498,18 +1502,18 @@ async fn npm_latest_major(name: &str) -> Option<u64> {
 
 /// Template freshness gate (P0-bonus): every embedded npm dep either
 /// tracks the registry latest major or sits in FRESHNESS_BACKLOG with
-/// its pairing reason. Offline → loud skip (the gate needs connect;
-/// "connect thì sao" = it runs, below).
-/// (Cổng tươi template: dep lag major mà không trong backlog thì FAIL.
-/// Offline thì skip ồn ào.)
+/// its pairing reason. Registry failures cannot produce freshness evidence.
+/// (Cổng tươi template: lỗi registry không được biến thành bằng chứng pass.)
 #[tokio::test]
 async fn test_embedded_template_dep_majors_track_latest() {
-    // Probe connectivity first: offline machines skip LOUDLY (not silently).
-    // (Mất mạng thì skip ồn ào.)
-    if npm_latest_major("react").await.is_none() {
-        eprintln!("SKIP template freshness: registry unreachable (offline)");
-        return;
-    }
+    // Bound every request and reuse metadata across templates.
+    // Giới hạn từng request, dùng lại metadata giữa các template.
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(3))
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .expect("create bounded template freshness client");
+    let mut latest_majors = std::collections::BTreeMap::new();
     let mut lags = Vec::new();
     for fw in FRESHNESS_TEMPLATES {
         let files = crate::scaffold::embedded_kernel::get_embedded_template("web", fw)
@@ -1534,8 +1538,15 @@ async fn test_embedded_template_dep_majors_track_latest() {
                         lags.push(format!("{fw}:{name} exact pin {ver} (ranges only)"));
                         continue;
                     }
-                    let Some(latest) = npm_latest_major(name).await else {
-                        continue;
+                    let latest = match latest_majors.get(name) {
+                        Some(major) => *major,
+                        None => {
+                            let major = npm_latest_major(&client, name).await.unwrap_or_else(|| {
+                                panic!("template freshness UNVERIFIED: cannot read npm latest for {name}")
+                            });
+                            latest_majors.insert(name.clone(), major);
+                            major
+                        }
                     };
                     if tmajor < latest {
                         lags.push(format!("{fw}:{name} template ^{tmajor} vs latest {latest}"));

@@ -4,9 +4,41 @@
 use mgc_lockfile::{EcosystemTag, Lockfile, Package, parser, writer};
 
 use super::{
-    write_canonical_lock, write_flutter_package_config, write_flutter_package_config_with_sdk_root,
+    run_install, write_canonical_lock, write_canonical_lock_with_roots,
+    write_flutter_package_config, write_flutter_package_config_with_sdk_root,
 };
+use mgc_types::adapter::InstallOptions;
 use mgc_types::{PackageId, PackageName, ResolvedGraph, ResolvedPackage, Version};
+
+#[tokio::test]
+async fn native_app_offline_install_fails_before_project_mutation() {
+    let project = tempfile::tempdir().unwrap();
+    std::fs::write(project.path().join("pubspec.yaml"), "name: sample\n").unwrap();
+
+    let error = run_install(
+        crate::language::AppLanguage::Flutter,
+        &ResolvedGraph::empty(),
+        project.path(),
+        InstallOptions {
+            offline: true,
+            ..InstallOptions::default()
+        },
+        None,
+        Vec::new(),
+    )
+    .await
+    .expect_err("App offline reinstall is not implemented yet");
+
+    assert!(error.to_string().contains("offline install is unsupported"));
+    assert!(
+        !project.path().join("mgc.lock").exists(),
+        "unsupported offline install must not publish a lock"
+    );
+    assert!(
+        !project.path().join(".dart_tool").exists(),
+        "unsupported offline install must not materialize Flutter config"
+    );
+}
 
 fn package(name: &str, version: &str, ecosystem: EcosystemTag) -> Package {
     Package {
@@ -179,6 +211,45 @@ fn app_lock_update_preserves_same_ecosystem_entries_owned_by_another_core() {
     assert!(updated.packages.iter().any(|package| {
         package.owner_core.as_deref() == Some("app") && package.name == "new-app-package"
     }));
+}
+
+#[test]
+fn app_lock_writer_records_direct_roots_without_erasing_sibling_ecosystems() {
+    let dir = tempfile::tempdir().unwrap();
+    mgc_config::project::ProjectConfig::write_core_marker_at(dir.path(), "app").unwrap();
+    let mut lock = Lockfile::new();
+    lock.packages
+        .push(package("existing-swift", "2.0.0", EcosystemTag::Swift));
+    lock.packages[0].owner_core = Some("app".to_string());
+    lock.root_dependencies_by_owner.insert(
+        "app".to_string(),
+        vec![mgc_lockfile::format_root_pin(
+            EcosystemTag::Swift,
+            "existing-swift@2.0.0",
+        )],
+    );
+    std::fs::write(
+        dir.path().join("mgc.lock"),
+        writer::serialize_lockfile(&lock).unwrap(),
+    )
+    .unwrap();
+
+    write_canonical_lock_with_roots(
+        dir.path(),
+        &[EcosystemTag::Dart],
+        vec![package("flutter-root", "1.0.0", EcosystemTag::Dart)],
+        vec!["flutter-root@1.0.0".to_string()],
+    )
+    .unwrap();
+
+    let updated = parser::load_lockfile(&dir.path().join("mgc.lock")).unwrap();
+    assert_eq!(
+        updated.root_dependencies_by_owner["app"],
+        vec![
+            mgc_lockfile::format_root_pin(EcosystemTag::Dart, "flutter-root@1.0.0"),
+            mgc_lockfile::format_root_pin(EcosystemTag::Swift, "existing-swift@2.0.0"),
+        ]
+    );
 }
 
 #[test]

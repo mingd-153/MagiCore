@@ -11,8 +11,7 @@ use std::path::{Path, PathBuf};
 /// Parse pubspec.yaml to Manifest.
 pub fn parse_pubspec(project_root: &Path) -> MgResult<Manifest> {
     let pubspec_path = project_root.join("pubspec.yaml");
-    let content = std::fs::read_to_string(&pubspec_path)
-        .map_err(|e| MgError::Other(format!("failed to read pubspec.yaml: {}", e)))?;
+    let content = mgc_adapter_base::project_file::read_regular_text(&pubspec_path, "pubspec.yaml")?;
 
     let pubspec: PubspecYaml = serde_yaml::from_str(&content)
         .map_err(|e| MgError::Other(format!("failed to parse pubspec.yaml: {}", e)))?;
@@ -118,8 +117,7 @@ pub(crate) fn expand_flutter_sdk_dependencies_with_root(
 
 fn declared_flutter_sdk_dependencies(project_root: &Path) -> MgResult<Vec<(String, bool)>> {
     let path = project_root.join("pubspec.yaml");
-    let content = std::fs::read_to_string(&path)
-        .map_err(|error| MgError::Other(format!("read pubspec.yaml: {error}")))?;
+    let content = mgc_adapter_base::project_file::read_regular_text(&path, "pubspec.yaml")?;
     let pubspec: serde_yaml::Value = serde_yaml::from_str(&content)
         .map_err(|error| MgError::Other(format!("parse pubspec.yaml: {error}")))?;
     let Some(root) = pubspec.as_mapping() else {
@@ -174,8 +172,10 @@ fn read_flutter_sdk_dependency_closure(
     let canonical_sdk_root = sdk_root
         .canonicalize()
         .map_err(|error| MgError::Other(format!("canonicalize Flutter SDK root: {error}")))?;
-    let project_manifest = std::fs::read_to_string(project_root.join("pubspec.yaml"))
-        .map_err(|error| MgError::Other(format!("read pubspec.yaml: {error}")))?;
+    let project_manifest = mgc_adapter_base::project_file::read_regular_text(
+        &project_root.join("pubspec.yaml"),
+        "pubspec.yaml",
+    )?;
     let project_yaml: serde_yaml::Value = serde_yaml::from_str(&project_manifest)
         .map_err(|error| MgError::Other(format!("parse pubspec.yaml: {error}")))?;
     let mut project_dependencies = BTreeMap::new();
@@ -221,11 +221,10 @@ fn read_flutter_sdk_dependency_closure(
                 "Flutter SDK package '{name}' has a linked or non-regular pubspec.yaml"
             )));
         }
-        let content = std::fs::read_to_string(&package_manifest_path).map_err(|error| {
-            MgError::Other(format!(
-                "read Flutter SDK package '{name}' manifest: {error}"
-            ))
-        })?;
+        let content = mgc_adapter_base::project_file::read_regular_text(
+            &package_manifest_path,
+            &format!("Flutter SDK package '{name}' pubspec.yaml"),
+        )?;
         let package_yaml: serde_yaml::Value = serde_yaml::from_str(&content).map_err(|error| {
             MgError::Other(format!(
                 "parse Flutter SDK package '{name}' manifest: {error}"
@@ -475,10 +474,45 @@ pub(crate) fn find_flutter_executable_in_path(
 /// (Ghi pubspec.yaml từ manifest.)
 pub fn write_pubspec(project_root: &Path, manifest: &Manifest) -> MgResult<()> {
     let pubspec_path = project_root.join("pubspec.yaml");
-    let content = std::fs::read_to_string(&pubspec_path)
-        .map_err(|e| MgError::Other(format!("read pubspec.yaml: {e}")))?;
+    let content = mgc_adapter_base::project_file::read_regular_text(&pubspec_path, "pubspec.yaml")?;
     let mut doc: serde_yaml::Value = serde_yaml::from_str(&content)
         .map_err(|e| MgError::Other(format!("parse pubspec.yaml: {e}")))?;
+    // Validate the entire existing dependency shape before reconstructing it.
+    // Kiểm tra toàn bộ cấu trúc dependency cũ trước khi dựng lại.
+    let _current_manifest = parse_pubspec(project_root)?;
+    // Refuse source-specific entries before rebuilding maps; otherwise a direct
+    // writer caller could silently erase Git/path/hosted semantics.
+    // Từ chối source đặc thù trước khi dựng lại map để không xóa semantics.
+    if let Some(root) = doc.as_mapping() {
+        for section in ["dependencies", "dev_dependencies"] {
+            let Some(entries) = root
+                .get(serde_yaml::Value::String(section.to_string()))
+                .and_then(serde_yaml::Value::as_mapping)
+            else {
+                continue;
+            };
+            for (name, value) in entries {
+                let Some(fields) = value.as_mapping() else {
+                    continue;
+                };
+                let flutter_sdk = fields.len() == 1
+                    && fields
+                        .get(serde_yaml::Value::String("sdk".to_string()))
+                        .and_then(serde_yaml::Value::as_str)
+                        == Some("flutter");
+                if !flutter_sdk {
+                    let name = name.as_str().unwrap_or("<non-string>");
+                    return Err(MgError::Unsupported {
+                        core: "app",
+                        capability: "rewrite Flutter source dependency",
+                        guidance: format!(
+                            "dependency '{name}' in {section} uses source-specific metadata; MagiCore refuses to discard it during native manifest mutation"
+                        ),
+                    });
+                }
+            }
+        }
+    }
     let mut deps = serde_yaml::Mapping::new();
     let mut dev_deps = serde_yaml::Mapping::new();
     // Flutter SDK entries are supplied by the SDK, not version pins — retain
@@ -549,12 +583,9 @@ pub fn write_pubspec(project_root: &Path, manifest: &Manifest) -> MgResult<()> {
             );
         }
     }
-    std::fs::write(
-        &pubspec_path,
-        serde_yaml::to_string(&doc)
-            .map_err(|e| MgError::Other(format!("serialize pubspec.yaml: {e}")))?,
-    )
-    .map_err(|e| MgError::Other(format!("write pubspec.yaml: {e}")))?;
+    let rendered = serde_yaml::to_string(&doc)
+        .map_err(|e| MgError::Other(format!("serialize pubspec.yaml: {e}")))?;
+    mgc_adapter_base::project_file::atomic_write_regular(&pubspec_path, rendered.as_bytes())?;
     Ok(())
 }
 

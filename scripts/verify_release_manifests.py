@@ -58,7 +58,8 @@ WORKSPACE_VERSION_RE = re.compile(r'^version\s*=\s*"([^"]+)"', re.M)
 # Homebrew formula: `version "..."` and `sha256 "..."` slots.
 # (Formula homebrew: các slot `version "..."` và `sha256 "..."`.)
 HOMEBREW_VERSION_RE = re.compile(r'version\s+"([^"]+)"')
-HOMEBREW_SHA256_RE = re.compile(r'sha256\s+"([^"]+)"')
+HOMEBREW_URL_RE = re.compile(r'^\s*url\s+"([^"]+)"', re.M)
+HOMEBREW_SHA256_RE = re.compile(r'^\s*sha256\s+"([^"]+)"', re.M)
 
 
 def workspace_version() -> str:
@@ -88,7 +89,18 @@ def check_homebrew(path: Path, expected: str, violations: list) -> None:
     got = version_match.group(1) if version_match else None
     if got != expected:
         violations.append(f"{path.name}: version '{got}' != workspace '{expected}'")
-    for checksum in HOMEBREW_SHA256_RE.findall(text):
+    urls = HOMEBREW_URL_RE.findall(text)
+    checksums = HOMEBREW_SHA256_RE.findall(text)
+    if not urls:
+        violations.append(f"{path.name}: no download URL is declared")
+    if len(urls) != len(checksums):
+        violations.append(
+            f"{path.name}: {len(urls)} download URL(s) but {len(checksums)} SHA256 checksum(s); each URL requires exactly one checksum"
+        )
+    for url in urls:
+        if not url.startswith("https://"):
+            violations.append(f"{path.name}: download URL must use HTTPS: '{url}'")
+    for checksum in checksums:
         if checksum.startswith(FORBIDDEN_CHECKSUM_PREFIXES):
             violations.append(
                 f"{path.name}: checksum placeholder '{checksum}' — publish blocked "
@@ -107,10 +119,27 @@ def check_scoop(path: Path, expected: str, violations: list) -> None:
     got = data.get("version")
     if got != expected:
         violations.append(f"{path.name}: version '{got}' != workspace '{expected}'")
-    architectures = data.get("architecture", {})
+    architectures = data.get("architecture")
+    if not isinstance(architectures, dict) or not architectures:
+        violations.append(f"{path.name}: no architecture download entries are declared")
+        return
     for arch_name, arch in sorted(architectures.items()):
+        if not isinstance(arch, dict):
+            violations.append(
+                f"{path.name}: architecture '{arch_name}' entry is not an object"
+            )
+            continue
+        url = arch.get("url")
+        if not isinstance(url, str) or not url.strip():
+            violations.append(
+                f"{path.name}: architecture '{arch_name}' has no download URL"
+            )
+        elif not url.startswith("https://"):
+            violations.append(
+                f"{path.name}: architecture '{arch_name}' download URL must use HTTPS"
+            )
         checksum = arch.get("hash")
-        if checksum is None:
+        if not isinstance(checksum, str) or not checksum:
             violations.append(f"{path.name}: architecture '{arch_name}' has no hash")
             continue
         if checksum.startswith(FORBIDDEN_CHECKSUM_PREFIXES):

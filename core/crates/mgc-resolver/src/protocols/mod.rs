@@ -44,8 +44,14 @@ pub use swift::bump_swift_requirement;
 pub use swift::remove_swift_requirement;
 
 use async_trait::async_trait;
+use futures_util::stream::{self, StreamExt, TryStreamExt};
 use mgc_types::{MgError, MgResult};
 use sha2::{Digest, Sha256};
+use std::sync::Arc;
+use tokio::sync::Semaphore;
+
+pub(super) const GRAPH_RESOLVE_CONCURRENCY: usize = 16;
+const GRAPH_ROOT_CONCURRENCY: usize = 4;
 
 /// Resolution payload a native engine returns for one package.
 /// Payload resolve mà engine native trả về cho một package.
@@ -124,41 +130,13 @@ pub trait RegistryProtocol: Send + Sync {
     /// cạnh sau tái sử dụng), theo thứ tự BFS. Mọi lỗi resolve lan lên
     /// (fail-closed — không âm thầm bỏ cây con).
     async fn resolve_graph(&self, name: &str, range: &str) -> MgResult<Vec<ResolvedEntry>> {
-        let mut entries: Vec<ResolvedEntry> = Vec::new();
-        let mut chosen: std::collections::HashMap<String, String> =
-            std::collections::HashMap::new();
-        let mut queue: std::collections::VecDeque<(String, String)> =
-            std::collections::VecDeque::new();
-        queue.push_back((name.to_string(), range.to_string()));
-
-        while let Some((n, r)) = queue.pop_front() {
-            if let Some(chosen_version) = chosen.get(&n) {
-                // A package may be reached through multiple parents with
-                // different constraints. Re-resolve the later constraint
-                // instead of silently reusing the first version: if its
-                // registry-selected result differs, this resolver has no
-                // backtracking/intersection solver and must fail closed.
-                // (Một package có thể có nhiều range từ các parent; không
-                // được âm thầm giữ bản đầu nếu range sau chọn bản khác.)
-                let candidate = self.resolve(&n, &r).await?;
-                if candidate.version != *chosen_version {
-                    return Err(MgError::DependencyConflict(format!(
-                        "incompatible constraints for {n}: selected {chosen_version}, but constraint '{r}' resolves to {} (native resolver does not backtrack yet)",
-                        candidate.version
-                    )));
-                }
-                continue;
-            }
-            let entry = self.resolve(&n, &r).await?;
-            chosen.insert(entry.name.clone(), entry.version.clone());
-            for (dep_name, dep_range) in &entry.deps {
-                if !chosen.contains_key(dep_name) {
-                    queue.push_back((dep_name.clone(), dep_range.clone()));
-                }
-            }
-            entries.push(entry);
-        }
-        Ok(entries)
+        resolve_graph_with_semaphore(
+            self,
+            name,
+            range,
+            Arc::new(Semaphore::new(GRAPH_RESOLVE_CONCURRENCY)),
+        )
+        .await
     }
 
     /// Resolve several project roots as one graph. Protocols with a native
@@ -174,8 +152,16 @@ pub trait RegistryProtocol: Send + Sync {
     ) -> MgResult<Vec<ResolvedEntry>> {
         let mut entries = Vec::new();
         let mut chosen = std::collections::HashMap::<String, ResolvedEntry>::new();
-        for (name, range) in roots {
-            for entry in self.resolve_graph(name, range).await? {
+        let semaphore = Arc::new(Semaphore::new(GRAPH_RESOLVE_CONCURRENCY));
+        let owned_roots = roots.to_vec();
+        let mut root_graphs = stream::iter(owned_roots.into_iter().map(|(name, range)| {
+            let semaphore = Arc::clone(&semaphore);
+            async move { resolve_graph_with_semaphore(self, &name, &range, semaphore).await }
+        }))
+        .buffered(GRAPH_ROOT_CONCURRENCY);
+
+        while let Some(root_entries) = root_graphs.try_next().await? {
+            for entry in root_entries {
                 if let Some(existing) = chosen.get(&entry.name) {
                     if existing != &entry {
                         return Err(MgError::DependencyConflict(format!(
@@ -191,6 +177,62 @@ pub trait RegistryProtocol: Send + Sync {
         }
         Ok(entries)
     }
+}
+
+async fn resolve_graph_with_semaphore<P: RegistryProtocol + ?Sized>(
+    protocol: &P,
+    name: &str,
+    range: &str,
+    semaphore: Arc<Semaphore>,
+) -> MgResult<Vec<ResolvedEntry>> {
+    let mut entries = Vec::new();
+    let mut chosen = std::collections::HashMap::<String, String>::new();
+    let mut queue = std::collections::VecDeque::from([(name.to_string(), range.to_string())]);
+
+    while !queue.is_empty() {
+        // Resolve peers in this BFS layer concurrently, but process results in
+        // queue order. Root graphs in this invocation share one semaphore so
+        // their combined requests stay within the protocol-level limit.
+        // (Resolve các dependency cùng tầng BFS song song nhưng xử lý theo
+        // thứ tự queue. Các root anh em dùng chung semaphore để không nhân
+        // giới hạn request của protocol.)
+        let layer = queue.drain(..).collect::<Vec<_>>();
+        let mut resolved_layer = stream::iter(layer.into_iter().map(|(name, range)| {
+            let semaphore = Arc::clone(&semaphore);
+            async move {
+                let _permit = semaphore.acquire_owned().await.map_err(|_| {
+                    MgError::Other("registry graph resolver semaphore closed".to_string())
+                })?;
+                let entry = protocol.resolve(&name, &range).await?;
+                Ok::<_, MgError>((name, range, entry))
+            }
+        }))
+        .buffered(GRAPH_RESOLVE_CONCURRENCY);
+
+        while let Some((name, range, entry)) = resolved_layer.try_next().await? {
+            if let Some(chosen_version) = chosen.get(&name) {
+                // Re-resolve conflicting constraints and fail closed rather
+                // than silently choosing a version without backtracking.
+                // (Resolve lại constraint xung đột và fail-closed thay vì âm
+                // thầm chọn version khi chưa có backtracking.)
+                if entry.version != *chosen_version {
+                    return Err(MgError::DependencyConflict(format!(
+                        "incompatible constraints for {name}: selected {chosen_version}, but constraint '{range}' resolves to {} (native resolver does not backtrack yet)",
+                        entry.version
+                    )));
+                }
+                continue;
+            }
+            chosen.insert(entry.name.clone(), entry.version.clone());
+            for (dep_name, dep_range) in &entry.deps {
+                if !chosen.contains_key(dep_name) {
+                    queue.push_back((dep_name.clone(), dep_range.clone()));
+                }
+            }
+            entries.push(entry);
+        }
+    }
+    Ok(entries)
 }
 
 /// sha256 of bytes as lowercase hex — SỞ HỮU chung cho mọi engine.

@@ -27,7 +27,7 @@ fn test_app_commands_require_app_project() {
     let (ok, out) = common::mgc_in(&dir, &["list-app"]);
     assert!(!ok, "list-app outside app project must fail");
     assert!(
-        out.contains("Cannot detect an app project"),
+        out.contains("cannot prove project core identity"),
         "expected detection error, got: {out}"
     );
 }

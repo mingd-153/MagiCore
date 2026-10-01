@@ -13,7 +13,7 @@ pub enum Commands {
         template: Option<String>,
         #[arg(
             long,
-            help = "Write core signature marker (.mgc.core) for the current project, no wizard"
+            help = "Write a plain-text core identity marker (.mgc.core); this is not a cryptographic signature"
         )]
         signature: Option<String>,
     },
@@ -232,7 +232,10 @@ pub enum Commands {
     #[command(about = "Start native Model Context Protocol (MCP) server for AI coding agents")]
     Mcp,
     #[command(about = "Show the capability manifest of each core (Global Gate 1)")]
-    Capabilities,
+    Capabilities {
+        #[arg(long, help = "Explicitly request JSON output (the default format)")]
+        json: bool,
+    },
 
     // ── Engine Commands (In-project, auto-detect core) ───────────────
     #[command(about = "Start the local development server", alias = "dev-web")]
@@ -371,7 +374,7 @@ pub enum Commands {
         )]
         compat_runtime: Option<String>,
     },
-    #[command(about = "Manage the local store (prune unreferenced packages)")]
+    #[command(about = "Manage the Web core local package store (prune unreferenced packages)")]
     Store {
         #[command(subcommand)]
         cmd: crate::commands::store::StoreCmd,
@@ -793,6 +796,8 @@ pub enum Commands {
         /// (never silently re-resolve).
         #[arg(long, help = "Fail if the lockfile is missing or stale")]
         frozen: bool,
+        #[arg(long, help = "Offline mode: install from verified MGC cache only")]
+        offline: bool,
     },
     #[command(
         name = "install-hardware",

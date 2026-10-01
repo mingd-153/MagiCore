@@ -2,7 +2,7 @@
 //! Dispatches each supported language to its native resolver/materializer lane.
 //! Điều phối mỗi ngôn ngữ được hỗ trợ tới lane resolver/materializer native.
 
-use crate::language::{LibLanguage, detect_language, manifest_is_lib};
+use crate::language::{LibLanguage, detect_language, find_csproj, manifest_is_lib};
 use crate::manifest::{
     parse_cargo_manifest, parse_csproj_manifest, parse_go_mod_manifest, parse_maven_manifest,
     parse_pyproject_manifest, write_cargo_manifest, write_csproj_manifest, write_go_mod_manifest,
@@ -39,6 +39,7 @@ use std::path::{Path, PathBuf};
 pub(crate) enum JavaManifestKind {
     Pom,
     Gradle,
+    Ambiguous,
     #[default]
     None,
 }
@@ -173,12 +174,11 @@ impl LibAdapter {
         // build scripts fail closed downstream.
         // (Loại build-manifest Java: pom.xml sở hữu native, build script
         // gradle fail-closed phía sau.)
-        let java_kind = if root.join("pom.xml").is_file() {
-            JavaManifestKind::Pom
-        } else if root.join("build.gradle").is_file() || root.join("build.gradle.kts").is_file() {
-            JavaManifestKind::Gradle
-        } else {
-            JavaManifestKind::None
+        let java_kind = match crate::language::dependency_manifest_format(root, language) {
+            Some("maven-pom") => JavaManifestKind::Pom,
+            Some("gradle") => JavaManifestKind::Gradle,
+            Some("ambiguous") => JavaManifestKind::Ambiguous,
+            _ => JavaManifestKind::None,
         };
         let web = if language == LibLanguage::Ts {
             Some(match (registry_url, token) {
@@ -196,7 +196,7 @@ impl LibAdapter {
             language,
             java_kind,
             project_root: root.to_path_buf(),
-            dotnet_tfm: read_dotnet_target_framework(root),
+            dotnet_tfm: read_dotnet_target_framework(root)?,
             web,
             pending_lock: std::sync::Mutex::new(Vec::new()),
         })
@@ -245,20 +245,22 @@ impl ProjectDetector for LibAdapter {
     }
 }
 
-/// Read the consumer target framework from the first `*.csproj` in
-/// `root` (`<TargetFramework>`, or the FIRST of `<TargetFrameworks>` with
-/// a loud warning — multi-target projects resolve against it). `None`
-/// when absent/unreadable (divergent multi-TFM sets then fail closed).
-/// Tag scan, no XML dependency (same technique as the nuspec parser).
-/// (Đọc `<TargetFramework>` từ csproj đầu tiên.)
-fn read_dotnet_target_framework(root: &Path) -> Option<String> {
-    let mut csprojs: Vec<PathBuf> = std::fs::read_dir(root)
-        .ok()?
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.extension().is_some_and(|ext| ext == "csproj"))
-        .collect();
-    csprojs.sort();
-    let content = std::fs::read_to_string(csprojs.first()?).ok()?;
+/// Read the consumer target framework from the unique root `*.csproj`.
+/// Missing/ambiguous projects return `None`; filesystem/parse-read failures
+/// propagate so callers cannot silently resolve without the target context.
+/// (Đọc framework từ csproj root duy nhất; lỗi đọc không bị nuốt.)
+pub(crate) fn read_dotnet_target_framework(root: &Path) -> MgResult<Option<String>> {
+    let Some(csproj) = find_csproj(root) else {
+        return Ok(None);
+    };
+    read_dotnet_target_framework_file(&csproj)
+}
+
+/// Read and parse a selected csproj through the shared no-follow handle.
+/// Kept separate so symlink races can be regression-tested directly.
+/// (Đọc csproj qua handle no-follow; tách riêng để test symlink-race.)
+pub(crate) fn read_dotnet_target_framework_file(path: &Path) -> MgResult<Option<String>> {
+    let content = mgc_adapter_base::project_file::read_regular_text(path, ".csproj")?;
     let tag = |name: &str| -> Option<String> {
         let open = format!("<{name}>");
         let close = format!("</{name}>");
@@ -267,17 +269,21 @@ fn read_dotnet_target_framework(root: &Path) -> Option<String> {
         Some(content[start..start + end].trim().to_string())
     };
     if let Some(single) = tag("TargetFramework").filter(|v| !v.is_empty()) {
-        return Some(single);
+        return Ok(Some(single));
     }
-    let multi = tag("TargetFrameworks").filter(|v| !v.is_empty())?;
+    let Some(multi) = tag("TargetFrameworks").filter(|v| !v.is_empty()) else {
+        return Ok(None);
+    };
     let mut frameworks = multi.split(';').map(str::trim).filter(|v| !v.is_empty());
-    let first = frameworks.next()?.to_string();
+    let Some(first) = frameworks.next().map(str::to_string) else {
+        return Ok(None);
+    };
     if frameworks.next().is_some() {
         eprintln!(
             "WARNING: multi-target project ({multi}) — native resolve selects dependency groups for '{first}' only"
         );
     }
-    Some(first)
+    Ok(Some(first))
 }
 
 impl ScaffoldProvider for LibAdapter {
@@ -292,6 +298,17 @@ impl LibAdapter {
     fn python_native_owned(&self) -> bool {
         self.language != LibLanguage::Python
             || crate::manifest::supports_native_python_project(&self.project_root)
+    }
+
+    fn require_unique_dotnet_project(&self, operation: &'static str) -> MgResult<()> {
+        if self.language == LibLanguage::DotNet && find_csproj(&self.project_root).is_none() {
+            return Err(mgc_types::capabilities::unsupported_capability(
+                "lib",
+                operation,
+                "native .NET dependency operations require exactly one regular root-level .csproj; select a project explicitly",
+            ));
+        }
+        Ok(())
     }
 
     fn require_python_native(&self, capability: &'static str) -> MgResult<()> {
@@ -337,6 +354,12 @@ impl LibAdapter {
                 JavaManifestKind::Gradle | JavaManifestKind::None => {
                     return Err(mgc_types::MgError::Other(
                         "java add needs a pom.xml — gradle build scripts are programs, not parseable manifests (declare dependencies in a pom.xml for native add)"
+                            .to_string(),
+                    ));
+                }
+                JavaManifestKind::Ambiguous => {
+                    return Err(mgc_types::MgError::Other(
+                        "java project contains both pom.xml and Gradle build scripts; select one build system before native dependency operations"
                             .to_string(),
                     ));
                 }
@@ -472,6 +495,7 @@ impl PackageAdapter for LibAdapter {
             LibLanguage::Java => match self.java_kind {
                 JavaManifestKind::Pom => ("java", "pom.xml", "pom.xml"),
                 JavaManifestKind::Gradle => ("java", "build.gradle", "build.gradle"),
+                JavaManifestKind::Ambiguous => ("java", "ambiguous", ""),
                 JavaManifestKind::None => ("java", "pom.xml", "pom.xml"),
             },
             LibLanguage::DotNet => ("dotnet", "csproj", "*.csproj"),
@@ -628,6 +652,9 @@ impl LockfileProvider for LibAdapter {
                 JavaManifestKind::Gradle | JavaManifestKind::None => Err(mgc_types::MgError::Other(
                     "refusing to write: gradle build scripts are programs, not manifests (declare dependencies in a pom.xml for mgc-managed edits)".to_string(),
                 )),
+                JavaManifestKind::Ambiguous => Err(mgc_types::MgError::Other(
+                    "refusing to write: both Maven and Gradle manifests are present; select one build system before native dependency operations".to_string(),
+                )),
             },
             LibLanguage::Ts => unreachable!("ts handled by web delegate"),
         }
@@ -643,11 +670,15 @@ impl DependencyResolver for LibAdapter {
     /// lần ghi dependency. Chỉ lane native có implementation mới resolve.
     fn probe_dependency_resolver(&self) -> MgResult<()> {
         self.require_python_native("resolve")?;
+        self.require_unique_dotnet_project("resolve")?;
         if self.language == LibLanguage::Java && self.java_kind != JavaManifestKind::Pom {
+            let guidance = if self.java_kind == JavaManifestKind::Ambiguous {
+                "both Maven and Gradle manifests are present; select one build system before native dependency operations"
+            } else {
+                "Java Gradle build scripts are not an MGC-native dependency manifest"
+            };
             return Err(mgc_types::capabilities::unsupported_capability(
-                "lib",
-                "resolve",
-                "Java Gradle build scripts are not an MGC-native dependency manifest",
+                "lib", "resolve", guidance,
             ));
         }
         Ok(())
@@ -655,6 +686,7 @@ impl DependencyResolver for LibAdapter {
 
     async fn resolve(&self, manifest: &Manifest) -> MgResult<ResolvedGraph> {
         self.require_python_native("resolve")?;
+        self.require_unique_dotnet_project("resolve")?;
         if let Some(web) = &self.web {
             return web.resolve(manifest).await;
         }
@@ -749,6 +781,11 @@ impl DependencyResolver for LibAdapter {
                             .to_string(),
                     })
                 }
+                JavaManifestKind::Ambiguous => Err(mgc_types::MgError::Unsupported {
+                    core: "lib",
+                    capability: "resolve",
+                    guidance: "both Maven and Gradle manifests are present; select one build system before native dependency operations".to_string(),
+                }),
             },
             // Native NuGet v3 engine (Phase 2): csproj PackageReferences →
             // flat-container versions → registration SHA-512-verified nupkgs

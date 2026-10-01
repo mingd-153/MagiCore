@@ -8,6 +8,7 @@ pub mod list;
 pub mod pending;
 pub mod policy;
 pub mod prune;
+pub mod script_policy;
 pub mod sign;
 pub mod verify;
 

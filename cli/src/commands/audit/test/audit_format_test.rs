@@ -57,6 +57,21 @@ fn machine_formats_flagged_not_table() {
 }
 
 #[test]
+fn verify_strict_mode_rejects_unavailable_scanner_coverage() {
+    // Verify must reject UNVERIFIED audit status even when the local CLI defaults to warning-only.
+    // Verify phải từ chối audit UNVERIFIED dù CLI local mặc định chỉ cảnh báo.
+    let report = mgc_types::adapter::AuditReport::unsupported_ecosystem("fixture");
+    assert!(
+        crate::commands::audit::enforce_audit_exit(
+            "fixture",
+            &report,
+            crate::commands::audit::StrictMode::required(),
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn audit_fix_machine_output_defers_only_when_mutation_will_run() {
     use crate::commands::audit::OutputFormat;
     use crate::commands::audit::web::should_print_initial_report;

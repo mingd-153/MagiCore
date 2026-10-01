@@ -27,7 +27,8 @@ impl AiFramework {
 
 pub fn detect_framework(root: &Path) -> Option<AiFramework> {
     // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
-    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml"))
+    if let Ok(Some(content)) =
+        mgc_config::project::read_regular_project_text(&root.join("mgc.toml"), "project config")
         && let Ok(v) = toml::from_str::<toml::Value>(&content)
         && let Some(p) = v
             .get("ai")
@@ -37,8 +38,10 @@ pub fn detect_framework(root: &Path) -> Option<AiFramework> {
     {
         return Some(fw);
     }
-    if let Ok(content) = std::fs::read_to_string(root.join("pyproject.toml"))
-        && let Ok(v) = toml::from_str::<toml::Value>(&content)
+    if let Ok(Some(content)) = mgc_config::project::read_regular_project_text(
+        &root.join("pyproject.toml"),
+        "Python project manifest",
+    ) && let Ok(v) = toml::from_str::<toml::Value>(&content)
         && let Some(p) = v
             .get("tool")
             .and_then(|t| t.get("magicore"))

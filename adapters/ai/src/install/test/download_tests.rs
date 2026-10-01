@@ -7,6 +7,18 @@
 use super::*;
 use tempfile::TempDir;
 
+#[test]
+fn remote_model_download_quota_is_checked_before_accepting_chunk() {
+    assert_eq!(next_model_download_total(4, 6, 10).unwrap(), 10);
+    assert!(
+        next_model_download_total(4, 7, 10)
+            .unwrap_err()
+            .to_string()
+            .contains("size limit")
+    );
+    assert!(next_model_download_total(u64::MAX, 1, u64::MAX).is_err());
+}
+
 fn tmp() -> TempDir {
     TempDir::new().unwrap()
 }
@@ -76,6 +88,25 @@ fn test_filename_from_url() {
     );
 }
 
+#[tokio::test]
+async fn download_rejects_huggingface_path_traversal_before_network_or_write() {
+    let tmp = tmp();
+    let target = tmp.path().join("models");
+    let source = ModelSource::huggingface("owner/model", "../../escaped.bin")
+        .with_revision("0123456789abcdef0123456789abcdef01234567")
+        .with_checksum(format!("sha256:{}", "a".repeat(64)));
+
+    let error = download_model("model", &source, &target)
+        .await
+        .expect_err("remote artifact path must remain inside the model directory");
+    assert!(error.to_string().contains("filename") || error.to_string().contains("path"));
+    assert!(!tmp.path().join("escaped.bin").exists());
+    assert!(
+        !target.exists(),
+        "invalid input must not create destination directories"
+    );
+}
+
 #[test]
 fn test_verify_file_checksum_algorithms() {
     let tmp = tmp();
@@ -103,10 +134,9 @@ fn serve_once(body: &'static [u8]) -> Option<(String, std::thread::JoinHandle<()
     use std::io::{Read, Write};
     let listener = match std::net::TcpListener::bind("127.0.0.1:0") {
         Ok(listener) => listener,
-        Err(err) => {
-            eprintln!("skipping local HTTP download test: localhost bind failed: {err}");
-            return None;
-        }
+        Err(err) => panic!(
+            "AI download tests require localhost; refusing to report skipped tests as passing: {err}"
+        ),
     };
     let port = listener.local_addr().unwrap().port();
     let handle = std::thread::spawn(move || {
@@ -122,6 +152,29 @@ fn serve_once(body: &'static [u8]) -> Option<(String, std::thread::JoinHandle<()
         }
     });
     Some((format!("http://127.0.0.1:{port}/model.bin"), handle))
+}
+
+/// Serve chunked HTTP without Content-Length to exercise streaming quota checks.
+/// Phục vụ HTTP chunked không Content-Length để kiểm tra quota theo từng chunk.
+fn serve_chunked_once(body: &'static [u8]) -> (String, std::thread::JoinHandle<()>) {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap_or_else(|error| panic!("AI download tests require localhost: {error}"));
+    let port = listener.local_addr().unwrap().port();
+    let handle = std::thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request);
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n{:X}\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(response.as_bytes());
+            let _ = stream.write_all(body);
+            let _ = stream.write_all(b"\r\n0\r\n\r\n");
+        }
+    });
+    (format!("http://127.0.0.1:{port}/model.bin"), handle)
 }
 
 #[tokio::test]
@@ -150,9 +203,88 @@ async fn test_url_branch_downloads_real_bytes_and_verifies_sha256() {
 }
 
 #[tokio::test]
-async fn test_url_branch_wrong_checksum_removes_artifact() {
+async fn remote_download_quota_rejects_before_writing_over_limit_chunk() {
+    let tmp = tmp();
+    let staging = tmp.path().join("bounded.part");
+    let (url, server) = serve_chunked_once(b"12345");
+
+    let error = http_download_to_staging_with_limit(&url, &staging, 4)
+        .await
+        .expect_err("response larger than the configured limit must be rejected");
+    server.join().unwrap();
+    assert!(error.to_string().contains("size limit"), "{error}");
+    assert_eq!(
+        std::fs::metadata(&staging).unwrap().len(),
+        0,
+        "the over-limit response chunk must be rejected before it is written"
+    );
+}
+
+#[tokio::test]
+async fn remote_download_without_checksum_is_rejected_before_publish() {
+    let tmp = tmp();
+    let target = tmp.path().join("unverified-models");
+    let source = ModelSource::Url {
+        url: "https://example.invalid/model.bin".into(),
+        checksum: None,
+    };
+
+    let error = download_model("m", &source, &target)
+        .await
+        .expect_err("remote artifacts without a trusted digest must fail closed");
+
+    assert!(error.to_string().contains("checksum"), "{error}");
+    assert!(
+        !target.exists(),
+        "a rejected remote artifact must not create or publish a target"
+    );
+}
+
+#[test]
+fn remote_integrity_requires_valid_digest_and_immutable_huggingface_revision() {
+    let missing_revision = ModelSource::huggingface("owner/model", "model.safetensors")
+        .with_checksum(format!("sha256:{}", "a".repeat(64)));
+    assert!(
+        validate_remote_integrity(&missing_revision)
+            .unwrap_err()
+            .to_string()
+            .contains("revision")
+    );
+
+    let mutable_revision = ModelSource::HuggingFace {
+        repo_id: "owner/model".into(),
+        revision: Some("main".into()),
+        filename: "model.safetensors".into(),
+        checksum: Some(format!("sha256:{}", "a".repeat(64))),
+    };
+    assert!(
+        validate_remote_integrity(&mutable_revision)
+            .unwrap_err()
+            .to_string()
+            .contains("40-hex")
+    );
+
+    let invalid_checksum = ModelSource::Url {
+        url: "https://example.invalid/model.bin".into(),
+        checksum: Some("sha256:abc".into()),
+    };
+    assert!(
+        validate_remote_integrity(&invalid_checksum)
+            .unwrap_err()
+            .to_string()
+            .contains("64 hexadecimal")
+    );
+
+    let local = ModelSource::Local(PathBuf::from("/tmp/model.bin"));
+    assert!(validate_remote_integrity(&local).is_ok());
+}
+
+#[tokio::test]
+async fn test_url_branch_wrong_checksum_preserves_existing_artifact() {
     let tmp = tmp();
     let target = tmp.path().join("out");
+    std::fs::create_dir_all(&target).unwrap();
+    std::fs::write(target.join("model.bin"), b"trusted-old-artifact").unwrap();
     let Some((url, server)) = serve_once(b"tampered-or-not") else {
         return;
     };
@@ -165,23 +297,53 @@ async fn test_url_branch_wrong_checksum_removes_artifact() {
     server.join().unwrap();
 
     assert!(err.to_string().contains("checksum mismatch"));
-    // Fail-closed: file tải về bị xoá, không để lại artifact lạ
-    // (Fail-closed: downloaded artifact is deleted, nothing suspicious left behind)
-    let leftovers: Vec<_> = std::fs::read_dir(&target).unwrap().collect();
+    assert_eq!(
+        std::fs::read(target.join("model.bin")).unwrap(),
+        b"trusted-old-artifact",
+        "failed replacement must preserve the previous verified artifact"
+    );
     assert!(
-        leftovers.is_empty(),
-        "no artifact may survive a failed checksum"
+        std::fs::read_dir(&target).unwrap().all(|entry| !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .contains("mgc-download")),
+        "failed checksum must not leak staging files"
     );
 }
 
-// Network test — CHẠY THẬT internet, chỉ bật chủ động khi cần (hermetic CI không chạy).
-// (Network test hits the real internet — run manually only; hermetic CI skips it.)
+#[cfg(unix)]
 #[tokio::test]
-#[ignore = "hits huggingface.co and downloads a real remote artifact — run manually"]
-async fn test_download_huggingface_live() {
+async fn download_rejects_symlinked_model_parent_without_touching_target() {
+    use std::os::unix::fs::symlink;
+
+    let tmp = tmp();
+    let target = tmp.path().join("models");
+    let outside = tmp.path().join("outside");
+    std::fs::create_dir_all(&target).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    symlink(&outside, target.join("weights")).unwrap();
+    let source = ModelSource::huggingface("owner/model", "weights/model.bin")
+        .with_revision("0123456789abcdef0123456789abcdef01234567")
+        .with_checksum(format!("sha256:{}", "a".repeat(64)));
+
+    let error = download_model("model", &source, &target)
+        .await
+        .expect_err("symlinked artifact parent must be rejected");
+    assert!(error.to_string().contains("real directory"));
+    assert!(std::fs::read_dir(&outside).unwrap().next().is_none());
+}
+
+#[tokio::test]
+async fn huggingface_defaults_are_rejected_without_network_pins() {
     let tmp = tmp();
     let source = ModelSource::huggingface("bert-base-uncased", "config.json");
-    let (path, bytes) = download_model("bert", &source, tmp.path()).await.unwrap();
-    assert!(path.exists());
-    assert!(bytes > 0, "live download must return real byte count");
+    let error = download_model("bert", &source, tmp.path())
+        .await
+        .expect_err("unpinned Hugging Face source must fail before network access");
+    assert!(error.to_string().contains("checksum"));
+    assert!(
+        !tmp.path().exists() || std::fs::read_dir(tmp.path()).unwrap().next().is_none(),
+        "unpinned remote source must not create a published artifact"
+    );
 }

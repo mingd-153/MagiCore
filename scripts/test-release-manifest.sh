@@ -10,7 +10,14 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FIX="$(mktemp -d)"
-trap 'rm -rf "$FIX"' EXIT
+MANIFEST_REPO=""
+ARTIFACTS=""
+cleanup() {
+    rm -rf "$FIX"
+    [[ -z "$MANIFEST_REPO" ]] || rm -rf "$MANIFEST_REPO"
+    [[ -z "$ARTIFACTS" ]] || rm -rf "$ARTIFACTS"
+}
+trap cleanup EXIT
 
 # Fixture archives (content irrelevant — digests cover whatever bytes).
 # Archive giả (nội dung không quan trọng — digest bao nội dung đó).
@@ -74,6 +81,20 @@ grep -q "magicore-web-<version>-macos-arm64" "$FULL/matrix-err.log" || fail "mat
 echo "ok: incomplete matrix fails naming the missing asset"
 rm -rf "$FULL"
 
+# 3c. A recognized release archive may not be a symlink to bytes outside
+# the asset directory; the manifest builder must not follow it.
+# Archive release nhận diện không được là symlink trỏ ra ngoài assets.
+OUTSIDE="$(mktemp)"
+printf 'outside release bytes' > "$OUTSIDE"
+ln -s "$OUTSIDE" "$FIX/magicore-web-1.1.0-rc.9-linux-arm64.tar.gz"
+if VERSION=1.1.0-rc.9 python3 "$SCRIPT_DIR/release-manifest.py" "$FIX" 2> "$FIX/symlink-err.log"; then
+    fail "manifest builder must reject a recognized archive symlink"
+fi
+grep -q "release asset is not a regular file" "$FIX/symlink-err.log" \
+    || fail "symlink rejection must explain the non-regular release asset"
+rm "$FIX/magicore-web-1.1.0-rc.9-linux-arm64.tar.gz" "$OUTSIDE"
+echo "ok: recognized archive symlinks are rejected"
+
 # 4. Signing without a key warns and exits 0 (transitional unsigned).
 # Ký thiếu key thì cảnh báo và exit 0 (unsigned quá độ).
 out=$(python3 "$SCRIPT_DIR/sign-release-manifest.py" "$FIX")
@@ -119,14 +140,105 @@ for trial in range(3):
 print("ok: vendored Ed25519 self-verifies + matches reference lib")
 PYEOF
 [ $? -eq 0 ] || fail "ed25519 self-test failed"
+PYTHONDONTWRITEBYTECODE=1 python3 "$SCRIPT_DIR/test_release_manifest_builder.py" \
+    || fail "release manifest asset mutation race test failed"
 
-echo "ALL RELEASE-MANIFEST TESTS PASSED"
+# Exercise updater verification against all eight published artifacts.
+# Kiểm tra updater trên đủ tám artifact phát hành.
+MANIFEST_REPO="$(mktemp -d)"
+ARTIFACTS="$(mktemp -d)"
+mkdir -p "$MANIFEST_REPO/packaging/homebrew" "$MANIFEST_REPO/packaging/scoop"
+for artifact in \
+    magicore-1.1.0-rc.9-linux-x64.tar.gz \
+    magicore-1.1.0-rc.9-macos-x64.tar.gz \
+    magicore-1.1.0-rc.9-macos-arm64.tar.gz \
+    magicore-1.1.0-rc.9-windows-x64.zip \
+    magicore-web-1.1.0-rc.9-linux-x64.tar.gz \
+    magicore-web-1.1.0-rc.9-macos-x64.tar.gz \
+    magicore-web-1.1.0-rc.9-macos-arm64.tar.gz \
+    magicore-web-1.1.0-rc.9-windows-x64.zip; do
+    printf '%s' "$artifact" > "$ARTIFACTS/$artifact"
+done
+MAGICORE_REPO_ROOT="$MANIFEST_REPO" "$SCRIPT_DIR/update-manifests.sh" \
+    --version 1.1.0-rc.9 --artifacts "$ARTIFACTS" >/dev/null
+MAGICORE_REPO_ROOT="$MANIFEST_REPO" "$SCRIPT_DIR/update-manifests.sh" \
+    --version 1.1.0-rc.9 --artifacts "$ARTIFACTS" --verify-only >/dev/null \
+    || fail "complete generated manifests must verify"
+
+python3 - "$MANIFEST_REPO/packaging/homebrew/magicore-web.rb" <<'PYEOF'
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+text, count = re.subn(
+    r'(sha256\s+")[0-9a-f]{64}(".*)',
+    r'\g<1>' + '0' * 64 + r'\g<2>',
+    text,
+    count=1,
+)
+assert count == 1, "expected a Homebrew SHA256 entry to tamper"
+path.write_text(text, encoding="utf-8")
+PYEOF
+if MAGICORE_REPO_ROOT="$MANIFEST_REPO" "$SCRIPT_DIR/update-manifests.sh" \
+    --version 1.1.0-rc.9 --artifacts "$ARTIFACTS" --verify-only >/dev/null 2>&1; then
+    fail "verify-only must reject a corrupted web Homebrew hash"
+fi
+echo "ok: verify-only rejects a corrupted web Homebrew hash"
+
+MAGICORE_REPO_ROOT="$MANIFEST_REPO" "$SCRIPT_DIR/update-manifests.sh" \
+    --version 1.1.0-rc.9 --artifacts "$ARTIFACTS" >/dev/null
+python3 - "$MANIFEST_REPO/packaging/scoop/magicore-web.json" <<'PYEOF'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+manifest = json.loads(path.read_text(encoding="utf-8"))
+manifest["architecture"]["64bit"]["hash"] = "0" * 64
+path.write_text(json.dumps(manifest), encoding="utf-8")
+PYEOF
+if MAGICORE_REPO_ROOT="$MANIFEST_REPO" "$SCRIPT_DIR/update-manifests.sh" \
+    --version 1.1.0-rc.9 --artifacts "$ARTIFACTS" --verify-only >/dev/null 2>&1; then
+    fail "verify-only must reject a corrupted web Scoop hash"
+fi
+echo "ok: verify-only rejects a corrupted web Scoop hash"
+
+MAGICORE_REPO_ROOT="$MANIFEST_REPO" "$SCRIPT_DIR/update-manifests.sh" \
+    --version 1.1.0-rc.9 --artifacts "$ARTIFACTS" >/dev/null
+python3 - "$MANIFEST_REPO/packaging/scoop/magicore.json" <<'PYEOF'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+manifest = json.loads(path.read_text(encoding="utf-8"))
+manifest["architecture"]["arm64"] = {
+    "url": "https://example.invalid/unverified-arm64.zip",
+    "hash": "a" * 64,
+}
+path.write_text(json.dumps(manifest), encoding="utf-8")
+PYEOF
+if MAGICORE_REPO_ROOT="$MANIFEST_REPO" "$SCRIPT_DIR/update-manifests.sh" \
+    --version 1.1.0-rc.9 --artifacts "$ARTIFACTS" --verify-only >/dev/null 2>&1; then
+    fail "verify-only must reject an architecture without a published artifact"
+fi
+echo "ok: verify-only rejects an unmapped Scoop architecture"
+
+# Gate the manifest verifier itself against missing URL/checksum fields.
+# Kiểm chính verifier để thiếu URL/checksum không thể lọt qua.
+python3 "$SCRIPT_DIR/test_verify_release_manifests.py"
+python3 "$SCRIPT_DIR/test_release_manifest_signature.py"
 
 # 7. Cross-implementation: the Rust CLI signer (ring, locked) output must
 # verify under the independent python implementation. Needs MGC_BIN
 # (release job passes the just-built binary); skipped loudly otherwise.
 # Đối chiếu chéo: chữ ký của CLI Rust phải verify được bằng python độc lập.
-if [[ -n "${MGC_BIN:-}" && -x "${MGC_BIN:-}" ]]; then
+if [[ -n "${MGC_BIN:-}" ]]; then
+    # An explicitly supplied binary must never turn into a skipped check.
+    # Binary đã chỉ định không được biến thành kiểm tra bị bỏ qua.
+    [[ -f "$MGC_BIN" && -x "$MGC_BIN" ]] || fail "MGC_BIN is not an executable regular file: $MGC_BIN"
     SEED="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
     "$MGC_BIN" sign-release --manifest "$FIX/manifest.json" --key-hex "$SEED"
     MGC_SIG_FILE="$FIX/manifest.json.sig" MGC_SIG_SEED="$SEED" MGC_SIG_MSG="$FIX/manifest.json" python3 - <<'PYEOF'
@@ -136,16 +248,11 @@ sys.path.insert(0, "scripts")
 import _ed25519
 mb = open(os.environ["MGC_SIG_MSG"], "rb").read()
 sig = bytes.fromhex(open(os.environ["MGC_SIG_FILE"]).read().split()[0])
-try:
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
-except ImportError:
-    print("note: cryptography absent — CLI cross-check skipped")
-    sys.exit(0)
-pub = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(os.environ["MGC_SIG_SEED"])).public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+pub = _ed25519.public_key(bytes.fromhex(os.environ["MGC_SIG_SEED"]))
 assert _ed25519.verify(pub, mb, sig), "python cross-verify of Rust CLI signature failed"
 print("ok: Rust CLI signature verifies under independent python impl")
 PYEOF
+    echo "RELEASE-MANIFEST SCRIPT AND CLI CROSS-CHECK TESTS PASSED"
 else
-    echo "note: MGC_BIN unset — CLI cross-check skipped (release job covers it)"
+    echo "SCRIPT-ONLY RELEASE-MANIFEST TESTS PASSED; CLI CROSS-CHECK UNVERIFIED (MGC_BIN unset)"
 fi

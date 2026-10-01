@@ -5,11 +5,15 @@ use mgc_types::{MgError, MgResult, PackageId};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
-/// Verify Cargo.lock integrity.
-/// Kiểm tra integrity của Cargo.lock.
+/// Refuse to claim artifact integrity from Cargo.lock alone.
+/// Từ chối tuyên bố đã xác minh artifact chỉ dựa trên Cargo.lock.
 ///
-/// Cargo.lock contains checksums in the `checksum` field for each dependency.
-/// Cargo.lock chứa checksum trong field `checksum` cho mỗi dependency.
+/// A lockfile records expected checksums, but this helper has no mapping from
+/// locked packages to downloaded crate archives. The native resolver/store
+/// must verify those archives; file presence is not integrity verification.
+/// Lockfile ghi checksum kỳ vọng nhưng helper này không ánh xạ package đã khóa
+/// tới archive crate đã tải. Resolver/store native phải xác minh archive;
+/// sự tồn tại của file không phải là xác minh integrity.
 pub fn verify_cargo_lock(project_root: &Path) -> MgResult<()> {
     let lock_path = project_root.join("Cargo.lock");
 
@@ -19,11 +23,9 @@ pub fn verify_cargo_lock(project_root: &Path) -> MgResult<()> {
         ));
     }
 
-    // Issue #14: parse Cargo.lock TOML and verify checksums against downloaded crates
-    // Issue #14: parse Cargo.lock TOML và verify checksum với crates đã tải
-    // For now, trust cargo's internal verification
-    // Hiện tại tin cargo verification nội bộ
-    Ok(())
+    Err(MgError::Other(
+        "cannot verify crate artifact integrity from Cargo.lock alone; use the native resolver/store verification".to_string(),
+    ))
 }
 
 /// Verify Python package integrity (PEP 503 hash).
@@ -33,13 +35,10 @@ pub fn verify_cargo_lock(project_root: &Path) -> MgResult<()> {
 /// PyPI cung cấp SHA-256 hash trong simple API index.
 pub fn verify_python_package(package_path: &Path, expected_hash: Option<&str>) -> MgResult<()> {
     if expected_hash.is_none() {
-        // No hash available: warn but allow (permissive mode)
-        // Không có hash: cảnh báo nhưng cho qua (chế độ permissive)
-        eprintln!(
-            "WARNING: No integrity hash for Python package '{}'",
+        return Err(MgError::Other(format!(
+            "cannot verify Python package '{}': no expected SHA-256 hash was provided",
             package_path.display()
-        );
-        return Ok(());
+        )));
     }
 
     let expected = expected_hash.expect("expected_hash checked non-None above");
@@ -100,21 +99,17 @@ pub fn verify_crate_checksum(
     }
 }
 
-/// Verify Python wheel RECORD file integrity.
-/// Kiểm tra integrity file RECORD của Python wheel.
+/// Refuse to claim wheel RECORD integrity until the RECORD is actually checked.
+/// Từ chối tuyên bố đã xác minh RECORD cho tới khi RECORD được kiểm tra thật.
 ///
 /// Wheels contain a RECORD file listing all files with SHA-256 hashes.
 /// Wheels chứa file RECORD liệt kê mọi file với SHA-256 hash.
 pub fn verify_wheel_record(wheel_path: &Path) -> MgResult<()> {
-    // Issue #14: extract wheel and verify RECORD file
-    // Issue #14: extract wheel và verify file RECORD
-    // This requires zip extraction and RECORD parsing
-    // Cần zip extraction và RECORD parsing
-
-    // For now, trust wheel signature if present
-    // Hiện tại tin wheel signature nếu có
     if wheel_path.extension().and_then(|s| s.to_str()) == Some("whl") {
-        Ok(())
+        Err(MgError::Other(format!(
+            "cannot verify wheel '{}' RECORD: RECORD verification is not implemented",
+            wheel_path.display()
+        )))
     } else {
         Err(MgError::Other(
             "not a valid wheel file (must have .whl extension)".to_string(),

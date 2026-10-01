@@ -2,32 +2,32 @@ name: Lifecycle Capability Matrix
 
 # P0-2 (Tech Lead 2026-09-11): the AUDIT capability matrix can never
 # justify product "supported" claims — lifecycle is a SEPARATE
-# dimension (create → install → test → build → dev → cache → offline)
+# dimensions including package operations (install/add/remove/update/list,
+# frozen/offline, integrity, store/GC) and project lifecycle probes.
 # with its own binary-driven evidence. This lane generates the
 # lifecycle matrix on every PR touching product code and refuses to
 # let lifecycle support regress silently. Java/.NET/Go scaffolds that
 # fall back to another language are FAILED creates here (honest).
 #
-# P0 findings #1/#2/#7 (2026-09-12): the verdict now weighs EVERY
-# required dimension the lane declares (per-lane contracts, not a
-# global 4-dim subset), and the non-regression gate covers the FULL
-# release scope (web/js, ai/py, app/flutter, lib/rust, lib/py, lib/ts)
-# — not just the lib/rust reference lane. AI/App lanes are provisioned
-# (Python 3.12 + uv, Flutter stable) because this workflow is now a
-# release gate, not a sample.
+# The earlier six-lane RC gate is historical only. V1.2 promotion uses the
+# complete lane registry and requires lifecycle plus native-PM evidence for
+# every declared core/language lane.
+# (Gate sáu lane RC trước đây chỉ còn là lịch sử. Promotion V1.2 dùng toàn
+# registry và cần lifecycle cùng native-PM evidence trên mọi lane.)
 #
 # P0-2: matrix audit KHÔNG BAO GIỜ suy ra năng lực product — lifecycle
 # là dimension RIÊNG với evidence binary riêng. Lane sinh matrix này
 # mỗi PR chạm code product; scaffold java/.net/go rơi fallback ngôn ngữ
 # khác sẽ là create FAILED (trung thực, không độn sự thật).
-# P0 findings #1/#2/#7: verdict giờ cân MỌI dimension bắt buộc mà lane
-# tuyên bố (hợp đồng từng lane, không phải tập 4-dim toàn cục), và
-# gate non-regression phủ ĐẦY release scope (web/js, ai/py, app/
-# flutter, lib/rust, lib/py, lib/ts) — không chỉ lane tham chiếu
-# lib/rust. Lane AI/App được provision (Python 3.12 + uv, Flutter
-# stable) vì workflow này giờ là release gate, không còn là mẫu.
+# Every lane is evaluated against its own required dimensions; V1.2 no
+# longer exempts a core/language from the global promotion scope.
+# (Mỗi lane được đánh giá theo dimensions riêng; V1.2 không miễn trừ core/
+# ngôn ngữ nào khỏi promotion scope toàn cục.)
 #
-# Gate 11-C schema v2 (2026-09-15): 16 dimensions × six-value status
+# Gate 11-C schema v7 (2026-09-29): framework-qualified lane identity plus
+# per-required-dimension lifecycle owner evidence (wrapper success is not native),
+# 23 dimensions × six-value status,
+# plus clean-source-tree provenance required for platform promotion.
 # vocabulary (native/managed/plain-delegation-pass, unverified,
 # unsupported, failed). Gate 11-D evidence-only Windows: windows-latest
 # runs the SAME matrix and uploads the artifact + prints verdicts, but
@@ -37,7 +37,9 @@ name: Lifecycle Capability Matrix
 # unmatured evidence while BLOCKING lanes must stay the two hardened
 # OSes. Windows evidence is recorded HONESTLY (failed stays failed in
 # the artifact) — this is evidence collection, never a fake pass.
-# (Gate 11-C schema v2: 16 dimension × bộ 6 trạng thái. Windows chỉ
+# (Gate 11-C schema v7: lane identity theo framework, owner từng lifecycle dimension,
+# 23 dimension × bộ 6 trạng thái, kèm provenance
+# source tree sạch bắt buộc trước khi promotion platform. Windows chỉ
 # thu evidence: windows-latest chạy CÙNG matrix, upload artifact + in
 # verdict, nhưng bước Enforce vẫn chỉ ubuntu/macos — lane Windows chưa
 # đủ chín để làm release gate (probe dev/run, recovery dựa signal và
@@ -53,7 +55,7 @@ on:
       - "cli/**"
       - "core/**"
       - "adapters/**"
-      - "scripts/lifecycle_capability_matrix.py"
+      - "scripts/**"
       - ".github/workflows/lifecycle-matrix.yml"
   push:
     branches: [main, "fix/**"]
@@ -61,7 +63,7 @@ on:
       - "cli/**"
       - "core/**"
       - "adapters/**"
-      - "scripts/lifecycle_capability_matrix.py"
+      - "scripts/**"
       - ".github/workflows/lifecycle-matrix.yml"
   workflow_dispatch:
 
@@ -99,10 +101,16 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
-      - name: Setup Python (ai/py + lib/py lanes; uv/pip fallback)
+      - name: Setup Python runtime (AI/Lib Python build and test)
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
+
+      - name: Test native-PM verdict and matrix provenance guards
+        run: ${{ matrix.python_cmd }} scripts/test_native_pm_verdict.py
+
+      - name: Test binary-to-matrix ownership cross-check
+        run: ${{ matrix.python_cmd }} scripts/test_dep_gate_consistency.py
 
       - name: Setup Node.js (web lane)
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -114,15 +122,6 @@ jobs:
         with:
           go-version: "1.27.1"
           cache: false
-
-      # AI lane: mgc install (ai) is fail-closed — it needs uv.lock /
-      # requirements.lock; provision uv so the lane can lock then install.
-      # Lane AI: mgc install (ai) fail-closed — cần uv.lock /
-      # requirements.lock; provision uv để lane lock rồi install.
-      - name: Setup uv (ai lane locking)
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1 (latest, node24)
-        with:
-          version: "0.12.10"
 
       # App lane: flutter toolchain for create→install→test→build.
       # Lane App: toolchain flutter cho create→install→test→build.
@@ -176,7 +175,7 @@ jobs:
           name: lifecycle-capability-matrix-${{ runner.os }}
           path: docs/specs/lifecycleCapabilityMatrix.json
 
-      - name: Enforce release-scope non-regression (all 6 gated lanes)
+      - name: Enforce global v1.2 lifecycle and native-PM gate
         # Gate 11-D evidence-only Windows: the ENFORCE step runs ONLY on
         # ubuntu/macos — the two hardened OSes. The Windows lane collects
         # evidence (matrix + artifact + log) but does not gate: dev/run
@@ -189,86 +188,153 @@ jobs:
         # chưa chín trên Windows. Evidence vẫn trung thực; gate không nới
         # lỏng ở bất kỳ đâu khác.)
         if: matrix.os != 'windows-latest'
-        # P0 finding #2 fix (2026-09-12): the gate now covers the FULL
-        # declared release scope — web/javascript, ai/python, app/
-        # flutter, lib/rust, lib/python, lib/typescript. Any gated lane
-        # that is not orchestration-lifecycle-passed fails the workflow (verdict
-        # semantics fixed by finding #1: a lane missing any required
-        # dimension is partial, never supported). Lanes OUTSIDE the
-        # release scope (lib/go, lib/java, lib/dotnet) are recorded
-        # honestly but not gated — they are not in the RC promise.
-        # P0 finding #2: gate giờ phủ ĐẦY release scope đã tuyên bố —
-        # web/javascript, ai/python, app/flutter, lib/rust, lib/python,
-        # lib/typescript. Lane bị gate mà không orchestration-lifecycle-passed thì
-        # workflow FAIL (semantics verdict đã sửa ở finding #1: lane
-        # thiếu bất kỳ dimension bắt buộc nào là partial, không bao giờ
-        # supported). Lane NGOÀI release scope (lib/go, lib/java,
-        # lib/dotnet) ghi trung thực nhưng không gate — chúng không
-        # thuộc lời hứa RC.
+        # Global v1.2 gate: every declared core/language lane must pass its
+        # lifecycle dimensions and native-PM contract. No delegated,
+        # unsupported, scaffold-only, or unverified lane can be silently
+        # excluded from the release decision.
+        # (Gate toàn cục v1.2: mọi lane core/ngôn ngữ phải qua lifecycle
+        # và native-PM contract; không loại delegated/unsupported/scaffold/
+        # unverified khỏi quyết định phát hành.)
         shell: python3 {0}
         run: |
           import json, sys
+          sys.path.insert(0, "scripts")
+          from lifecycle_capability_matrix import (
+              ALL_STATUSES,
+              ALL_DIMENSIONS,
+              SCHEMA_VERSION,
+              LIFECYCLE_OWNER_VALUES,
+              PASS_STATUSES,
+              PLATFORM_EVIDENCE_RELEASE_SCOPE,
+              native_pm_claim_errors,
+              native_pm_claim_scope,
+              required_dimensions_for_lane,
+              lifecycle_status_for_owner,
+              framework_catalog_errors,
+          )
 
           data = json.load(open("docs/specs/lifecycleCapabilityMatrix.json"))
-          # Release-scope lanes: every lane the RC promise names.
-          # Lane thuộc release scope: mọi lane mà lời hứa RC nêu tên.
-          RELEASE_SCOPE = {
-              ("web", "javascript"),
-              ("ai", "python"),
-              ("app", "flutter"),
-              ("lib", "rust"),
-              ("lib", "python"),
-              ("lib", "typescript"),
-          }
           failures = []
+          if data.get("schema_version") != SCHEMA_VERSION:
+              failures.append(
+                  f"matrix schema {data.get('schema_version')!r} does not match {SCHEMA_VERSION}"
+              )
+          # V1.2 global scope is derived from the same declared lane registry.
+          # Phạm vi toàn cục V1.2 lấy từ cùng registry lane.
+          RELEASE_SCOPE = set(PLATFORM_EVIDENCE_RELEASE_SCOPE)
           seen = set()
-          # Native-PM scope (P0-D taxonomy, adversarial review vòng-9
-          # 2026-09-14): ONLY lanes where mgc itself resolves, locks,
-          # fetches, verifies and materializes the whole dependency graph
-          # into its own CAS. lib/rust and lib/python install via
-          # cargo fetch / uv sync — redirecting CARGO_HOME/UV_CACHE_DIR to
-          # an mgc-managed folder is MANAGED DELEGATION, not a native
-          # resolver; the v1 gate here falsely stamped them native. Only
-          # the web/JS lane is a native candidate today (web engine owns
-          # resolve+lock+fetch+CAS). lib/typescript is a native candidate
-          # IFF it rides the web engine — the matrix JSON now records the
-          # install OWNER per lane; the gate reads that instead of a
-          # hand-maintained set.
-          # (Phạm vi native-PM (taxonomy P0-D vòng-9): CHỈ lane mà mgc tự
-          # resolve, lock, fetch, verify và materialize toàn bộ dependency
-          # graph vào CAS của mình. lib/rust và lib/python install qua
-          # cargo fetch / uv sync — đổi CARGO_HOME/UV_CACHE_DIR sang folder
-          # mgc quản lý là ỦY QUYỀN CÓ QUẢN LÝ, không phải resolver
-          # native; gate v1 ở đây từng đóng dấu native sai cho chúng. Chỉ
-          # lane web/JS là ứng viên native hôm nay (engine web giữ
-          # resolve+lock+fetch+CAS). lib/typescript là ứng viên native NẾU
-          # đi trên engine web — matrix JSON giờ ghi CHỦ SỞ HỮU install
-          # từng lane; gate đọc cái đó thay vì một tập bảo dưỡng tay.)
-          NATIVE_PM_SCOPE = {
-              ("web", "javascript"),
-              ("lib", "typescript"),
-          }
+          # Every lane that declares mgc-native ownership is release-gated
+          # against its runtime native-PM evidence. Deriving this set from
+          # the matrix prevents a hand-maintained allowlist from leaving
+          # claimed languages/cores outside the gate.
+          # Mọi lane tự khai MGC-native phải qua gate evidence runtime;
+          # lấy tập trực tiếp từ matrix để không bỏ sót core/ngôn ngữ.
+          NATIVE_PM_SCOPE = native_pm_claim_scope(data["lanes"])
+          failures.extend(
+              framework_catalog_errors(data.get("framework_catalog"), data["lanes"])
+          )
           for lane in data["lanes"]:
-              key = (lane["core"], lane["language"])
+              key = (lane["core"], lane["language"], lane.get("framework_id", ""))
+              label = f"{key[0]}/{key[1]}" + (f"#{key[2]}" if key[2] else "")
               if key not in RELEASE_SCOPE:
+                  failures.append(f"unexpected lane outside global v1.2 scope: {key}")
+                  continue
+              if key in seen:
+                  failures.append(f"duplicate lane in lifecycle matrix: {key}")
                   continue
               seen.add(key)
+              if lane.get("toolchain_available") is not True:
+                  failures.append(
+                      f"{label} required toolchain is unavailable or unverified"
+                  )
+              source_required = required_dimensions_for_lane(*key)
+              required = lane.get("required_dimensions")
+              if source_required is None or required != list(source_required):
+                  failures.append(
+                      f"{label} required_dimensions differ from the source contract"
+                  )
+              lifecycle_owners = lane.get("lifecycle_owners")
+              dimensions = lane.get("dimensions", {})
+              if not isinstance(dimensions, dict):
+                  failures.append(f"{label} dimensions must be an object")
+                  dimensions = {}
+              if not isinstance(lifecycle_owners, dict):
+                  failures.append(f"{label} is missing lifecycle owner evidence")
+              else:
+                  unknown_owner_dimensions = sorted(
+                      set(lifecycle_owners) - set(ALL_DIMENSIONS)
+                  )
+                  if unknown_owner_dimensions:
+                      failures.append(
+                          f"{label} has unknown lifecycle owner dimensions: "
+                          + ", ".join(unknown_owner_dimensions)
+                      )
+                  for dimension in source_required or ():
+                      owner = lifecycle_owners.get(dimension)
+                      if not isinstance(owner, str) or owner not in LIFECYCLE_OWNER_VALUES:
+                          failures.append(
+                              f"{label} {dimension} has missing/invalid lifecycle owner: {owner!r}"
+                          )
+                      elif owner != "mgc-native":
+                          failures.append(
+                              f"{label} required {dimension} is not MGC-native (owner={owner})"
+                          )
+                      elif dimensions.get(dimension) != lifecycle_status_for_owner(owner):
+                          failures.append(
+                              f"{label} {dimension} status/owner mismatch: "
+                              f"{dimensions.get(dimension)!r} vs {owner!r}"
+                          )
+              unknown_dimensions = sorted(set(dimensions) - set(ALL_DIMENSIONS))
+              if unknown_dimensions:
+                  failures.append(
+                      f"{label} has unknown dimensions: "
+                      + ", ".join(unknown_dimensions)
+                  )
+              missing_dimensions = sorted(set(ALL_DIMENSIONS) - set(dimensions))
+              if missing_dimensions:
+                  failures.append(
+                      f"{label} is missing v1.2 dimensions: "
+                      + ", ".join(missing_dimensions)
+                  )
+              invalid_dimensions = sorted(
+                  name for name, status in dimensions.items()
+                  if status not in ALL_STATUSES
+              )
+              if invalid_dimensions:
+                  failures.append(
+                      f"{label} has invalid dimension statuses: "
+                      + ", ".join(
+                          f"{name}={dimensions.get(name)!r}"
+                          for name in invalid_dimensions
+                      )
+                  )
+              required_failures = [
+                  name for name in (source_required or ())
+                  if dimensions.get(name) not in PASS_STATUSES
+              ]
+              if required_failures:
+                  failures.append(
+                      f"{label} has non-passing required dimensions: "
+                      + ", ".join(
+                          f"{name}={dimensions.get(name, 'missing')}"
+                          for name in required_failures
+                      )
+                  )
               if lane["verdict"] != "orchestration-lifecycle-passed":
                   failures.append(
-                      f"{key[0]}/{key[1]} lifecycle verdict = {lane['verdict']} "
+                      f"{label} lifecycle verdict = {lane['verdict']} "
                       f"(expected orchestration-lifecycle-passed) — dimensions: {lane['dimensions']}"
                   )
-              # A native-PM-scope lane with a delegated install or a
-              # non-passed required dim is NOT native-pm — block the
-              # claim, not the orchestration.
-              # (Lane thuộc phạm vi native-PM mà install delegated hoặc
-              # dim required không passed thì KHÔNG PHẢI native-pm — chặn
-              # claim, không chặn orchestration.)
-              if key in NATIVE_PM_SCOPE and lane.get("native_pm_verdict") != "native-pm-supported":
+              if lane.get("dependency_owner") != "mgc-native":
                   failures.append(
-                      f"{key[0]}/{key[1]} native_pm verdict = "
-                      f"{lane.get('native_pm_verdict')} — native-PM claim lanes "
-                      f"must not rely on a delegated install"
+                      f"{label} dependency_owner = "
+                      f"{lane.get('dependency_owner')!r} (expected mgc-native)"
+                  )
+              if lane.get("native_pm_verdict") != "native-pm-supported":
+                  failures.append(
+                      f"{label} native_pm_verdict = "
+                      f"{lane.get('native_pm_verdict')!r} "
+                      "(expected native-pm-supported)"
                   )
               # Taxonomy contract (P0-D): every lane MUST declare its
               # install owner — native-engine, managed-delegation, or
@@ -283,32 +349,45 @@ jobs:
               owner = lane.get("install_owner")
               if owner not in ("native-engine", "managed-delegation", "plain-delegation"):
                   failures.append(
-                      f"{key[0]}/{key[1]} missing install_owner — the matrix "
+                      f"{label} missing install_owner — the matrix "
                       f"must name who owns the install (taxonomy P0-D)"
                   )
               elif key in NATIVE_PM_SCOPE and owner != "native-engine":
                   failures.append(
-                      f"{key[0]}/{key[1]} install_owner = {owner} — a "
+                      f"{label} install_owner = {owner} — a "
                       f"native-PM claim lane must be native-engine"
                   )
           missing = RELEASE_SCOPE - seen
           if missing:
               failures.append(
                   "release-scope lanes missing from matrix: "
-                  + ", ".join(f"{c}/{l}" for c, l in sorted(missing))
+                  + ", ".join(
+                      f"{c}/{l}" + (f"#{f}" if f else "")
+                      for c, l, f in sorted(missing)
+                  )
+              )
+          failures.extend(native_pm_claim_errors(data["lanes"]))
+          if seen != RELEASE_SCOPE:
+              failures.append(
+                  "global v1.2 lane set mismatch: "
+                  f"missing={sorted(RELEASE_SCOPE - seen)}, "
+                  f"unexpected={sorted(seen - RELEASE_SCOPE)}"
               )
           if failures:
               print("LIFECYCLE NON-REGRESSION BLOCKED:")
               print("\n".join(failures))
               sys.exit(1)
-          print("OK: release-scope lanes orchestration-lifecycle-passed: "
-                + ", ".join(f"{c}/{l}" for c, l in sorted(seen)))
+          print("OK: global core/language lanes orchestration-lifecycle-passed: "
+                + ", ".join(
+                    f"{c}/{l}" + (f"#{f}" if f else "")
+                    for c, l, f in sorted(seen)
+                ))
           print("OK: native-PM lanes: "
                 + ", ".join(
-                    f"{c}/{l}"
-                    for c, l in sorted(NATIVE_PM_SCOPE)
+                    f"{c}/{l}" + (f"#{f}" if f else "")
+                    for c, l, f in sorted(NATIVE_PM_SCOPE)
                     if any(
-                        (ln["core"], ln["language"]) == (c, l)
+                        (ln["core"], ln["language"], ln.get("framework_id", "")) == (c, l, f)
                         and ln.get("native_pm_verdict") == "native-pm-supported"
                         for ln in data["lanes"]
                     )
@@ -361,6 +440,7 @@ jobs:
         run: ${{ matrix.python_cmd }} scripts/lifecycle_capability_matrix.py --record-green "${{ matrix.os }}"
         env:
           MGC_PLATFORM_EVIDENCE_SHA: ${{ github.sha }}
+          MGC_LIFECYCLE_MATRIX_OUT: docs/specs/lifecycleCapabilityMatrix.json
 
       - name: Save Windows platform-evidence counter (cross-run)
         if: matrix.os == 'windows-latest'

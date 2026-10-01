@@ -55,7 +55,8 @@ pub fn board_target(board: &str) -> Option<String> {
 
 pub fn detect_framework(root: &Path) -> Option<IotFramework> {
     // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
-    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml"))
+    if let Ok(Some(content)) =
+        mgc_config::project::read_regular_project_text(&root.join("mgc.toml"), "project config")
         && let Ok(v) = toml::from_str::<toml::Value>(&content)
     {
         if v.get("ecosystem")
@@ -87,7 +88,8 @@ pub fn detect_framework(root: &Path) -> Option<IotFramework> {
 
 pub(crate) fn manifest_is_iot(root: &Path) -> bool {
     // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
-    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml"))
+    if let Ok(Some(content)) =
+        mgc_config::project::read_regular_project_text(&root.join("mgc.toml"), "project config")
         && let Ok(v) = toml::from_str::<toml::Value>(&content)
     {
         if v.get("ecosystem").and_then(|e| e.as_str()) == Some("iot") {
@@ -104,7 +106,8 @@ pub(crate) fn manifest_is_iot(root: &Path) -> bool {
 
 pub(crate) fn target_from_manifest(root: &Path) -> Option<String> {
     // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
-    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml"))
+    if let Ok(Some(content)) =
+        mgc_config::project::read_regular_project_text(&root.join("mgc.toml"), "project config")
         && let Ok(v) = toml::from_str::<toml::Value>(&content)
         && let Some(target) = v
             .get("iot")

@@ -14,10 +14,52 @@
 
 use anyhow::{Result, bail};
 use std::path::Path;
+use std::time::Duration;
 
-use crate::commands::core::install::app::{
-    InstallCommand, find_xcode_project, language, project_root,
-};
+use crate::commands::core::install::app::{language, project_root};
+
+/// Command selected for an app build or device workflow.
+/// Lệnh được chọn cho build app hoặc workflow thiết bị.
+pub struct InstallCommand {
+    pub tool: String,
+    pub args: Vec<String>,
+}
+
+/// Find an Xcode workspace first, then a project, without recursive traversal.
+/// Tìm workspace Xcode trước, sau đó project, không duyệt đệ quy.
+fn find_xcode_project(root: &Path) -> Option<String> {
+    let mut workspace: Option<String> = None;
+    let mut project: Option<String> = None;
+    for entry in std::fs::read_dir(root).ok()?.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.ends_with(".xcworkspace") && workspace.is_none() {
+            workspace = Some(name);
+        } else if name.ends_with(".xcodeproj") && project.is_none() {
+            project = Some(name);
+        }
+    }
+    workspace.or(project)
+}
+
+/// Run an explicitly selected app toolchain command with optional environment.
+/// Chạy lệnh toolchain app được chọn tường minh với môi trường tùy chọn.
+pub(crate) fn run_tool_with_env(
+    root: &Path,
+    cmd: &str,
+    args: &[String],
+    env: Option<Vec<(String, String)>>,
+) -> Result<()> {
+    let opts = mgc_exec::prelude::ExecOptions {
+        cwd: Some(root.to_path_buf()),
+        log_path: Some(root.join(".magicore").join("exec.log")),
+        env: env.unwrap_or_default(),
+        clean_env: false,
+        ..Default::default()
+    };
+    mgc_exec::prelude::run_inherited(cmd, args, &opts)
+        .map_err(|e| crate::error::app_tool_failed(cmd, &e))?;
+    Ok(())
+}
 
 // ─── OS detection ────────────────────────────────────────────────────────────
 
@@ -112,16 +154,40 @@ fn boot_simulator(udid: &str) -> Result<()> {
 // ─── Android detection ────────────────────────────────────────────────────────
 
 /// Kiểm tra có AVD nào đang chạy qua adb không.
-fn android_emulator_running() -> bool {
-    std::process::Command::new("adb")
-        .args(["devices"])
-        .output()
-        .map(|out| {
-            let s = String::from_utf8_lossy(&out.stdout);
-            s.lines()
-                .any(|l| l.contains("emulator") || l.contains("device"))
-        })
-        .unwrap_or(false)
+fn android_emulator_running(root: &Path) -> Result<bool> {
+    let report = run_android_device_command(root, &["devices"])?;
+    Ok(adb_output_has_ready_device(&report.stdout_tail))
+}
+
+fn run_android_device_command(root: &Path, args: &[&str]) -> Result<mgc_exec::run::ExecReport> {
+    let args = args
+        .iter()
+        .map(|arg| (*arg).to_string())
+        .collect::<Vec<_>>();
+    let opts = mgc_exec::prelude::ExecOptions {
+        cwd: Some(root.to_path_buf()),
+        log_path: Some(root.join(".magicore").join("exec.log")),
+        timeout: Some(Duration::from_secs(15)),
+        execution_scope: Some(mgc_exec::allowlist::ExecutionScope::DeviceControl),
+        ..Default::default()
+    };
+    mgc_exec::prelude::run("adb", &args, &opts).map_err(crate::error::android_device_command_failed)
+}
+
+/// Parse `adb devices` and accept only a serial whose state is exactly `device`.
+/// Header text, offline, and unauthorized entries are not runnable targets.
+/// Chỉ nhận serial có state chính xác là `device`; header/offline/unauthorized không chạy được.
+fn adb_output_has_ready_device(output: &str) -> bool {
+    output.lines().any(|line| {
+        let mut fields = line.split_whitespace();
+        let Some(serial) = fields.next() else {
+            return false;
+        };
+        let Some(state) = fields.next() else {
+            return false;
+        };
+        serial != "List" && state == "device"
+    })
 }
 
 // ─── Dev command builders ─────────────────────────────────────────────────────
@@ -192,7 +258,9 @@ fn kotlin_dev_command(root: &Path) -> InstallCommand {
 
 /// Lấy scheme từ mgc.toml [app] dev_scheme.
 fn dev_scheme(root: &Path) -> Option<String> {
-    let content = std::fs::read_to_string(root.join("mgc.toml")).ok()?;
+    let content =
+        mgc_config::project::read_regular_project_text(&root.join("mgc.toml"), "project config")
+            .ok()??;
     let v: toml::Value = toml::from_str(&content).ok()?;
     v.get("app")
         .and_then(|a| a.get("dev_scheme"))
@@ -251,12 +319,7 @@ async fn dev_ios(
             return Ok(());
         }
         mgc_ui::info(&format!("App dev (ObjC): xcodebuild {}", args.join(" ")));
-        return crate::commands::core::install::app::run_tool_with_env(
-            root,
-            "xcodebuild",
-            &args,
-            env,
-        );
+        return run_tool_with_env(root, "xcodebuild", &args, env);
     }
 
     // Swift: `swift run` (macOS CLI) hoặc xcodebuild nếu có .xcodeproj
@@ -289,12 +352,7 @@ async fn dev_ios(
             "App dev (Swift/Xcode): xcodebuild {}",
             args.join(" ")
         ));
-        return crate::commands::core::install::app::run_tool_with_env(
-            root,
-            "xcodebuild",
-            &args,
-            env,
-        );
+        return run_tool_with_env(root, "xcodebuild", &args, env);
     }
 
     // Fallback: swift run (Package.swift)
@@ -303,7 +361,7 @@ async fn dev_ios(
         return Ok(());
     }
     mgc_ui::info("App dev (Swift): swift run");
-    crate::commands::core::install::app::run_tool_with_env(
+    run_tool_with_env(
         root,
         "swift",
         &[
@@ -374,12 +432,7 @@ pub async fn dev(dry_run: bool) -> Result<()> {
                 return Ok(());
             }
             mgc_ui::info(&format!("Running: {} {}", cmd.tool, cmd.args.join(" ")));
-            crate::commands::core::install::app::run_tool_with_env(
-                &root,
-                &cmd.tool,
-                cmd.args.as_slice(),
-                env_opt.clone(),
-            )?;
+            run_tool_with_env(&root, &cmd.tool, cmd.args.as_slice(), env_opt.clone())?;
             Ok(())
         }
 
@@ -399,28 +452,24 @@ pub async fn dev(dry_run: bool) -> Result<()> {
                 cmd.tool,
                 cmd.args.join(" ")
             ));
-            crate::commands::core::install::app::run_tool_with_env(
-                &root,
-                &cmd.tool,
-                cmd.args.as_slice(),
-                env_opt.clone(),
-            )?;
+            run_tool_with_env(&root, &cmd.tool, cmd.args.as_slice(), env_opt.clone())?;
             // Sau installDebug: launch app qua adb nếu có emulator
-            if android_emulator_running() {
+            if android_emulator_running(&root)? {
                 // Đọc applicationId từ mgc.toml nếu có
                 let app_id = read_app_id(&root).unwrap_or_else(|| "com.example.app".to_string());
                 mgc_ui::info(&format!(
                     "Launching app: adb shell am start -n {app_id}/.MainActivity"
                 ));
-                let _ = std::process::Command::new("adb")
-                    .args([
+                run_android_device_command(
+                    &root,
+                    &[
                         "shell",
                         "am",
                         "start",
                         "-n",
                         &format!("{app_id}/.MainActivity"),
-                    ])
-                    .status();
+                    ],
+                )?;
             }
             Ok(())
         }
@@ -453,12 +502,7 @@ pub async fn dev(dry_run: bool) -> Result<()> {
                 cmd.tool,
                 cmd.args.join(" ")
             ));
-            crate::commands::core::install::app::run_tool_with_env(
-                &flutter_dir,
-                &cmd.tool,
-                cmd.args.as_slice(),
-                env_opt,
-            )?;
+            run_tool_with_env(&flutter_dir, &cmd.tool, cmd.args.as_slice(), env_opt)?;
             Ok(())
         }
     }
@@ -487,7 +531,9 @@ fn detect_app_runtime(
 
 /// Đọc applicationId từ mgc.toml [app] application_id.
 fn read_app_id(root: &Path) -> Option<String> {
-    let content = std::fs::read_to_string(root.join("mgc.toml")).ok()?;
+    let content =
+        mgc_config::project::read_regular_project_text(&root.join("mgc.toml"), "project config")
+            .ok()??;
     let v: toml::Value = toml::from_str(&content).ok()?;
     v.get("app")
         .and_then(|a| a.get("application_id"))

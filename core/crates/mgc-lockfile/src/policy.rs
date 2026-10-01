@@ -12,6 +12,7 @@
 use std::path::Path;
 
 use crate::canonical::{LockfileV4, payload_digest};
+use crate::v4::{canonical_name, canonical_version};
 use crate::{LockfileError, LockfileResult};
 
 /// Signature policy mode — Chế độ chính sách chữ ký.
@@ -46,10 +47,24 @@ impl LockPolicyMode {
     }
 }
 
-/// Resolve the effective policy: CLI flag → `MGC_LOCK_POLICY` env →
-/// `mgc.toml [lock].policy` → environment default.
-/// Thứ tự resolve: cờ CLI → env → `mgc.toml [lock]` → mặc định môi trường.
+/// Resolve policy; CI is always strict and cannot be downgraded by project or env config.
+/// Ngoài CI: cờ CLI → env → `mgc.toml [lock]` → mặc định môi trường.
 pub fn resolve_policy(flag: Option<&str>, project_root: Option<&Path>) -> LockPolicyMode {
+    // CI is a release trust boundary; untrusted project config and ambient env
+    // must not turn signature enforcement off.
+    // CI là ranh giới tin cậy phát hành; config project/env không được hạ policy.
+    let ci = std::env::var("CI")
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes"
+            )
+        })
+        .unwrap_or(false);
+    if ci {
+        return LockPolicyMode::Require;
+    }
+
     if let Some(mode) = flag.and_then(LockPolicyMode::parse) {
         return mode;
     }
@@ -59,7 +74,7 @@ pub fn resolve_policy(flag: Option<&str>, project_root: Option<&Path>) -> LockPo
         return mode;
     }
     if let Some(root) = project_root
-        && let Ok(content) = std::fs::read_to_string(root.join("mgc.toml"))
+        && let Some(content) = read_project_config_no_follow(&root.join("mgc.toml"))
         && let Ok(value) = toml::from_str::<toml::Value>(&content)
         && let Some(policy) = value
             .get("lock")
@@ -70,6 +85,52 @@ pub fn resolve_policy(flag: Option<&str>, project_root: Option<&Path>) -> LockPo
         return mode;
     }
     LockPolicyMode::environment_default()
+}
+
+/// Read project lock policy without following a symlink/reparse point.
+/// Đọc lock policy project mà không theo symlink/reparse point.
+fn read_project_config_no_follow(path: &Path) -> Option<String> {
+    use std::io::Read;
+
+    let metadata = std::fs::symlink_metadata(path).ok()?;
+    if !metadata.file_type().is_file() {
+        return None;
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    let file = options.open(path).ok()?;
+    let opened = file.metadata().ok()?;
+    if !opened.is_file() {
+        return None;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+        if opened.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return None;
+        }
+    }
+    const MAX_CONFIG_BYTES: u64 = 10 * 1024 * 1024;
+    if opened.len() > MAX_CONFIG_BYTES {
+        return None;
+    }
+    let mut content = String::new();
+    file.take(MAX_CONFIG_BYTES + 1)
+        .read_to_string(&mut content)
+        .ok()?;
+    (content.len() as u64 <= MAX_CONFIG_BYTES).then_some(content)
 }
 
 /// Structural verification report: digest math + signature math, NO
@@ -90,6 +151,7 @@ pub struct V4VerifyReport {
 /// Verify digest + signature math (no trust decision).
 /// Xác minh toán digest + chữ ký (không quyết định tin cậy).
 pub fn verify_v4_math(lock: &LockfileV4) -> LockfileResult<V4VerifyReport> {
+    validate_v4_root_references(lock)?;
     let recomputed = payload_digest(&lock.payload());
     let digest_ok = recomputed == lock.metadata.lockfile_hash;
     let Some(signature) = lock.metadata.signature.as_ref() else {
@@ -134,6 +196,76 @@ pub fn verify_v4_math(lock: &LockfileV4) -> LockfileResult<V4VerifyReport> {
         signature_ok,
         key_id: Some(signature.key_id.clone()),
     })
+}
+
+/// Require each declared root pin to identify exactly one locked instance.
+/// Bắt mỗi root pin phải trỏ chính xác một instance trong lock.
+fn validate_v4_root_references(lock: &LockfileV4) -> LockfileResult<()> {
+    for (owner, roots) in &lock.root_dependencies_by_owner {
+        for root in roots {
+            validate_root_reference(lock, root, Some(owner))?;
+        }
+    }
+    for root in &lock.root_dependencies {
+        validate_root_reference(lock, root, None)?;
+    }
+    Ok(())
+}
+
+/// Resolve one root identity without guessing across sources or variants.
+/// Phân giải một root mà không đoán giữa các source hoặc variant.
+fn validate_root_reference(
+    lock: &LockfileV4,
+    raw: &str,
+    owner: Option<&str>,
+) -> LockfileResult<()> {
+    let pin = crate::root_pin::parse_root_pin(raw);
+    if raw.starts_with("mgc-root-v1:") && pin.ecosystem.is_none() {
+        return Err(LockfileError::VerificationFailed(format!(
+            "malformed qualified root pin '{raw}'"
+        )));
+    }
+    let package_id = if pin.ecosystem.is_none() {
+        pin.package_id
+            .strip_prefix("npm:")
+            .unwrap_or(pin.package_id)
+    } else {
+        pin.package_id
+    };
+    let Some((name, version)) = package_id.rsplit_once('@') else {
+        return Err(LockfileError::VerificationFailed(format!(
+            "root pin '{raw}' is missing a package version"
+        )));
+    };
+    if name.is_empty() || version.is_empty() {
+        return Err(LockfileError::VerificationFailed(format!(
+            "root pin '{raw}' has an empty package name or version"
+        )));
+    }
+
+    let matches = lock
+        .packages
+        .iter()
+        .filter(|package| {
+            pin.ecosystem
+                .is_none_or(|ecosystem| package.key.ecosystem == ecosystem)
+                && package.key.name == canonical_name(package.key.ecosystem, name)
+                && package.key.version == canonical_version(version)
+        })
+        .count();
+    let location = owner.map_or_else(
+        || "root_dependencies".to_string(),
+        |owner| format!("root_dependencies_by_owner.{owner}"),
+    );
+    match matches {
+        1 => Ok(()),
+        0 => Err(LockfileError::VerificationFailed(format!(
+            "root pin '{raw}' in {location} does not reference a locked package"
+        ))),
+        _ => Err(LockfileError::VerificationFailed(format!(
+            "root pin '{raw}' in {location} is ambiguous across locked package sources or variants"
+        ))),
+    }
 }
 
 /// Decode a `blake3-<base64>` digest to raw bytes.
@@ -198,15 +330,11 @@ pub fn verify_v4_file(
     policy: LockPolicyMode,
     trust_keys: &[String],
 ) -> LockfileResult<V4VerifyReport> {
-    let content = std::fs::read_to_string(path)?;
-    let lock: LockfileV4 = toml::from_str(&content)
-        .map_err(|e| LockfileError::ParseError(format!("v4 TOML parse failed: {e}")))?;
-    if lock.version != crate::v4::LOCKFILE_SCHEMA_V4 {
-        return Err(LockfileError::ParseError(format!(
-            "expected v4 lockfile, got version '{}'",
-            lock.version
-        )));
-    }
+    let bytes = crate::parser::read_lockfile_bytes(path)?;
+    let content = std::str::from_utf8(&bytes).map_err(|error| {
+        LockfileError::ParseError(format!("lockfile is not valid UTF-8: {error}"))
+    })?;
+    let lock: LockfileV4 = crate::canonical::parse_v4_document(content)?;
     let report = verify_v4_math(&lock)?;
     enforce_policy(&report, policy, trust_keys)?;
     Ok(report)

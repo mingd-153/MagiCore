@@ -165,7 +165,7 @@ jobs:
 
       - name: Install Cross (if cross-compiling on Linux)
         if: matrix.use_cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
+        run: cargo install cross --git https://github.com/cross-rs/cross --rev 64b5bb4d3d34de062552b9a2093affe77b4ad16a --locked
 
       - name: Build Binaries (Standard)
         if: ${{ !matrix.use_cross && !matrix.is_windows }}
@@ -890,6 +890,10 @@ jobs:
           VERSION="${{ needs.resolve-version.outputs.version }}"
           ./scripts/update-manifests.sh --version "$VERSION" --artifacts release-assets
           ./scripts/update-manifests.sh --version "$VERSION" --artifacts release-assets --verify-only
+          # Check every generated Homebrew/Scoop entry, not only the subset
+          # sampled by update-manifests.sh --verify-only.
+          # Kiểm mọi entry Homebrew/Scoop, không chỉ các hash được updater lấy mẫu.
+          python3 scripts/verify_release_manifests.py
 
       - name: Stage package manager manifests
         run: |
@@ -906,10 +910,10 @@ jobs:
       # Key setup (repo Settings → Secrets → Actions):
       #   MGC_RELEASE_SIGNING_KEY = 64-hex-char Ed25519 seed.
       #   Publish the matching pubkey wherever users can pin it.
-      # Without the secret this step publishes an UNSIGNED manifest and
-      # annotates loudly — clients then verify sha256 only (transitional,
-      # never claimed as provenance).
-      # (Ký manifest release — thiếu secret thì manifest không chữ ký.)
+      # Signing is mandatory for publication: MGC_RELEASE_REQUIRE_SIGNED
+      # makes the release fail closed when the signing secret is absent.
+      # No unsigned manifest is published by this workflow.
+      # (Bắt buộc ký khi phát hành: thiếu secret thì workflow dừng fail-closed.)
       - name: Generate and sign release manifest
         env:
           MGC_RELEASE_SIGNING_KEY: ${{ secrets.MGC_RELEASE_SIGNING_KEY }}
@@ -1112,5 +1116,5 @@ jobs:
           echo "Smoke: ✅ PASS (6 variants x64)"
           echo "Pre-publish: ✅ PASS (8 archives + checksums + SBOMs)"
           echo ""
-          echo "Ready to publish: YES"
-          echo "To create a draft release, push an approved annotated version tag"
+          echo "Publish readiness: NOT ASSESSED (dry-run does not authorize publishing)"
+          echo "Draft publication requires an approved tag and successful pre-publish and audit-capability gates"

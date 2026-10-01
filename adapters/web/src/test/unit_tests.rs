@@ -44,6 +44,38 @@ async fn bind_test_listener() -> Option<TcpListener> {
     }
 }
 
+#[tokio::test]
+async fn install_fails_closed_when_project_has_unapplied_patch_specs() {
+    let dir = tempdir_real().unwrap();
+    let mut config = mgc_config::project::ProjectConfig::new("patched-web", "web");
+    config.patches.push(mgc_types::PatchSpec::new(
+        "example".to_string(),
+        mgc_types::VersionRange::star(),
+        "example.patch".to_string(),
+        "sha256-deadbeef".to_string(),
+    ));
+    config.save(dir.path()).unwrap();
+
+    let result = crate::install::run_install(
+        "https://registry.example",
+        None,
+        None,
+        None,
+        None,
+        &ResolvedGraph::empty(),
+        dir.path(),
+        InstallOptions::default(),
+    )
+    .await;
+
+    let error = result.expect_err("configured patches must never be silently ignored");
+    assert!(error.to_string().contains("patch"));
+    assert!(
+        !dir.path().join("node_modules").exists(),
+        "install must reject before creating or mutating the dependency tree"
+    );
+}
+
 #[test]
 fn test_web_adapter() {
     assert_eq!(
@@ -412,6 +444,151 @@ fn test_write_web_lockfile_with_state_skips_rewrite_when_unchanged() {
 }
 
 #[test]
+fn web_writer_persists_owner_scoped_roots_and_versioned_peer_edges() {
+    let dir = tempdir_real().unwrap();
+    let package_id = |name: &str, version: &str| {
+        PackageId::new(
+            PackageName::new(name).unwrap(),
+            Version::parse(version).unwrap(),
+        )
+    };
+    let button = package_id("button", "1.0.0");
+    let react = package_id("react", "18.2.0");
+    let graph = ResolvedGraph {
+        packages: vec![
+            ResolvedPackage {
+                id: button,
+                integrity: "sha512-button".into(),
+                tarball_url: "https://registry.example/button.tgz".into(),
+                deps: vec![],
+                peer_deps: vec![react.clone()],
+                direct: true,
+                dev: false,
+            },
+            ResolvedPackage {
+                id: react,
+                integrity: "sha512-react".into(),
+                tarball_url: "https://registry.example/react.tgz".into(),
+                deps: vec![],
+                peer_deps: vec![],
+                direct: false,
+                dev: false,
+            },
+        ],
+    };
+
+    write_web_lockfile_with_state(dir.path(), &graph, "https://registry.example").unwrap();
+    let lock = mgc_lockfile::parser::load_lockfile(&dir.path().join("mgc.lock")).unwrap();
+    assert_eq!(
+        lock.root_dependencies_by_owner["web"],
+        vec![mgc_lockfile::format_root_pin(
+            mgc_lockfile::EcosystemTag::Web,
+            "button@1.0.0",
+        )]
+    );
+    let button = lock
+        .packages
+        .iter()
+        .find(|package| package.name == "button")
+        .unwrap();
+    assert_eq!(
+        button.peers.as_deref(),
+        Some(["react@18.2.0".to_string()].as_slice())
+    );
+}
+
+#[test]
+fn web_direct_root_classification_checks_the_manifest_range() {
+    let mut manifest = Manifest::new("demo", mgc_types::ecosystem::Ecosystem::Web);
+    manifest.add_dep(
+        DependencySpec::new(
+            PackageName::new("react").unwrap(),
+            mgc_types::VersionRange::parse("^19.3.0").unwrap(),
+        ),
+        false,
+        false,
+        false,
+    );
+    let react_19 = PackageId::new(
+        PackageName::new("react").unwrap(),
+        Version::parse("19.3.0").unwrap(),
+    );
+    let react_18_peer = PackageId::new(
+        PackageName::new("react").unwrap(),
+        Version::parse("18.3.1").unwrap(),
+    );
+
+    assert!(is_manifest_root_package(&manifest, &react_19));
+    assert!(!is_manifest_root_package(&manifest, &react_18_peer));
+}
+
+#[test]
+fn web_resolver_prunes_lock_orphans_but_keeps_dependency_and_peer_closure() {
+    let package_id = |name: &str, version: &str| {
+        PackageId::new(
+            PackageName::new(name).unwrap(),
+            Version::parse(version).unwrap(),
+        )
+    };
+    let root = package_id("root", "1.0.0");
+    let child = package_id("child", "2.0.0");
+    let peer = package_id("react", "19.3.0");
+    let orphan = package_id("strip-ansi-cjs", "6.0.1");
+    let mut graph = ResolvedGraph {
+        packages: vec![
+            ResolvedPackage {
+                id: root,
+                integrity: String::new(),
+                tarball_url: String::new(),
+                deps: vec![child.clone()],
+                peer_deps: vec![peer.clone()],
+                direct: true,
+                dev: false,
+            },
+            ResolvedPackage {
+                id: child.clone(),
+                integrity: String::new(),
+                tarball_url: String::new(),
+                deps: vec![],
+                peer_deps: vec![],
+                direct: false,
+                dev: false,
+            },
+            ResolvedPackage {
+                id: peer.clone(),
+                integrity: String::new(),
+                tarball_url: String::new(),
+                deps: vec![],
+                peer_deps: vec![],
+                direct: false,
+                dev: false,
+            },
+            ResolvedPackage {
+                id: orphan,
+                integrity: String::new(),
+                tarball_url: String::new(),
+                deps: vec![],
+                peer_deps: vec![],
+                direct: false,
+                dev: false,
+            },
+        ],
+    };
+
+    prune_unreachable_packages(&mut graph);
+
+    let retained: std::collections::HashSet<_> = graph
+        .packages
+        .iter()
+        .map(|package| package.id.to_string())
+        .collect();
+    assert_eq!(retained.len(), 3);
+    assert!(retained.contains(&child.to_string()));
+    assert!(retained.contains(&peer.to_string()));
+    assert!(!retained.contains("strip-ansi-cjs@6.0.1"));
+}
+
+#[test]
 fn web_lock_writer_preserves_foreign_ecosystems_and_reads_only_web_pins() {
     let dir = tempdir_real().unwrap();
     let path = dir.path().join("mgc.lock");
@@ -547,6 +724,39 @@ fn web_lock_writer_refuses_symlink_without_touching_target() {
             .unwrap()
             .file_type()
             .is_symlink()
+    );
+}
+
+#[test]
+fn web_lock_reader_rejects_oversized_lockfile() {
+    let dir = tempdir_real().unwrap();
+    std::fs::write(
+        dir.path().join("mgc.lock"),
+        vec![b'x'; 10 * 1024 * 1024 + 1],
+    )
+    .unwrap();
+
+    let error = read_web_lockfile_checked(dir.path()).unwrap_err();
+
+    assert!(error.to_string().contains("too large"));
+}
+
+#[cfg(unix)]
+#[test]
+fn web_lock_reader_refuses_symlinked_lockfile() {
+    use std::os::unix::fs::symlink;
+
+    let dir = tempdir_real().unwrap();
+    let target = dir.path().join("external.lock");
+    std::fs::write(&target, "version = \"3\"\n").unwrap();
+    symlink(&target, dir.path().join("mgc.lock")).unwrap();
+
+    let error = read_web_lockfile_checked(dir.path()).unwrap_err();
+
+    assert!(error.to_string().contains("symlink"));
+    assert_eq!(
+        std::fs::read_to_string(target).unwrap(),
+        "version = \"3\"\n"
     );
 }
 
@@ -703,6 +913,84 @@ async fn test_resolve_uses_shared_resolution_cache_when_registry_is_unavailable(
     assert_eq!(resolved.packages.len(), 1);
     assert_eq!(resolved.packages[0].id.to_string(), "react@18.2.0");
     assert_eq!(resolved.packages[0].integrity, "sha512-react");
+}
+
+#[tokio::test]
+async fn test_resolve_does_not_reuse_legacy_resolution_cache_schema() {
+    use sha2::{Digest, Sha256};
+
+    let shared = tempdir_real().unwrap();
+    let registry_url = "http://127.0.0.1:9";
+    let cache = SharedWebCache {
+        root: shared.path().to_path_buf(),
+    };
+    let mut manifest = Manifest::new("demo", mgc_types::ecosystem::Ecosystem::Web);
+    manifest.add_dep(
+        DependencySpec::new(
+            PackageName::new("react").unwrap(),
+            VersionRange::parse("^18.2.0").unwrap(),
+        ),
+        false,
+        false,
+        false,
+    );
+
+    let mut entries = Vec::new();
+    for (group, deps) in manifest.dep_groups() {
+        for dep in deps {
+            entries.push(format!(
+                "{}\0{}\0{}\0{}\0{}\0{}",
+                group,
+                dep.name.as_str(),
+                dep.range.as_str(),
+                dep.dev,
+                dep.optional,
+                dep.peer
+            ));
+        }
+    }
+    entries.sort_unstable();
+    let stale_graph = ResolvedGraph {
+        packages: vec![ResolvedPackage {
+            id: PackageId::new(
+                PackageName::new("react").unwrap(),
+                Version::parse("18.2.0").unwrap(),
+            ),
+            integrity: "sha512-legacy-cache".to_string(),
+            tarball_url: "https://registry.example.test/legacy-react.tgz".to_string(),
+            deps: vec![],
+            peer_deps: vec![],
+            direct: true,
+            dev: false,
+        }],
+    };
+    for legacy_domain in [
+        b"magicore-web-resolution-v1\0".as_slice(),
+        b"magicore-web-resolution-v2\0".as_slice(),
+    ] {
+        let mut hasher = Sha256::new();
+        hasher.update(legacy_domain);
+        hasher.update(registry_url.as_bytes());
+        hasher.update(b"\0");
+        for entry in &entries {
+            hasher.update(entry.as_bytes());
+            hasher.update(b"\0");
+        }
+        let legacy_key = format!("{:x}", hasher.finalize());
+        cache
+            .write_resolution(&legacy_key, registry_url, &stale_graph)
+            .unwrap();
+    }
+
+    let adapter = WebAdapter::with_registry_and_shared_cache(
+        registry_url.to_string(),
+        shared.path().to_path_buf(),
+    );
+    let result = adapter.resolve(&manifest).await;
+    assert!(
+        result.is_err(),
+        "legacy resolver cache must be invalidated after graph semantics change"
+    );
 }
 
 #[test]
@@ -920,7 +1208,7 @@ fn test_project_cas_prune_keeps_hardlinked_live_blobs() {
 }
 
 #[test]
-fn test_backing_link_falls_back_to_hardlink_when_reflink_disabled() {
+fn test_backing_link_fallback_isolated_when_reflink_disabled() {
     let temp = tempdir_real().unwrap();
     let source = temp.path().join("source.txt");
     let target = temp.path().join("target.txt");
@@ -932,13 +1220,20 @@ fn test_backing_link_falls_back_to_hardlink_when_reflink_disabled() {
     assert!(target.exists());
     assert_eq!(std::fs::read(&target).unwrap(), b"payload-123");
 
-    // A write through the source must be visible from its hardlink — ghi qua
-    // source phải thấy được từ hardlink; portable unlike Unix `nlink()`.
+    // Materialized dependency files must not alias the shared extracted cache.
+    // File dependency đã materialize không được dùng chung inode với cache.
     std::fs::write(&source, b"updated-through-source").unwrap();
     assert_eq!(
         std::fs::read(&target).unwrap(),
+        b"payload-123",
+        "a source mutation must not alter the materialized project copy"
+    );
+
+    std::fs::write(&target, b"project-local-edit").unwrap();
+    assert_eq!(
+        std::fs::read(&source).unwrap(),
         b"updated-through-source",
-        "disabled reflink must produce a real hardlink (shared contents)"
+        "a project-local edit must not poison the shared extracted cache"
     );
 }
 
@@ -1092,6 +1387,83 @@ async fn test_alias_dependency_uses_target_metadata_and_range() {
 }
 
 #[tokio::test]
+async fn npm_optional_peer_dependencies_are_not_auto_installed() {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind local registry for peer metadata regression");
+    let addr = listener.local_addr().unwrap();
+    let body = r#"{
+        "name":"angular-build-like",
+        "versions":{"1.0.0":{
+            "version":"1.0.0",
+            "dependencies":{"required-runtime":"^1.0.0"},
+            "peerDependencies":{
+                "optional-browser":"^5.0.0",
+                "required-plugin":"^2.0.0"
+            },
+            "peerDependenciesMeta":{"optional-browser":{"optional":true}}
+        }},
+        "dist-tags":{"latest":"1.0.0"}
+    }"#;
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut request = [0u8; 4096];
+        let _ = stream.read(&mut request).await.unwrap();
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        stream.write_all(response.as_bytes()).await.unwrap();
+    });
+
+    let provider = NpmDependencyProvider::new(&format!("http://{addr}"), None, None);
+    let package_id = PackageId::new(
+        PackageName::new("angular-build-like").unwrap(),
+        Version::parse("1.0.0").unwrap(),
+    );
+    let mut names: Vec<_> = provider
+        .get_dependencies(&package_id)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|dependency| dependency.package.to_string())
+        .collect();
+    names.sort();
+    assert_eq!(names, ["required-plugin", "required-runtime"]);
+    server.await.unwrap();
+}
+
+#[test]
+fn test_shared_metadata_cache_ignores_pre_optional_peer_schema_records() {
+    let shared = tempdir_real().unwrap();
+    let cache = SharedWebCache {
+        root: shared.path().to_path_buf(),
+    };
+    let registry_url = "http://127.0.0.1:9";
+    let legacy_path = shared
+        .path()
+        .join("metadata")
+        .join(reg_key(registry_url))
+        .join("react")
+        .join("metadata.json");
+    std::fs::create_dir_all(legacy_path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &legacy_path,
+        r#"{"fetched_at":1,"etag":"legacy","metadata":{"name":"react","description":null,"versions":{"18.2.0":{"version":"18.2.0","peerDependencies":{"optional-peer":"*"}}},"dist-tags":{"latest":"18.2.0"}}}"#,
+    )
+    .unwrap();
+
+    assert!(
+        cache
+            .read_metadata("react", registry_url)
+            .unwrap()
+            .is_none(),
+        "legacy metadata lacks peerDependenciesMeta and must be a cache miss"
+    );
+}
+
+#[tokio::test]
 async fn test_load_metadata_persists_etag_after_initial_fetch() {
     let shared = tempdir_real().unwrap();
     let Some(listener) = bind_test_listener().await else {
@@ -1134,6 +1506,7 @@ async fn test_load_metadata_persists_etag_after_initial_fetch() {
         shared
             .path()
             .join("metadata")
+            .join("v2")
             .join(reg_key(&format!("http://{addr}")))
             .join("react")
             .join("metadata.json"),
@@ -1484,6 +1857,112 @@ async fn test_parse_manifest_ignores_workspace_protocol_dependencies() {
     let manifest = adapter.parse_manifest(dir.path()).await.unwrap();
     assert!(manifest.find_dep("react").is_some());
     assert!(manifest.find_dep("@core/shared").is_none());
+}
+
+#[test]
+fn web_manifest_writer_preserves_workspace_protocol_dependencies() {
+    let dir = tempdir_real().unwrap();
+    let package_path = dir.path().join("package.json");
+    std::fs::write(
+        &package_path,
+        serde_json::json!({
+            "name": "frontend",
+            "version": "0.1.0",
+            "dependencies": {
+                "@core/shared": "workspace:*",
+                "react": "^18.2.0"
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let manifest = parse_manifest(dir.path()).unwrap();
+
+    write_manifest(dir.path(), &manifest).unwrap();
+
+    let package: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(package_path).unwrap()).unwrap();
+    assert_eq!(
+        package["dependencies"]["@core/shared"], "workspace:*",
+        "MGC writes must preserve workspace protocol entries outside its registry graph"
+    );
+    assert_eq!(package["dependencies"]["react"], "^18.2.0");
+}
+
+#[test]
+fn web_manifest_writer_refuses_registry_replacement_of_workspace_dependency() {
+    let dir = tempdir_real().unwrap();
+    let package_path = dir.path().join("package.json");
+    let original = serde_json::json!({
+        "name": "frontend",
+        "version": "0.1.0",
+        "dependencies": { "@core/shared": "workspace:*" }
+    })
+    .to_string();
+    std::fs::write(&package_path, &original).unwrap();
+    let mut manifest = Manifest::new("frontend", mgc_types::Ecosystem::Web);
+    manifest.add_dep(
+        DependencySpec::new(
+            PackageName::new("@core/shared").unwrap(),
+            VersionRange::parse("^1.0.0").unwrap(),
+        ),
+        false,
+        false,
+        false,
+    );
+
+    assert!(write_manifest(dir.path(), &manifest).is_err());
+    assert_eq!(
+        std::fs::read_to_string(package_path).unwrap(),
+        original,
+        "source conversion needs an explicit operation and cannot be silently accepted"
+    );
+}
+
+#[test]
+fn web_manifest_writer_does_not_replace_malformed_existing_json() {
+    let dir = tempdir_real().unwrap();
+    let package_path = dir.path().join("package.json");
+    let malformed = b"{ this is not package json";
+    std::fs::write(&package_path, malformed).unwrap();
+    let manifest = Manifest::new("frontend", mgc_types::Ecosystem::Web);
+
+    let error = write_manifest(dir.path(), &manifest)
+        .expect_err("invalid existing package metadata must not fall back to an empty manifest");
+
+    assert!(error.to_string().contains("read existing package.json"));
+    assert_eq!(std::fs::read(package_path).unwrap(), malformed);
+}
+
+#[test]
+fn web_manifest_writer_can_atomically_create_a_missing_package_json() {
+    let dir = tempdir_real().unwrap();
+    let manifest = Manifest::new("new-web-project", mgc_types::Ecosystem::Web);
+
+    write_manifest(dir.path(), &manifest).unwrap();
+
+    let parsed = parse_manifest(dir.path()).unwrap();
+    assert_eq!(parsed.name, "new-web-project");
+    assert!(dir.path().join("package.json").is_file());
+}
+
+#[cfg(unix)]
+#[test]
+fn web_manifest_writer_refuses_symlinked_package_json() {
+    use std::os::unix::fs::symlink;
+
+    let dir = tempdir_real().unwrap();
+    let outside = tempdir_real().unwrap();
+    let target = outside.path().join("package.json");
+    std::fs::write(&target, "{\"sentinel\":true}").unwrap();
+    symlink(&target, dir.path().join("package.json")).unwrap();
+    let manifest = Manifest::new("frontend", mgc_types::Ecosystem::Web);
+
+    assert!(write_manifest(dir.path(), &manifest).is_err());
+    assert_eq!(
+        std::fs::read_to_string(target).unwrap(),
+        "{\"sentinel\":true}"
+    );
 }
 
 #[tokio::test]
@@ -2832,7 +3311,7 @@ async fn test_install_rebuilds_cached_root_when_file_tree_is_incomplete() {
 }
 
 #[tokio::test]
-async fn test_install_rebuilds_schema_v2_root_when_marker_signature_is_missing() {
+async fn test_install_rebuilds_legacy_root_when_marker_signature_is_missing() {
     let shared = tempdir_real().unwrap();
     let project = tempdir_real().unwrap();
     let entities = PackageId::new(
@@ -2901,10 +3380,7 @@ async fn test_install_rebuilds_schema_v2_root_when_marker_signature_is_missing()
 }
 
 #[tokio::test]
-async fn test_full_cache_validation_rebuilds_v2_root_when_file_tree_is_incomplete() {
-    let old = std::env::var_os("MAGICORE_WEB_VALIDATE_EXTRACTED_CACHE");
-    unsafe { std::env::set_var("MAGICORE_WEB_VALIDATE_EXTRACTED_CACHE", "1") };
-
+async fn test_default_cache_validation_rebuilds_v3_root_when_file_tree_is_incomplete() {
     let shared = tempdir_real().unwrap();
     let project = tempdir_real().unwrap();
     let rollup = PackageId::new(
@@ -2973,7 +3449,91 @@ async fn test_full_cache_validation_rebuilds_v2_root_when_file_tree_is_incomplet
             .join("node_modules/rollup/dist/es/parseAst.js")
             .exists()
     );
-    restore_env_var("MAGICORE_WEB_VALIDATE_EXTRACTED_CACHE", old);
+}
+
+#[test]
+fn test_extracted_content_signature_detects_content_and_mode_mutation() {
+    let package = ResolvedPackage {
+        id: PackageId::new(
+            PackageName::new("content-check").unwrap(),
+            Version::parse("1.0.0").unwrap(),
+        ),
+        integrity: String::new(),
+        tarball_url: String::new(),
+        deps: vec![],
+        peer_deps: vec![],
+        direct: true,
+        dev: false,
+    };
+    let archive = build_tarball_bytes(&[
+        (
+            "package/package.json",
+            br#"{"name":"content-check","version":"1.0.0"}"#,
+        ),
+        ("package/index.js", b"const value = 'good';\n"),
+    ]);
+    let expected = expected_extracted_package_marker_from_bytes(&package, &archive).unwrap();
+    assert_eq!(expected.schema_version, 3);
+    let root = tempdir_real().unwrap();
+    std::fs::write(
+        root.path().join("package.json"),
+        br#"{"name":"content-check","version":"1.0.0"}"#,
+    )
+    .unwrap();
+    std::fs::write(root.path().join("index.js"), b"const value = 'good';\n").unwrap();
+    write_extracted_package_marker(root.path(), &expected).unwrap();
+
+    assert!(extracted_content_matches(root.path(), &expected).unwrap());
+    assert!(materialized_package_matches(root.path(), &package.id, Some(&expected)).unwrap());
+    std::fs::write(root.path().join("index.js"), b"const value = 'evil';\n").unwrap();
+
+    assert!(!extracted_content_matches(root.path(), &expected).unwrap());
+    assert!(!materialized_package_matches(root.path(), &package.id, Some(&expected)).unwrap());
+    std::fs::write(root.path().join("index.js"), b"const value = 'good';\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(
+            root.path().join("index.js"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        assert!(!extracted_content_matches(root.path(), &expected).unwrap());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn test_extracted_content_signature_rejects_symlink_files() {
+    let package = ResolvedPackage {
+        id: PackageId::new(
+            PackageName::new("symlink-check").unwrap(),
+            Version::parse("1.0.0").unwrap(),
+        ),
+        integrity: String::new(),
+        tarball_url: String::new(),
+        deps: vec![],
+        peer_deps: vec![],
+        direct: true,
+        dev: false,
+    };
+    let archive = build_tarball_bytes(&[
+        (
+            "package/package.json",
+            br#"{"name":"symlink-check","version":"1.0.0"}"#,
+        ),
+        ("package/index.js", b"module.exports = true;\n"),
+    ]);
+    let expected = expected_extracted_package_marker_from_bytes(&package, &archive).unwrap();
+    let root = tempdir_real().unwrap();
+    std::fs::write(
+        root.path().join("package.json"),
+        br#"{"name":"symlink-check","version":"1.0.0"}"#,
+    )
+    .unwrap();
+    std::os::unix::fs::symlink("/etc/hosts", root.path().join("index.js")).unwrap();
+
+    assert!(!extracted_content_matches(root.path(), &expected).unwrap());
 }
 
 fn seed_cached_tarball(root: &Path, pkg: &PackageId) -> String {
@@ -3021,6 +3581,7 @@ fn seed_shared_tarball_with_files(root: &Path, pkg: &PackageId, files: &[(&str, 
 fn seed_shared_metadata(root: &Path, package: &str, payload: serde_json::Value) {
     let path = root
         .join("metadata")
+        .join("v2")
         .join("http___127_0_0_1_9") // khớp reg_key của mock registry url (:9)
         .join(package)
         .join("metadata.json");
@@ -3144,6 +3705,7 @@ fn test_preferred_registry_version_prefers_stable_over_prerelease() {
                     dev_dependencies: None,
                     optional_dependencies: None,
                     peer_dependencies: None,
+                    peer_dependencies_meta: Default::default(),
                     os: None,
                     cpu: None,
                     dist: None,
@@ -3157,6 +3719,7 @@ fn test_preferred_registry_version_prefers_stable_over_prerelease() {
                     dev_dependencies: None,
                     optional_dependencies: None,
                     peer_dependencies: None,
+                    peer_dependencies_meta: Default::default(),
                     os: None,
                     cpu: None,
                     dist: None,
@@ -3453,6 +4016,7 @@ fn age_gate_parses_npm_time_and_filters() {
             dependencies: None,
             dev_dependencies: None,
             peer_dependencies: None,
+            peer_dependencies_meta: Default::default(),
             optional_dependencies: None,
             os: None,
             cpu: None,

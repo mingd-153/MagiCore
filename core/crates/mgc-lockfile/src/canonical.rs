@@ -10,12 +10,13 @@
 
 use std::collections::BTreeMap;
 
-use crate::schema::{ArtifactRef, Provenance, WorkspaceTopology};
+use crate::schema::{ArtifactRef, CrossEdge, Provenance, WorkspaceTopology};
 use crate::v4::{Edge, PackageKey, SignatureBlock, SourceRef};
 use serde::{Deserialize, Serialize};
 
 /// v4 lockfile document — Tài liệu lockfile v4.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LockfileV4 {
     /// Schema version (`"4"`) — Phiên bản schema.
     pub version: String,
@@ -30,11 +31,22 @@ pub struct LockfileV4 {
     /// Root direct-dependency edges (`name@version` strings).
     #[serde(default)]
     pub root_dependencies: Vec<String>,
+    /// Exact direct pins per core. New values use
+    /// `mgc-root-v1:<ecosystem>:<name@version>` so one core can own multiple
+    /// ecosystems without overwriting sibling roots.
+    /// Pin trực tiếp chính xác theo core; định danh có ecosystem giữ được
+    /// nhiều hệ sinh thái cùng core mà không ghi đè root của nhau.
+    #[serde(default)]
+    pub root_dependencies_by_owner: BTreeMap<String, Vec<String>>,
     /// Locked instances — Các instance đã lock.
     #[serde(rename = "package", default)]
     pub packages: Vec<PackageV4>,
     /// Workspace topology (reused v3 shape) — Topology workspace.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_v4_workspace"
+    )]
     pub workspace: Option<WorkspaceTopology>,
     /// Optimizer profile stamp — Nhãn profile tối ưu.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -43,6 +55,7 @@ pub struct LockfileV4 {
 
 /// v4 metadata — Metadata v4.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LockfileV4Metadata {
     /// Generation timestamp, ISO-8601 (OUT-of-payload: two runs over the
     /// same graph must digest identically).
@@ -59,6 +72,7 @@ pub struct LockfileV4Metadata {
 /// One locked instance with structured edges — Một instance đã lock với
 /// cạnh có cấu trúc.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PackageV4 {
     /// Instance identity — Danh tính instance.
     pub key: PackageKey,
@@ -66,10 +80,18 @@ pub struct PackageV4 {
     #[serde(default)]
     pub edges: Vec<Edge>,
     /// Physical artifact reference — Tham chiếu artifact vật lý.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_v4_artifact"
+    )]
     pub artifact: Option<ArtifactRef>,
     /// How this pin entered the lock — Pin vào lock bằng đường nào.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_v4_provenance"
+    )]
     pub provenance: Option<Provenance>,
     /// Toolchain requirement — Yêu cầu toolchain.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -80,6 +102,104 @@ pub struct PackageV4 {
     /// CAS object reference — Tham chiếu object CAS.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub store_ref: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct V4ArtifactRef {
+    url: String,
+    #[serde(default)]
+    size_bytes: Option<u64>,
+    content_hash: String,
+    downloaded_from: String,
+}
+
+impl From<V4ArtifactRef> for ArtifactRef {
+    fn from(value: V4ArtifactRef) -> Self {
+        Self {
+            url: value.url,
+            size_bytes: value.size_bytes,
+            content_hash: value.content_hash,
+            downloaded_from: value.downloaded_from,
+        }
+    }
+}
+
+fn deserialize_v4_artifact<'de, D>(deserializer: D) -> Result<Option<ArtifactRef>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<V4ArtifactRef>::deserialize(deserializer)
+        .map(|artifact| artifact.map(ArtifactRef::from))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct V4Provenance {
+    source_kind: String,
+    #[serde(default)]
+    tool: Option<String>,
+    #[serde(default)]
+    imported_from: Option<String>,
+}
+
+impl From<V4Provenance> for Provenance {
+    fn from(value: V4Provenance) -> Self {
+        Self {
+            source_kind: value.source_kind,
+            tool: value.tool,
+            imported_from: value.imported_from,
+        }
+    }
+}
+
+fn deserialize_v4_provenance<'de, D>(deserializer: D) -> Result<Option<Provenance>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<V4Provenance>::deserialize(deserializer).map(|provenance| provenance.map(Into::into))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct V4WorkspaceTopology {
+    #[serde(default)]
+    members: Vec<String>,
+    #[serde(default)]
+    cross_core_edges: Vec<V4CrossEdge>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct V4CrossEdge {
+    from_core: String,
+    to_core: String,
+    package: String,
+}
+
+impl From<V4WorkspaceTopology> for WorkspaceTopology {
+    fn from(value: V4WorkspaceTopology) -> Self {
+        Self {
+            members: value.members,
+            cross_core_edges: value
+                .cross_core_edges
+                .into_iter()
+                .map(|edge| CrossEdge {
+                    from_core: edge.from_core,
+                    to_core: edge.to_core,
+                    package: edge.package,
+                })
+                .collect(),
+        }
+    }
+}
+
+fn deserialize_v4_workspace<'de, D>(deserializer: D) -> Result<Option<WorkspaceTopology>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<V4WorkspaceTopology>::deserialize(deserializer)
+        .map(|workspace| workspace.map(WorkspaceTopology::from))
 }
 
 impl LockfileV4 {
@@ -96,6 +216,7 @@ impl LockfileV4 {
             sources: Vec::new(),
             peer_contexts: BTreeMap::new(),
             root_dependencies: Vec::new(),
+            root_dependencies_by_owner: BTreeMap::new(),
             packages: Vec::new(),
             workspace: None,
             optimizer_profile: None,
@@ -111,7 +232,10 @@ impl LockfileV4 {
             sources: self.sources.clone(),
             peer_contexts: self.peer_contexts.clone(),
             root_dependencies: self.root_dependencies.clone(),
+            root_dependencies_by_owner: self.root_dependencies_by_owner.clone(),
             packages: self.packages.clone(),
+            workspace: self.workspace.clone(),
+            optimizer_profile: self.optimizer_profile.clone(),
         }
     }
 }
@@ -124,29 +248,49 @@ pub struct LockfilePayload {
     pub sources: Vec<SourceRef>,
     pub peer_contexts: BTreeMap<String, Vec<(String, String)>>,
     pub root_dependencies: Vec<String>,
+    pub root_dependencies_by_owner: BTreeMap<String, Vec<String>>,
     pub packages: Vec<PackageV4>,
+    /// Cross-core membership and edges affect graph ownership and replay.
+    /// Thành viên/cạnh liên core ảnh hưởng ownership và phát lại đồ thị.
+    pub workspace: Option<WorkspaceTopology>,
+    /// Optimizer configuration recorded for reproducible execution.
+    /// Cấu hình optimizer ghi lại để thực thi có thể tái lập.
+    pub optimizer_profile: Option<String>,
 }
 
 /// Sort key for packages: (ecosystem, name, version, source_id,
 /// variant-debug) — Khóa sắp xếp package.
-fn package_sort_key(package: &PackageV4) -> impl Ord + '_ {
+fn package_sort_key(package: &PackageV4) -> (String, String, String, String, String) {
+    // Feature identity is a set; sorting keys must match serialized normalization.
+    // Danh tính feature là tập; khóa sort phải khớp chuẩn hóa khi serialize.
+    let mut variant = package.key.variant.clone();
+    if let Some(features) = &mut variant.feature_set {
+        features.sort();
+    }
     (
-        package.key.ecosystem.as_str(),
-        package.key.name.as_str(),
-        package.key.version.as_str(),
-        package.key.source_id.as_str(),
-        format!("{:?}", package.key.variant),
+        package.key.ecosystem.as_str().to_owned(),
+        package.key.name.clone(),
+        package.key.version.clone(),
+        package.key.source_id.clone(),
+        format!("{variant:?}"),
     )
 }
 
 /// Sort key for edges — Khóa sắp xếp cạnh.
-fn edge_sort_key(edge: &Edge) -> impl Ord + '_ {
+fn edge_sort_key(edge: &Edge) -> (String, String, String, String, String, String) {
     (
-        edge.target_key.ecosystem.as_str(),
-        edge.target_key.name.as_str(),
-        edge.target_key.version.as_str(),
-        edge.range.as_str(),
+        edge.target_key.ecosystem.as_str().to_owned(),
+        edge.target_key.name.clone(),
+        edge.target_key.version.clone(),
+        edge.range.clone(),
         format!("{:?}", edge.kind),
+        {
+            // Break ties with every authenticated edge field, not input order.
+            // Phân xử bằng mọi field đã ký, không phụ thuộc thứ tự đầu vào.
+            let mut rendered = String::new();
+            push_edge(&mut rendered, edge);
+            rendered
+        },
     )
 }
 
@@ -246,9 +390,14 @@ fn push_package_key(out: &mut String, key: &PackageKey) {
     push_str_field(out, "name", &key.name);
     push_str_field(out, "version", &key.version);
     push_str_field(out, "source_id", &key.source_id);
-    let variant = &key.variant;
+    push_variant(out, "package.key.variant", &key.variant);
+}
+
+fn push_variant(out: &mut String, table: &str, variant: &crate::v4::VariantKey) {
     if variant.peer_context.is_some() || variant.feature_set.is_some() || variant.target.is_some() {
-        out.push_str("[package.key.variant]\n");
+        out.push('[');
+        out.push_str(table);
+        out.push_str("]\n");
         if let Some(peer_context) = &variant.peer_context {
             push_str_field(out, "peer_context", peer_context);
         }
@@ -296,6 +445,20 @@ fn push_edge(out: &mut String, edge: &Edge) {
     if let Some(marker) = &edge.marker {
         push_str_field(out, "marker", marker);
     }
+    // Full edge identities must be signed, including target and origin variants.
+    // Ký đầy đủ danh tính cạnh, gồm variant của target và origin.
+    push_variant(
+        out,
+        "package.edges.target_key.variant",
+        &edge.target_key.variant,
+    );
+    if let crate::v4::EdgeOrigin::Transitive { from_key } = &edge.origin {
+        push_variant(
+            out,
+            "package.edges.origin.transitive.variant",
+            &from_key.variant,
+        );
+    }
 }
 
 /// Deterministic TOML serialization of the canonical payload — the ONLY
@@ -311,6 +474,9 @@ fn push_edge(out: &mut String, edge: &Edge) {
 pub fn canonical_toml(payload: &LockfilePayload) -> String {
     let mut out = String::new();
     push_str_field(&mut out, "version", &payload.version);
+    if let Some(profile) = &payload.optimizer_profile {
+        push_str_field(&mut out, "optimizer_profile", profile);
+    }
     out.push('\n');
     out.push_str("[metadata]\n");
     push_str_field(&mut out, "generator", &payload.generator);
@@ -353,13 +519,52 @@ pub fn canonical_toml(payload: &LockfilePayload) -> String {
         out.push('\n');
     }
 
+    if !payload.root_dependencies_by_owner.is_empty() {
+        out.push_str("[root_dependencies_by_owner]\n");
+        for (owner, roots) in &payload.root_dependencies_by_owner {
+            let mut roots = roots.clone();
+            roots.sort();
+            roots.dedup();
+            let rendered: Vec<String> = roots.iter().map(|root| escape_toml_string(root)).collect();
+            out.push_str(&escape_toml_string(owner));
+            out.push_str(" = [");
+            out.push_str(&rendered.join(", "));
+            out.push_str("]\n");
+        }
+        out.push('\n');
+    }
+
+    if let Some(workspace) = &payload.workspace {
+        out.push_str("[workspace]\n");
+        let mut members = workspace.members.clone();
+        members.sort();
+        push_string_array(&mut out, "members", &members);
+
+        let mut cross_core_edges = workspace.cross_core_edges.clone();
+        cross_core_edges.sort_by(|left, right| {
+            (&left.from_core, &left.to_core, &left.package).cmp(&(
+                &right.from_core,
+                &right.to_core,
+                &right.package,
+            ))
+        });
+        for edge in &cross_core_edges {
+            out.push_str("[[workspace.cross_core_edges]]\n");
+            push_str_field(&mut out, "from_core", &edge.from_core);
+            push_str_field(&mut out, "to_core", &edge.to_core);
+            push_str_field(&mut out, "package", &edge.package);
+            out.push('\n');
+        }
+        out.push('\n');
+    }
+
     let mut packages = payload.packages.clone();
-    packages.sort_by(|a, b| package_sort_key(a).cmp(&package_sort_key(b)));
+    packages.sort_by_cached_key(package_sort_key);
     for package in &packages {
         out.push_str("[[package]]\n");
         push_package_key(&mut out, &package.key);
         let mut edges = package.edges.clone();
-        edges.sort_by(|a, b| edge_sort_key(a).cmp(&edge_sort_key(b)));
+        edges.sort_by_cached_key(edge_sort_key);
         for edge in &edges {
             push_edge(&mut out, edge);
         }

@@ -36,6 +36,7 @@ pub mod optimizer;
 pub mod outdated;
 pub mod patch;
 pub mod publish;
+pub(crate) mod python_runtime;
 pub mod registry;
 pub mod remove;
 pub mod run;

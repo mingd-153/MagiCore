@@ -36,11 +36,21 @@ pub struct VersionInfo {
     pub dev_dependencies: Option<std::collections::HashMap<String, String>>,
     #[serde(rename = "peerDependencies")]
     pub peer_dependencies: Option<std::collections::HashMap<String, String>>,
+    #[serde(default, rename = "peerDependenciesMeta")]
+    pub peer_dependencies_meta: std::collections::HashMap<String, PeerDependencyMeta>,
     #[serde(rename = "optionalDependencies")]
     pub optional_dependencies: Option<std::collections::HashMap<String, String>>,
     pub os: Option<Vec<String>>,
     pub cpu: Option<Vec<String>>,
     pub dist: Option<DistInfo>,
+}
+
+/// npm marks peer edges that must not be auto-installed via this metadata.
+/// (npm dùng metadata này để đánh dấu peer không được tự cài.)
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PeerDependencyMeta {
+    #[serde(default)]
+    pub optional: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

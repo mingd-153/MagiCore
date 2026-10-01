@@ -32,8 +32,7 @@ pub fn audit_terraform_lock(project_root: &Path) -> MgResult<AuditReport> {
             "cloud/terraform (no .terraform.lock.hcl found — run terraform init to pin provider checksums)",
         ));
     }
-    let raw = std::fs::read_to_string(&lock_path)
-        .map_err(|e| MgError::Other(format!("read .terraform.lock.hcl: {e}")))?;
+    let raw = super::read_bounded_project_input(&lock_path, ".terraform.lock.hcl")?;
     parse_terraform_lock(&raw)
 }
 

@@ -24,11 +24,9 @@ static PATH_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 async fn mock_server() -> Option<mockito::ServerGuard> {
     match std::net::TcpListener::bind("127.0.0.1:0") {
         Ok(listener) => drop(listener),
-        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
-            eprintln!("warning: skipping swift app test because localhost bind is blocked");
-            return None;
-        }
-        Err(error) => panic!("failed to probe localhost bind: {error}"),
+        Err(error) => panic!(
+            "Swift app mock tests require localhost; refusing to report skipped tests as passing: {error}"
+        ),
     }
     Some(mockito::Server::new_async().await)
 }
@@ -128,6 +126,7 @@ async fn app_swift_project_resolves_and_installs_natively() {
         "// swift-tools-version:5.9\nlet package = Package(name: \"App\", dependencies: [.package(id: \"scope.lib\", from: \"1.0.0\")])\n",
     )
     .unwrap();
+    let original_package_swift = std::fs::read(tmp.path().join("Package.swift")).unwrap();
     let store_root = tempfile::tempdir().unwrap();
 
     // SAFETY: test-only env overrides (process-local, restored below).
@@ -155,11 +154,25 @@ async fn app_swift_project_resolves_and_installs_natively() {
             .install(&graph, tmp.path(), Default::default())
             .await?;
         assert_eq!(summary.added.len(), 1);
-        // write_manifest stays an honest no-op for Swift (Package.swift is
-        // Swift source) — the file content must survive untouched.
-        // (write_manifest vẫn no-op trung thực cho Swift (Package.swift là
-        // mã nguồn Swift) — nội dung file phải nguyên vẹn.)
-        adapter.write_manifest(tmp.path(), &manifest).await?;
+        // Swift install owns resolution, verified archive materialization,
+        // and Package.resolved export; it deliberately does not rewrite the
+        // executable Package.swift source.
+        // (Swift install sở hữu resolve, materialize archive đã xác minh và
+        // xuất Package.resolved; cố ý không rewrite mã nguồn Package.swift.)
+        let write_error = adapter
+            .write_manifest(tmp.path(), &manifest)
+            .await
+            .expect_err("Swift source writer must fail closed");
+        assert!(
+            matches!(
+                write_error,
+                mgc_types::MgError::Unsupported {
+                    capability: "write-swift-manifest",
+                    ..
+                }
+            ),
+            "expected the explicit Swift writer capability refusal, got: {write_error}"
+        );
         Ok::<_, mgc_types::MgError>(())
     }
     .await;
@@ -197,8 +210,11 @@ async fn app_swift_project_resolves_and_installs_natively() {
     // source — mgc only reads it).
     // (Manifest project không bao giờ bị viết lại (Package.swift là mã
     // nguồn Swift — mgc chỉ đọc).)
-    let manifest_after = std::fs::read_to_string(tmp.path().join("Package.swift")).unwrap();
-    assert!(manifest_after.contains("let package = Package(name: \"App\", dependencies:"));
+    let manifest_after = std::fs::read(tmp.path().join("Package.swift")).unwrap();
+    assert_eq!(
+        manifest_after, original_package_swift,
+        "the unsupported source writer must leave Package.swift byte-identical"
+    );
 }
 
 #[tokio::test]

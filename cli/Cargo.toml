@@ -97,6 +97,7 @@ chrono = { workspace = true }
 # PID liveness probe for the doctor's lease GC (Gate 11-B) — kill(pid,0).
 # (Thăm dò pid còn sống cho GC lease của doctor.)
 libc = { workspace = true }
+fs2 = { workspace = true }
 
 # Import rewriting + hashing
 regex = { workspace = true }

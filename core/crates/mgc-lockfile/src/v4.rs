@@ -30,6 +30,7 @@ pub const UNKNOWN_SOURCE_PRIORITY: u64 = 1_000_000_000;
 /// Danh tính duy nhất của MỘT instance đã lock. Hai entry cùng
 /// PackageKey là một instance.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PackageKey {
     /// Ecosystem of the pin — Hệ sinh thái của pin.
     pub ecosystem: EcosystemTag,
@@ -47,6 +48,7 @@ pub struct PackageKey {
 
 /// Per-instance variation axis — Trục biến thể của từng instance.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct VariantKey {
     /// Digest of the resolved peer set (`peer_context_digest`), None when
     /// the ecosystem has no peers — Digest của tập peer đã chốt.
@@ -98,6 +100,7 @@ impl TargetTuple {
 
 /// Structured dependency edge — Cạnh phụ thuộc có cấu trúc.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Edge {
     /// Full key of the target entry — Khóa đầy đủ của entry đích.
     pub target_key: PackageKey,
@@ -124,6 +127,7 @@ pub enum EdgeKind {
 
 /// Edge origin — Nguồn gốc cạnh.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum EdgeOrigin {
     /// Declared in the project manifest — Khai báo trong manifest project.
     Manifest,
@@ -137,6 +141,7 @@ pub enum EdgeOrigin {
 
 /// A registry/index source — Một nguồn registry/index.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SourceRef {
     /// Stable id referenced by `PackageKey.source_id` — Id ổn định mà
     /// `PackageKey.source_id` trỏ tới.
@@ -170,6 +175,7 @@ pub struct SourceRef {
 /// Inline signature block (single-file lock, no sidecar) — Khối chữ ký
 /// nhúng (lock một file, không sidecar).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SignatureBlock {
     /// Signature algorithm (`ed25519`) — Thuật toán chữ ký.
     pub algorithm: String,
@@ -381,11 +387,27 @@ pub fn select_source<'a>(
     if matches.is_empty() {
         // Sole fallback road: lowest priority number wins.
         // (Đường fallback duy nhất: số priority nhỏ nhất thắng.)
-        return sources.iter().min_by_key(|s| s.priority).ok_or(
-            SourceSelectionError::AmbiguousFallback {
+        let min_priority = sources
+            .iter()
+            .map(|source| source.priority)
+            .min()
+            .ok_or_else(|| SourceSelectionError::AmbiguousFallback {
                 package: package.to_string(),
-            },
-        );
+            })?;
+        let mut winners = sources
+            .iter()
+            .filter(|source| source.priority == min_priority);
+        let winner = winners
+            .next()
+            .ok_or_else(|| SourceSelectionError::AmbiguousFallback {
+                package: package.to_string(),
+            })?;
+        if winners.next().is_some() {
+            return Err(SourceSelectionError::AmbiguousFallback {
+                package: package.to_string(),
+            });
+        }
+        return Ok(winner);
     }
     let max_spec = matches.iter().map(|(_, r)| *r).max().unwrap_or(0);
     if max_spec == 0 {

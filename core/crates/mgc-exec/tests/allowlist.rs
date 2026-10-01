@@ -23,6 +23,27 @@ fn allows_known_tools() {
 }
 
 #[test]
+fn android_debug_bridge_is_allowed_only_for_device_control_scope() {
+    use mgc_exec::allowlist::check_tool_with_scope;
+    use std::path::Path;
+
+    assert!(
+        check_tool_with_scope("adb", ExecutionScope::DeviceControl, Some(Path::new("."))).is_ok()
+    );
+    for scope in [
+        ExecutionScope::Install,
+        ExecutionScope::TestRunner,
+        ExecutionScope::BuildRunner,
+        ExecutionScope::DevServer,
+    ] {
+        assert!(
+            check_tool_with_scope("adb", scope, Some(Path::new("."))).is_err(),
+            "adb must not be available in {scope:?} scope"
+        );
+    }
+}
+
+#[test]
 fn rejects_forbidden_npm_family() {
     for tool in [
         "npm", "npx", "pnpm", "yarn", "bun", "deno", "bunx", "composer", "pub",
@@ -61,6 +82,7 @@ fn package_managers_are_blocked_in_every_execution_scope_even_with_compat() {
         ExecutionScope::TestRunner,
         ExecutionScope::BuildRunner,
         ExecutionScope::DevServer,
+        ExecutionScope::DeviceControl,
     ] {
         for tool in ["npm", "pnpm", "yarn", "bun", "deno", "npx", "bunx"] {
             assert!(
@@ -113,6 +135,35 @@ fn rejects_forbidden_pm_anywhere_in_script() {
             "unexpected error for {script}: {err}"
         );
     }
+}
+
+#[test]
+fn rejects_package_manager_javascript_entrypoints() {
+    use mgc_exec::allowlist::find_forbidden_tool_in_script;
+
+    for (script, expected) in [
+        ("node ./node_modules/pnpm/bin/pnpm.cjs install", "pnpm"),
+        ("node ./node_modules/npm/bin/npm-cli.js install", "npm"),
+        ("node .\\node_modules\\yarn\\bin\\yarn.js install", "yarn"),
+    ] {
+        assert_eq!(
+            find_forbidden_tool_in_script(script),
+            Some(expected),
+            "must detect package-manager entrypoint in {script}"
+        );
+    }
+}
+
+#[test]
+fn rejects_package_manager_invoked_from_inline_javascript() {
+    use mgc_exec::allowlist::find_forbidden_tool_in_script;
+
+    let script = r#"node -e "const cmd='pnpm install'; require('child_process').execSync(cmd)""#;
+    assert_eq!(
+        find_forbidden_tool_in_script(script),
+        Some("pnpm"),
+        "must detect a package manager named inside inline JavaScript"
+    );
 }
 
 #[test]

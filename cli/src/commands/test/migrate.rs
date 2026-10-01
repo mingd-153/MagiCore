@@ -31,37 +31,41 @@ fn write_fixture(dir: &std::path::Path) {
 }
 
 #[tokio::test]
-async fn migrate_lock_v3_to_v4_writes_valid_v4() {
+async fn migrate_lock_v3_to_v4_refuses_until_runtime_can_read_it() {
     let dir = tempfile::tempdir().unwrap();
     write_fixture(dir.path());
-    super::super::migrate::run(super::super::migrate::MigrateCmd::Lock {
+    let lock_path = dir.path().join("mgc.lock");
+    let before = fs::read(&lock_path).unwrap();
+    let result = super::super::migrate::run(super::super::migrate::MigrateCmd::Lock {
         to: "4".to_string(),
         dir: Some(dir.path().to_path_buf()),
     })
-    .await
-    .unwrap();
-    let text = fs::read_to_string(dir.path().join("mgc.lock")).unwrap();
-    let v4 = mgc_lockfile::canonical::parse_v4_document(&text).unwrap();
-    assert_eq!(v4.version, "4");
-    assert!(!v4.metadata.lockfile_hash.is_empty());
-    assert_eq!(
-        mgc_lockfile::canonical::payload_digest(&v4.payload()),
-        v4.metadata.lockfile_hash
+    .await;
+
+    let error = result.expect_err("migration must not create an unreadable lockfile");
+    assert!(
+        error
+            .to_string()
+            .contains("schema v4 migration is disabled"),
+        "{error}"
     );
-    // No temp files leak from the atomic write.
-    let leftovers: Vec<_> = fs::read_dir(dir.path())
-        .unwrap()
-        .flatten()
-        .map(|e| e.file_name().to_string_lossy().to_string())
-        .filter(|n| n.starts_with("mgc.lock.tmp."))
-        .collect();
-    assert!(leftovers.is_empty(), "{leftovers:?}");
+    assert_eq!(fs::read(&lock_path).unwrap(), before);
 }
 
 #[tokio::test]
 async fn migrate_lock_already_v4_is_noop() {
     let dir = tempfile::tempdir().unwrap();
     write_fixture(dir.path());
+    let v3 = mgc_lockfile::parser::parse_lockfile(&v3_fixture()).unwrap();
+    let (mut v4, _) = mgc_lockfile::migrate_v3_to_v4(v3).unwrap();
+    v4.metadata.generated_at = "2026-09-26T00:00:00Z".to_string();
+    v4.metadata.lockfile_hash = mgc_lockfile::canonical::payload_digest(&v4.payload());
+    fs::write(
+        dir.path().join("mgc.lock"),
+        mgc_lockfile::canonical::write_v4_document(&v4).unwrap(),
+    )
+    .unwrap();
+    let before = fs::read(dir.path().join("mgc.lock")).unwrap();
     let run = super::super::migrate::MigrateCmd::Lock {
         to: "4".to_string(),
         dir: Some(dir.path().to_path_buf()),
@@ -70,10 +74,67 @@ async fn migrate_lock_already_v4_is_noop() {
     let after_first = fs::read_to_string(dir.path().join("mgc.lock")).unwrap();
     super::super::migrate::run(run).await.unwrap();
     let after_second = fs::read_to_string(dir.path().join("mgc.lock")).unwrap();
-    // Idempotent content (timestamps may differ, graph must not).
-    let first = mgc_lockfile::canonical::parse_v4_document(&after_first).unwrap();
-    let second = mgc_lockfile::canonical::parse_v4_document(&after_second).unwrap();
-    assert_eq!(first.packages, second.packages);
+    assert_eq!(after_first.as_bytes(), before);
+    assert_eq!(after_second, after_first);
+}
+
+#[tokio::test]
+async fn migrate_lock_rejects_v4_with_tampered_payload_digest() {
+    let dir = tempfile::tempdir().unwrap();
+    write_fixture(dir.path());
+    let v3 = mgc_lockfile::parser::parse_lockfile(&v3_fixture()).unwrap();
+    let (mut v4, _) = mgc_lockfile::migrate_v3_to_v4(v3).unwrap();
+    v4.metadata.generated_at = "2026-09-26T00:00:00Z".to_string();
+    v4.metadata.lockfile_hash = mgc_lockfile::canonical::payload_digest(&v4.payload());
+    let mut text = mgc_lockfile::canonical::write_v4_document(&v4).unwrap();
+    text = text.replace("name = \"lodash\"", "name = \"attacker-replaced\"");
+    let lock_path = dir.path().join("mgc.lock");
+    fs::write(&lock_path, &text).unwrap();
+
+    let result = super::super::migrate::run(super::super::migrate::MigrateCmd::Lock {
+        to: "4".to_string(),
+        dir: Some(dir.path().to_path_buf()),
+    })
+    .await;
+
+    assert!(
+        result.is_err(),
+        "tampered v4 document must not pass as a no-op"
+    );
+    assert_eq!(fs::read(&lock_path).unwrap(), text.as_bytes());
+}
+
+#[tokio::test]
+async fn migrate_lock_rejects_v4_with_invalid_signature_math() {
+    let dir = tempfile::tempdir().unwrap();
+    write_fixture(dir.path());
+    let v3 = mgc_lockfile::parser::parse_lockfile(&v3_fixture()).unwrap();
+    let (mut v4, _) = mgc_lockfile::migrate_v3_to_v4(v3).unwrap();
+    v4.metadata.generated_at = "2026-09-26T00:00:00Z".to_string();
+    v4.metadata.lockfile_hash = mgc_lockfile::canonical::payload_digest(&v4.payload());
+    v4.metadata.signature = Some(mgc_lockfile::SignatureBlock {
+        algorithm: "ed25519".to_string(),
+        key_id: "0000000000000000".to_string(),
+        public_key: "not-a-public-key".to_string(),
+        digest: v4.metadata.lockfile_hash.clone(),
+        signed_at: "2026-09-26T00:00:00Z".to_string(),
+        signature: "ed25519-not-a-signature".to_string(),
+    });
+    let text = mgc_lockfile::canonical::write_v4_document(&v4).unwrap();
+    let lock_path = dir.path().join("mgc.lock");
+    fs::write(&lock_path, &text).unwrap();
+
+    let result = super::super::migrate::run(super::super::migrate::MigrateCmd::Lock {
+        to: "4".to_string(),
+        dir: Some(dir.path().to_path_buf()),
+    })
+    .await;
+
+    assert!(
+        result.is_err(),
+        "invalid signature must not pass as a no-op"
+    );
+    assert_eq!(fs::read(&lock_path).unwrap(), text.as_bytes());
 }
 
 #[tokio::test]

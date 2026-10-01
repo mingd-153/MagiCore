@@ -524,8 +524,7 @@ pub async fn audit_swift_spam(project_root: &Path) -> MgResult<AuditReport> {
             "swift/swiftpm (no Package.resolved found — run swift package resolve first)",
         ));
     };
-    let raw = std::fs::read_to_string(&path)
-        .map_err(|e| MgError::Other(format!("read Package.resolved: {e}")))?;
+    let raw = super::read_bounded_project_input(&path, "Package.resolved")?;
     let (pins, skipped) = read_swift_resolved(&raw)?;
     if pins.is_empty() && skipped.is_empty() {
         return Ok(AuditReport::clean(0));
@@ -678,8 +677,7 @@ pub async fn audit_cocoapods_osv(project_root: &Path) -> MgResult<AuditReport> {
             "objc/cocoapods (no Podfile.lock found — run pod install first)",
         ));
     }
-    let raw = std::fs::read_to_string(&lock_path)
-        .map_err(|e| MgError::Other(format!("read Podfile.lock: {e}")))?;
+    let raw = super::read_bounded_project_input(&lock_path, "Podfile.lock")?;
     let (pins, skipped) = read_podfile_lock(&raw)?;
     // No advisory database to query (verified live: OSV rejects the
     // "pods" ecosystem) — report the parsed inventory honestly as

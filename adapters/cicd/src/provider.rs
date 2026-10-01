@@ -30,7 +30,8 @@ impl CicdProvider {
 
 pub fn detect_provider(root: &Path) -> Option<CicdProvider> {
     // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
-    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml"))
+    if let Ok(Some(content)) =
+        mgc_config::project::read_regular_project_text(&root.join("mgc.toml"), "project config")
         && let Ok(v) = toml::from_str::<toml::Value>(&content)
         && let Some(p) = v
             .get("cicd")
@@ -71,7 +72,8 @@ pub fn detect_provider(root: &Path) -> Option<CicdProvider> {
 
 pub(crate) fn manifest_is_cicd(root: &Path) -> bool {
     // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
-    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml"))
+    if let Ok(Some(content)) =
+        mgc_config::project::read_regular_project_text(&root.join("mgc.toml"), "project config")
         && let Ok(v) = toml::from_str::<toml::Value>(&content)
     {
         if v.get("ecosystem").and_then(|e| e.as_str()) == Some("cicd") {

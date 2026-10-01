@@ -1,9 +1,11 @@
 //! `mgc migrate` — explicit lockfile migrations (V1.2 §16.4).
 //! Migration lockfile tường minh.
 //!
-//! v4 is NEVER an automatic target: `mgc migrate lock --to v4` is the
-//! single explicit entry point. Every lossy decision surfaces as a
-//! warning (the migration never invents hashes, versions, or sources).
+//! v4 is not currently writable from v1-v3: the install, mutation, and
+//! audit paths still consume the legacy lock schema. The explicit migration
+//! command therefore refuses without changing the existing lock until all
+//! runtime consumers can preserve v4 package identity. Existing v4 files are
+//! accepted as a no-op.
 
 use anyhow::Result;
 use clap::Subcommand;
@@ -12,7 +14,7 @@ use std::time::Duration;
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum MigrateCmd {
-    /// Migrate mgc.lock to a newer schema (only `--to v4` exists)
+    /// Migrate mgc.lock (v4 writes stay disabled until runtime support is complete)
     Lock {
         /// Target schema version (only "4")
         #[arg(long)]
@@ -56,11 +58,9 @@ async fn run_lock(dir: Option<PathBuf>, to: &str) -> Result<()> {
         .map(|d| mgc_config::project::ProjectConfig::find_project_root(&d).unwrap_or(d))
         .unwrap_or(cwd);
     let root = mgc_config::project::ProjectConfig::find_project_root(&root).unwrap_or(root);
-    // Writer lock FIRST (P0): computing the migrated bytes from a stale
-    // pre-lock read lets a concurrent mutation's lock update get
-    // overwritten (lost update). Journal check, read, migrate and write
-    // all run inside the critical section.
-    // (Lock trước, đọc sau — không migrate từ snapshot cũ.)
+    // Writer lock FIRST: even a read-only migration refusal must not race a
+    // concurrent mutation while inspecting the lock's schema version.
+    // (Acquire lock trước khi kiểm tra schema để tránh đọc giữa lúc mutation.)
     let guard = mgc_lockfile::project_lock::ProjectWriteLock::acquire(
         &root,
         Duration::from_millis(acquire_timeout_ms(&root)),
@@ -71,46 +71,46 @@ async fn run_lock(dir: Option<PathBuf>, to: &str) -> Result<()> {
     // (Không migrate đè lên journal chưa phục hồi.)
     crate::commands::core::shared::ensure_no_pending_remove_journal(&root, &guard)?;
     let lock_path = root.join("mgc.lock");
-    mgc_lockfile::ensure_lockfile_mutation_allowed(&lock_path)?;
-    if !lock_path.exists() {
-        return Err(crate::error::migrate_no_lockfile(&root));
-    }
-    let text = std::fs::read_to_string(&lock_path)?;
-    // v1/v2 chain through v3 in memory inside this ONE explicit
-    // invocation (no silent auto-upgrade anywhere else).
-    // (v1/v2 nối qua v3 trong bộ nhớ trong ĐÚNG một lần gọi tường minh
-    // này.)
-    let v3 = match mgc_lockfile::detect_lockfile_version(&text)? {
-        4 => {
-            mgc_ui::info("mgc.lock is already schema v4 — nothing to do.");
-            return Ok(());
+    let lock_bytes = match mgc_lockfile::read_lockfile_bytes(&lock_path) {
+        Ok(bytes) => bytes,
+        Err(mgc_lockfile::LockfileError::IoError(error))
+            if error.kind() == std::io::ErrorKind::NotFound =>
+        {
+            return Err(crate::error::migrate_no_lockfile(&root));
         }
-        3 => mgc_lockfile::parser::parse_lockfile(&text)?,
-        1 | 2 => mgc_lockfile::auto_upgrade_lockfile(&text)?,
-        other => {
-            return Err(crate::error::migrate_unsupported_version(other));
-        }
+        Err(error) => return Err(error.into()),
     };
-    let (mut v4, warnings) = mgc_lockfile::migrate_v3_to_v4(v3)?;
-    for warning in &warnings {
-        mgc_ui::warning(&format!("migrate: {warning}"));
+    let text = String::from_utf8(lock_bytes)
+        .map_err(|error| anyhow::anyhow!("mgc.lock is not valid UTF-8: {error}"))?;
+    // Do not emit v4 until all runtime consumers can read it losslessly.
+    // (Chưa ghi v4 khi runtime chưa đọc được đầy đủ, không mất dữ liệu.)
+    match mgc_lockfile::detect_lockfile_version(&text)? {
+        4 => {
+            let v4 = mgc_lockfile::canonical::parse_v4_document(&text)?;
+            let report = mgc_lockfile::policy::verify_v4_math(&v4)?;
+            mgc_lockfile::policy::enforce_policy(
+                &report,
+                mgc_lockfile::policy::LockPolicyMode::Warn,
+                &[],
+            )?;
+            if !report.signed {
+                mgc_ui::warning(
+                    "mgc.lock v4 digest is valid, but the lock is unsigned; signer trust was not evaluated",
+                );
+            } else {
+                mgc_ui::warning(
+                    "mgc.lock v4 signature math is valid; signer trust was not evaluated by this command",
+                );
+            }
+            mgc_ui::info("mgc.lock v4 integrity is valid — no migration was needed.");
+            Ok(())
+        }
+        1..=3 => {
+            mgc_lockfile::ensure_lockfile_mutation_allowed(&lock_path)?;
+            Err(crate::error::migrate_v4_runtime_unavailable())
+        }
+        other => Err(crate::error::migrate_unsupported_version(other)),
     }
-    v4.metadata.generated_at = chrono::Utc::now().to_rfc3339();
-    v4.metadata.generator = format!("mgc/{} (migrated v3->v4)", env!("CARGO_PKG_VERSION"));
-    v4.metadata.lockfile_hash = mgc_lockfile::canonical::payload_digest(&v4.payload());
-    let bytes = mgc_lockfile::canonical::write_v4_document(&v4)?;
-    mgc_lockfile::atomic::atomic_write_locked(
-        &guard,
-        &lock_path,
-        bytes.as_bytes(),
-        Duration::from_secs(60),
-    )?;
-    mgc_ui::success(&format!(
-        "migrated mgc.lock v3 -> v4 (digest {}, {} warning(s))",
-        v4.metadata.lockfile_hash,
-        warnings.len()
-    ));
-    Ok(())
 }
 
 #[cfg(test)]

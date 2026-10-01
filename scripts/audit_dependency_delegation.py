@@ -5,66 +5,108 @@ V1.2 audit contract: MagiCore must become a NATIVE dependency engine. Every
 external dependency-lifecycle tool spawn is a blocker; documentation cannot
 waive it. This gate scans dependency lifecycle code and classifies findings:
 
-  allowed               the operation is NOT a dependency lifecycle op
-                        (mgc build/test/run/dev/flash/doctor lanes — the
-                        user's file/operation whitelist), or the file lives
-                        under a test/ tree.
+  allowed               the file is a test/bench harness, or an explicit
+                        diagnostic-only operation. Production build/test/run/
+                        dev/deploy/flash tool spawns are not automatically
+                        accepted merely because of their function name.
+  review-required       exact OS process-boundary helpers in mgc-exec (PATH
+                        shim lookup, Windows command wrapper, process-tree
+                        termination/table inspection). These remain blocking;
+                        they are not counted as package-manager delegations.
   violation             every dependency-lifecycle spawn, whether or not
                         it carries a `DELEGATED:` marker — the gate FAILS.
                         A marker is evidence/ledger metadata, never a waiver.
 
 Output: gitignored JSON ledger at docs/specs/dependencyDelegationAudit.json
-(every finding: file, line, tool, op_class, status) so Phase 2/3 native
-engine work can be driven from an exact list instead of prose. Exit code 1
-when any dependency-lifecycle delegation exists, 0 otherwise.
+(Rust process findings plus Python stdlib process-call inventory) so native
+engine work can be driven from source locations. Exit code 1 when a Rust
+blocker, unreviewed Python call, or known coverage gap exists; this gate is
+not a repository-complete release proof.
 
-Heuristics (documented, deliberately conservative): Rust is scanned
-line/context based — function bodies are delimited by a naive brace walk,
-and a `DELEGATED:` marker anywhere in the enclosing function (or its
-contiguous comment block above) covers every spawn inside it. Spawn shapes
-recognised: exec_tool(), run()/run_inherited()/run_capture(), mgc_run(),
-Command::new(), which()/which::which(), `(tool, args)` tables, `tool: "x"`
-fields, `== "x"` dispatch, and a bare tool literal on its own line.
+Heuristics (documented, deliberately conservative): Rust uses line/context
+matching and a naive brace walk; Python uses AST for selected standard-library
+process APIs. Neither is a complete language parser/dataflow analysis. Spawn
+shapes include exec_tool(), mgc_exec run wrappers, Command::new(), which(),
+tool descriptors and dynamic process APIs; unresolved patterns remain blockers.
 
-Cổng ownership native: mọi spawn package-manager trong dependency operation
-đều là blocker, kể cả khi có marker `DELEGATED:`. Marker chỉ ghi nhận debt,
-không miễn trừ. `allowed` chỉ dành cho operation ngoài dependency scope
-đã khai báo. Exit 1 khi còn spawn delegated trong dependency lifecycle.
+Cổng ownership native: marker `DELEGATED:` chỉ ghi nhận debt, không miễn
+trừ. Finding Python chưa review và bề mặt chưa quét giữ gate đỏ; ledger không
+được dùng để tuyên bố đã audit toàn repository.
 """
 
+import ast
 import datetime
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 
-# Roots that hold the dependency lifecycle: every core adapter plus the CLI
-# install/add/remove/update lanes, plus the shared audit engine (external
-# scanners are delegation), the hooks dispatcher (hook programs run on
-# dependency events), and the model lane (python quantize passthrough).
-# (Gốc chứa lifecycle dependency: mọi adapter core + lane CLI
-# install/add/remove/update, cộng engine audit dùng chung (scanner ngoài là
-# uỷ quyền), bộ điều phối hooks (chương trình hook chạy trên event
-# dependency), và lane model (quantize passthrough python).)
+# Source roots covered by each language-aware pass. Rust roots include
+# first-party adapters, CLI, crates, tests, and tools; Python roots are listed
+# separately so new entry points cannot hide in only one implementation tree.
+# (Root source được quét theo từng parser ngôn ngữ. Rust gồm adapter, CLI,
+# crates, tests và tools; Python khai riêng để entry point không lọt vì chỉ
+# quét một cây implementation.)
 SCAN_ROOTS = [
     "adapters",
-    "cli/src/commands/core/install",
-    "cli/src/commands/core/add",
-    "cli/src/commands/core/remove",
-    "cli/src/commands/core/update",
-    # Read-only dependency inventory can still invoke a package manager
-    # (for example `list` implementations that probe installed state).
-    "cli/src/commands/core/list",
-    "cli/src/commands/core/web.rs",
-    "cli/src/commands/core/shared.rs",
-    # Model quantization is declared core-owned by this gate; include the
-    # actual command tree so python/toolchain subprocesses cannot escape.
-    "cli/src/commands/model",
-    "cli/src/commands/publish.rs",
-    "core/crates/mgc-audit/src",
-    "core/crates/mgc-config/src",
+    # Scan all first-party Rust production and test source roots; selecting
+    # only adapters or command subtrees could miss a new crate/entry point.
+    # (Quét mọi source Rust first-party và test; chọn vài subtree có thể bỏ
+    # sót crate hay entry point mới.)
+    "cli",
+    "core",
+    "tests",
+    "tools",
 ]
+PYTHON_SCAN_ROOTS = ["."]
+SHELL_SCAN_ROOTS = ["."]
+
+# Known blind spots remain explicit, and an otherwise-clean run fails until
+# these surfaces have dedicated parsers/review. (Ghi rõ điểm mù; nếu các bề
+# mặt này chưa có parser/review thì kết quả sạch vẫn phải fail.)
+UNSCANNED_PROCESS_SURFACES = [
+    {
+        "path": "Python indirect aliases and third-party process wrappers",
+        "reason": "AST inventory detects direct stdlib calls but does not perform dataflow or wrapper resolution",
+    },
+    {
+        "path": "PowerShell and JavaScript indirect/computed process calls",
+        "reason": "PowerShell detects direct cmdlets and common built-in process aliases but remains lexical and does not resolve arbitrary user-defined aliases/data-flow; JavaScript covers common import/computed/static aliases but not arbitrary alias/data-flow, template-literal expressions, reflective or module-loader wrappers",
+    },
+    {
+        "path": "shell wrappers and non-listed executable commands",
+        "reason": "the shell pass inventories direct known-tool command heads only; it does not resolve sourced files, functions, eval, or arbitrary executables",
+    },
+    {
+        "path": ".github/workflows",
+        "reason": "immutable action-reference syntax has a dedicated CI gate; command provisioning and upstream SHA provenance remain incomplete",
+    },
+]
+
+PYTHON_PROCESS_FUNCTIONS = {
+    "subprocess": {
+        "call", "check_call", "check_output", "getoutput", "getstatusoutput",
+        "Popen", "run",
+    },
+    "os": {"fork", "popen", "posix_spawn", "posix_spawnp", "startfile", "system"},
+    "pty": {"spawn"},
+    "asyncio": {"create_subprocess_exec", "create_subprocess_shell"},
+}
+
+JS_PROCESS_APIS = {"exec", "execFile", "execFileSync", "execSync", "fork", "spawn", "spawnSync"}
+PS_PROCESS_APIS = ("Start-Process", "Start-Job", "Invoke-Expression", "Invoke-Command")
+# Built-in PowerShell aliases that can evaluate or start commands. Keep aliases
+# separate so findings identify the underlying process boundary, not a tool name.
+# Alias PowerShell dựng sẵn có thể chạy hoặc đánh giá lệnh; ánh xạ về cmdlet gốc.
+PS_PROCESS_ALIASES = {
+    "start": "Start-Process",
+    "saps": "Start-Process",
+    "iex": "Invoke-Expression",
+    "icm": "Invoke-Command",
+    "sajb": "Start-Job",
+}
 
 # The forbidden PM toolchains (V1.2 audit list) — spawning any of these in a
 # dependency operation is delegation that must be declared. python/python3
@@ -81,21 +123,13 @@ TOOLS = [
     "govulncheck", "composer", "pub",
 ]
 
-# Non-dependency mgc lanes: tool spawns here are the lane's own business
-# (build/test/run/dev/flash/doctor), never dependency resolution. Path
-# segments also accept the plural/bench spellings (tests/, benches/) —
-# test code and measurement harnesses are not the product's dependency
-# lifecycle.
-# (Lane không phải dependency: spawn ở đây là việc của chính lane đó.
-# Segment đường dẫn chấp nhận cả số nhiều/bench (tests/, benches/) — code
-# test và harness đo đạc không phải lifecycle dependency của product.)
-ALLOWED_OPS = ("build", "test", "run", "dev", "flash", "doctor", "deploy")
-
-# Extra PATH-ONLY whitelist segments (never fn-name matches): test trees
-# and bench harnesses.
-# (Segment CHỈ-whitelist-đường-dẫn (không dùng cho tên hàm): cây test và
-# harness bench.)
-ALLOWED_PATH_SEGMENTS = ("test", "bench")
+# Diagnostic probes may inspect installed tools, but product workflows may
+# not silently hand build/test/run/dev/deploy/flash ownership to a CLI.
+# Test and benchmark source paths are handled separately below.
+# (Chỉ cho phép probe chẩn đoán; workflow production không được tự động
+# giao quyền build/test/run/dev/deploy/flash cho CLI ngoài.)
+ALLOWED_OPS = ("doctor",)
+ECOSYSTEM_OWNED_OPS = ("build", "test", "run", "dev", "flash", "deploy")
 
 # Dependency lifecycle operations — when one of these words names the
 # function or a path segment, the file is in dependency scope even if the
@@ -158,6 +192,46 @@ MESSAGE_MACROS = (
     "write!", "writeln!", "eprint!", "print!",
 )
 
+# Internal routing sentinels are values, not executable names. Keep the set
+# exact so it cannot become a general bypass for unlisted process targets.
+# (Sentinel điều phối nội bộ không phải tên executable; allowlist chính xác.)
+NON_EXECUTABLE_SENTINELS = {"mgc-internal-run-script"}
+NON_EXECUTABLE_SQL_PREFIXES = {
+    "ALTER", "CREATE", "DELETE", "DROP", "INSERT", "PRAGMA", "SELECT",
+    "UPDATE", "WITH",
+}
+
+# Exact first-party OS process helpers are kept distinct from ecosystem tool
+# delegation. They remain blocking `review-required` findings: this exception
+# does not approve the implementation or claim native behavior, it only keeps
+# an OS process-control primitive from being mislabeled as a package manager.
+# Exact helper/path/tool matching is intentional; dynamic executables and any
+# package/build tool launched from the same function still use normal rules.
+# (Các helper OS được phân loại riêng và vẫn blocking; không miễn executable
+# động hoặc package/build tool gọi từ cùng hàm.)
+PLATFORM_PROCESS_BOUNDARY_REVIEWS = {
+    (
+        "core/crates/mgc-exec/src/run.rs",
+        "resolve_windows_shim",
+        "where.exe",
+    ): "Windows PATH resolution for command shims; review native API replacement",
+    (
+        "core/crates/mgc-exec/src/run.rs",
+        "execute_command",
+        "cmd.exe",
+    ): "Windows batch-script command wrapper; review shell-boundary safety",
+    (
+        "core/crates/mgc-exec/src/run.rs",
+        "terminate_process_tree",
+        "taskkill",
+    ): "Windows process-tree termination; review native Job Object replacement",
+    (
+        "core/crates/mgc-exec/src/run.rs",
+        "find_forbidden_descendant",
+        "ps",
+    ): "Unix process-table inspection; review native platform API replacement",
+}
+
 # Spawn-shaped contexts. Applied to the whole file text (so a tool literal
 # on its own line inside a multi-line `run(\n "cargo",` call still matches),
 # then mapped back to a line number. Each entry is (pattern,
@@ -172,27 +246,52 @@ SPAWN_PATTERNS = [
     # though the executable is passed indirectly and cannot match a literal.
     # Wrapper process động đã biết bị cấm trong dependency code dù executable truyền gián tiếp.
     (re.compile(r"(?<!fn )\b(run_native_install)\s*\("), True),
-    (re.compile(rf'\bexec_tool\s*\([^()]*?"({_TOOL_ALT})"'), True),
-    (re.compile(rf'(?<![\w_])(?:run_inherited|run_capture|run)\s*\(\s*"({_TOOL_ALT})"'), True),
-    (re.compile(rf'\bmgc_run\s*\(\s*"({_TOOL_ALT})"'), True),
-    (re.compile(rf'\bCommand::new\s*\(\s*"({_TOOL_ALT})"'), True),
-    (re.compile(rf'\bwhich(?:::which)?\s*\(\s*"({_TOOL_ALT})"'), True),
+    # Capture every literal executable, not only names in TOOLS. TOOLS is
+    # an inventory for dispatch/string-table shapes, not a scanner boundary.
+    # (Bắt mọi executable literal; TOOLS chỉ dùng cho dạng dispatch/bảng.)
+    (re.compile(r'\bexec_tool\s*\([^()]*?"([^"\n]+)"'), True),
+    # `run` is too common for a bare-name match: CLI command dispatchers also
+    # expose `run(...)`. Match only the known process wrappers when unqualified,
+    # and the explicit mgc_exec namespace for its generic `run` wrapper.
+    (re.compile(r'\bmgc_exec(?:::[A-Za-z_][A-Za-z0-9_]*)*::run\s*\(\s*"([^"\n]+)"'), True),
+    (re.compile(r'(?<![\w:])(?:run_inherited|run_capture)\s*\(\s*"([^"\n]+)"'), True),
+    (re.compile(r'\bmgc_run\s*\(\s*"([^"\n]+)"'), True),
+    (re.compile(r'\bCommand::new\s*\(\s*"([^"\n]+)"'), True),
+    (re.compile(r'\bwhich(?:::which)?\s*\(\s*"([^"\n]+)"'), True),
     # (tool, args) tables — `("cdk", vec!["deploy"])`, `("uv", vec![…])`.
-    (re.compile(rf'\(\s*"({_TOOL_ALT})"\s*,\s*(?:&?\[|vec!)'), True),
+    (re.compile(r'\(\s*"([^"\n]+)"\s*,\s*(?:&?\[|vec!)'), True),
     # Spawn descriptor fields — `tool: "flutter".to_string()`.
-    (re.compile(rf'\btool\s*:\s*"({_TOOL_ALT})"'), True),
-    # Dispatch comparisons against a TOOL VARIABLE — `tool == "uv"`,
-    # `kind != "terraform"`. A bare `name == "flutter"` (dependency-name
-    # iteration inside a manifest parser) is NOT a spawn and must not
-    # match, so the left-hand side must name the tool being chosen.
-    # (So sánh điều phối với BIẾN TOOL — `tool == "uv"`, `kind !=
-    # "terraform"`. `name == "flutter"` (duyệt tên dependency trong parser
-    # manifest) KHÔNG phải spawn nên không được khớp — vế trái phải là tên
-    # biến đang chọn tool.)
-    (re.compile(rf'\b(?:tool|cmd|bin)\s*(?:==|!=)\s*"({_TOOL_ALT})"'), True),
-    (re.compile(rf'"({_TOOL_ALT})"\s*==\s*(?:tool|cmd|bin)\b'), True),
+    (re.compile(r'\btool\s*:\s*"([^"\n]+)"'), True),
     # A bare tool literal alone on its line (variable assignment / call arg).
-    (re.compile(rf'^\s*"({_TOOL_ALT})",?\s*$', re.MULTILINE), False),
+    (re.compile(rf'^\s*"({_TOOL_ALT})",\s*$', re.MULTILINE), False),
+]
+
+# These are static command-route declarations rather than proof that the
+# current line executes a process. Keep them in the blocking ledger so the
+# route cannot disappear from review, but label them separately from spawn
+# calls. (Descriptor là tuyến lệnh tĩnh, không phải bằng chứng process chạy.)
+DESCRIPTOR_PATTERNS = [pattern for pattern, _ in SPAWN_PATTERNS[7:]]
+
+# A variable executable is still a process boundary. Keep these separate so
+# the ledger labels it as dynamic instead of pretending the variable name is
+# the actual program. Fixed structural wrappers are covered; arbitrary
+# method-call expressions remain a documented scanner limitation.
+# (Executable qua biến vẫn là process boundary; ledger phải gắn nhãn dynamic.)
+DYNAMIC_SPAWN_PATTERNS = [
+    re.compile(r'(?<!fn )\bexec_tool\s*\(\s*&?([A-Za-z_][A-Za-z0-9_]*)'),
+    re.compile(r'\bmgc_run\s*\(\s*&?([A-Za-z_][A-Za-z0-9_]*)'),
+    re.compile(
+        r'(?<!fn )\bmgc_exec(?:::[A-Za-z_][A-Za-z0-9_]*)*::exec_tool'
+        r'\s*\(\s*&?([A-Za-z_][A-Za-z0-9_]*)'
+    ),
+    re.compile(r'\bCommand::new\s*\(\s*&?([A-Za-z_][A-Za-z0-9_]*)'),
+    re.compile(
+        r'\bmgc_exec(?:::[A-Za-z_][A-Za-z0-9_]*)*::'
+        r'(?:run|run_inherited|run_capture)\s*\(\s*&?([A-Za-z_][A-Za-z0-9_]*)'
+    ),
+    re.compile(
+        r'(?<![\w:])(?:run_inherited|run_capture)\s*\(\s*&?([A-Za-z_][A-Za-z0-9_]*)'
+    ),
 ]
 
 
@@ -260,7 +359,9 @@ def _inside_spans(spans: list, offset: int) -> bool:
 # (Khai báo deny/allow-list top-level (`const X: &[&str]`) chỉ nêu tên
 # tool, không spawn. Chỉ pattern bare-literal yếu dùng các span này, và
 # chỉ NGOÀI thân hàm.)
-CONST_ARRAY_RE = re.compile(r"^\s*const\s+[A-Za-z_][A-Za-z0-9_]*\s*:[^=;]*=\s*&\[\s*$")
+CONST_ARRAY_RE = re.compile(
+    r"^\s*(?:pub(?:\([^)]*\))?\s+)?const\s+[A-Za-z_][A-Za-z0-9_]*\s*:[^=;]*=\s*&\[\s*$"
+)
 
 
 def _const_array_spans(lines: list) -> list:
@@ -317,11 +418,747 @@ def _iter_rust_files() -> list:
         if os.path.isfile(base) and base.endswith(".rs"):
             files.append(base)
             continue
-        for dirpath, _dirnames, filenames in os.walk(base):
+        if not os.path.isdir(base):
+            raise FileNotFoundError(f"required Rust scan root is missing: {root}")
+
+        def raise_walk_error(error):
+            raise error
+
+        for dirpath, dirnames, filenames in os.walk(base, onerror=raise_walk_error):
+            dirnames[:] = sorted(
+                name for name in dirnames
+                if name not in {".git", ".venv", "deps", "node_modules", "target", "vendor"}
+            )
             for name in sorted(filenames):
                 if name.endswith(".rs"):
                     files.append(os.path.join(dirpath, name))
     return sorted(files)
+
+
+def _iter_python_files() -> list:
+    """Every first-party Python source under audited source roots.
+    (Mọi source Python first-party trong các root được kiểm toán.)"""
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    files = []
+    for root in PYTHON_SCAN_ROOTS:
+        base = os.path.join(repo_root, root)
+        if not os.path.isdir(base):
+            raise FileNotFoundError(f"required Python scan root is missing: {root}")
+
+        def raise_walk_error(error):
+            raise error
+
+        for dirpath, dirnames, filenames in os.walk(base, onerror=raise_walk_error):
+            dirnames[:] = sorted(
+                name for name in dirnames
+                if name not in {
+                    ".git", ".gitnexus", ".kilo", "__pycache__", ".venv", ".pytest_cache",
+                    "build", "deps", "dist", "node_modules", "target", "vendor",
+                }
+            )
+            for name in sorted(filenames):
+                if name.endswith(".py") and "gitnexus" not in name.lower():
+                    files.append(os.path.join(dirpath, name))
+    return sorted(files)
+
+
+def scan_python_file(abs_path: str, repo_root: str) -> list:
+    """Read and inventory one Python file, failing closed on read errors.
+    (Đọc và kiểm kê một file Python; lỗi đọc được giữ thành finding.)"""
+    rel_path = os.path.relpath(abs_path, repo_root).replace(os.sep, "/")
+    try:
+        with open(abs_path, "r", encoding="utf-8") as handle:
+            return scan_python_text(rel_path, handle.read())
+    except (OSError, UnicodeError) as error:
+        return [{
+            "file": rel_path,
+            "line": 1,
+            "api": "<read-error>",
+            "executable": "<unreadable-python>",
+            "review_status": "unreviewed",
+            "parse_error": str(error),
+        }]
+
+
+SHELL_WRAPPERS = {
+    "command", "env", "exec", "nice", "nohup", "sudo", "time", "timeout",
+}
+SHELL_DYNAMIC_EXECUTORS = {".", "eval", "source"}
+SHELL_INTERPRETERS = {"bash", "dash", "powershell", "pwsh", "sh", "zsh"}
+SHELL_WRAPPER_VALUE_OPTIONS = {
+    "env": {"-u", "--unset", "-C", "--chdir", "-S", "--split-string"},
+    "nice": {"-n", "--adjustment"},
+    "sudo": {"-u", "--user", "-g", "--group", "-C", "--chdir", "-h", "--host"},
+    "time": {"-o", "--output", "-f", "--format"},
+    "timeout": {"-k", "--kill-after", "-s", "--signal"},
+}
+SHELL_WRAPPER_POSITIONAL_COUNTS = {"timeout": 1}
+SHELL_CONTROL_WORDS = {
+    "!", "{", "}", "do", "done", "elif", "else", "fi", "if", "then",
+    "until", "while",
+}
+SHELL_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+
+def _shell_command_segments(text: str):
+    """Yield logical shell command segments with their first physical line.
+    (Tách command shell theo control operator, giữ dòng bắt đầu để audit.)"""
+    pending = ""
+    start_line = 1
+    pending_continuation = False
+    for line_no, physical in enumerate(text.splitlines(), start=1):
+        if not pending:
+            start_line = line_no
+        stripped = physical.rstrip()
+        continued = stripped.endswith("\\")
+        pending_continuation = continued
+        piece = stripped[:-1] if continued else physical
+        pending += piece + (" " if continued else "\n")
+        if continued:
+            continue
+        try:
+            lexer = shlex.shlex(pending, posix=True, punctuation_chars=";&|")
+            lexer.whitespace_split = True
+            lexer.commenters = "#"
+            tokens = list(lexer)
+        except ValueError as error:
+            if "No closing quotation" in str(error):
+                # Shell single/double-quoted strings may legally span physical
+                # lines; retain the source until shlex can parse the complete
+                # command instead of turning valid multiline input red.
+                # (Quote shell hợp lệ có thể qua nhiều dòng; giữ input đến khi
+                # parse được cả command, không biến cú pháp đúng thành lỗi.)
+                continue
+            yield start_line, None, str(error)
+            pending = ""
+            continue
+        segment = []
+        for token in tokens:
+            if token and all(char in ";&|" for char in token):
+                if segment:
+                    yield start_line, segment, None
+                    segment = []
+            else:
+                segment.append(token)
+        if segment:
+            yield start_line, segment, None
+        pending = ""
+        pending_continuation = False
+    if pending:
+        if pending_continuation:
+            yield start_line, None, "line continuation reaches end of file"
+            return
+        try:
+            lexer = shlex.shlex(pending, posix=True, punctuation_chars=";&|")
+            lexer.whitespace_split = True
+            lexer.commenters = "#"
+            tokens = list(lexer)
+        except ValueError as error:
+            yield start_line, None, str(error)
+            return
+        segment = []
+        for token in tokens:
+            if token and all(char in ";&|" for char in token):
+                if segment:
+                    yield start_line, segment, None
+                    segment = []
+            else:
+                segment.append(token)
+        if segment:
+            yield start_line, segment, None
+
+
+def _shell_executable(segment: list):
+    """Resolve a direct known-tool command after common transparent wrappers.
+    (Tìm executable thuộc inventory sau wrapper shell phổ biến.)"""
+    index = 0
+    nested_known_tool = re.compile(
+        r"(?:\$\(|`)\s*(?:[^\s;&|]*/)?(?:"
+        + "|".join(re.escape(tool) for tool in sorted(TOOLS, key=len, reverse=True))
+        + r")\b"
+    )
+    while index < len(segment):
+        token = segment[index]
+        lowered = token.lower()
+        if lowered in SHELL_CONTROL_WORDS or SHELL_ASSIGNMENT_RE.match(token):
+            index += 1
+            continue
+        if lowered in SHELL_WRAPPERS:
+            wrapper = lowered
+            index += 1
+            positional_remaining = SHELL_WRAPPER_POSITIONAL_COUNTS.get(wrapper, 0)
+            while index < len(segment):
+                argument = segment[index]
+                if SHELL_ASSIGNMENT_RE.match(argument):
+                    index += 1
+                    continue
+                if argument.startswith("-"):
+                    index += 1
+                    if (
+                        argument in SHELL_WRAPPER_VALUE_OPTIONS.get(wrapper, set())
+                        and index < len(segment)
+                    ):
+                        index += 1
+                    continue
+                if positional_remaining:
+                    positional_remaining -= 1
+                    index += 1
+                    continue
+                break
+            continue
+        # Only the command-position token determines the executable. Variables
+        # and substitutions in ordinary arguments do not turn a static
+        # command into a dynamic executable (e.g. `echo "$HOME"`).
+        # (Chỉ token vị trí command quyết định executable; biến trong đối số
+        # không biến lệnh tĩnh thành executable động.)
+        if (
+            token.startswith("$")
+            or "$" in token
+            or any(marker in token for marker in ("$(", "`", "<(", ">("))
+            or token in {"(", ")"}
+        ):
+            return "<dynamic-shell-command>"
+        basename = token.replace("\\", "/").rsplit("/", 1)[-1]
+        if basename in SHELL_DYNAMIC_EXECUTORS or basename in SHELL_INTERPRETERS:
+            return "<dynamic-shell-command>"
+        if basename in TOOLS:
+            return basename
+        break
+    # Command substitutions execute even in assignment-only statements. Detect
+    # known PM heads inside those substitutions without treating unrelated
+    # variables in ordinary arguments as dynamic executable names.
+    # (Command substitution vẫn chạy trong assignment-only; bắt PM đã biết
+    # bên trong nhưng không gắn nhãn động cho biến ở đối số thông thường.)
+    if any(nested_known_tool.search(token) for token in segment):
+        return "<dynamic-shell-command>"
+    return None
+
+
+def scan_shell_text(rel_path: str, text: str) -> list:
+    """Inventory direct known-tool shell commands; malformed input is unreviewed.
+    (Kiểm kê command gọi tool đã biết; cú pháp lỗi không được xem là sạch.)"""
+    findings = []
+    for line_no, segment, parse_error in _shell_command_segments(text):
+        if parse_error is not None:
+            findings.append({
+                "file": rel_path,
+                "line": line_no,
+                "api": "shell-command",
+                "executable": "<unparsed-shell>",
+                "review_status": "unreviewed",
+                "parse_error": parse_error,
+            })
+            continue
+        executable = _shell_executable(segment)
+        if executable is None:
+            continue
+        findings.append({
+            "file": rel_path,
+            "line": line_no,
+            "api": "shell-command",
+            "executable": executable,
+            "review_status": "unreviewed",
+            "parse_error": None,
+        })
+    return findings
+
+
+def _iter_shell_files() -> list:
+    """Walk shell sources in first-party and workflow trees deterministically.
+    (Quét file shell trong cây first-party/workflow, bỏ build/cache/vendor.)"""
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    excluded = {
+        ".git", ".gitnexus", ".kilo", ".venv", "__pycache__", ".pytest_cache",
+        "build", "deps", "dist", "node_modules", "target", "vendor",
+    }
+    files = []
+    for root in SHELL_SCAN_ROOTS:
+        base = os.path.join(repo_root, root)
+        if not os.path.isdir(base):
+            raise FileNotFoundError(f"required shell scan root is missing: {root}")
+
+        def raise_walk_error(error):
+            raise error
+
+        for dirpath, dirnames, filenames in os.walk(base, onerror=raise_walk_error):
+            dirnames[:] = sorted(name for name in dirnames if name not in excluded)
+            for filename in sorted(filenames):
+                if (
+                    filename.endswith((".sh", ".bash", ".zsh"))
+                    and "gitnexus" not in filename.lower()
+                ):
+                    files.append(os.path.join(dirpath, filename))
+    return sorted(set(files))
+
+
+def scan_shell_file(abs_path: str, repo_root: str) -> list:
+    """Read and inventory one shell file, failing closed on read errors.
+    (Đọc và kiểm kê file shell; lỗi đọc phải xuất hiện trong ledger.)"""
+    rel_path = os.path.relpath(abs_path, repo_root).replace(os.sep, "/")
+    try:
+        with open(abs_path, "r", encoding="utf-8") as handle:
+            return scan_shell_text(rel_path, handle.read())
+    except (OSError, UnicodeError) as error:
+        return [{
+            "file": rel_path,
+            "line": 1,
+            "api": "<read-error>",
+            "executable": "<unreadable-shell>",
+            "review_status": "unreviewed",
+            "parse_error": str(error),
+        }]
+
+
+def _mask_js_comments(text: str) -> str:
+    """Blank JS comments while preserving strings and physical line numbers.
+    (Xóa comment JS nhưng giữ string và số dòng vật lý.)"""
+    out = list(text)
+    index = 0
+    quote = None
+    escaped = False
+    while index < len(text):
+        char = text[index]
+        next_char = text[index + 1] if index + 1 < len(text) else ""
+        if quote:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+            index += 1
+            continue
+        if char in ("'", '"', "`"):
+            quote = char
+            index += 1
+        elif char == "/" and next_char == "/":
+            while index < len(text) and text[index] != "\n":
+                out[index] = " "
+                index += 1
+        elif char == "/" and next_char == "*":
+            out[index] = out[index + 1] = " "
+            index += 2
+            while index < len(text):
+                if text[index] == "\n":
+                    index += 1
+                    continue
+                if text[index] == "*" and index + 1 < len(text) and text[index + 1] == "/":
+                    out[index] = out[index + 1] = " "
+                    index += 2
+                    break
+                out[index] = " "
+                index += 1
+        else:
+            index += 1
+    return "".join(out)
+
+
+def _mask_js_strings(text: str) -> str:
+    """Blank JS string/template bodies while preserving newlines and code.
+    (Xóa nội dung string/template JS nhưng giữ newline và phần code.)"""
+    out = list(text)
+    index = 0
+    quote = None
+    escaped = False
+    while index < len(text):
+        char = text[index]
+        if quote:
+            if char == "\n" and quote != "`":
+                quote = None
+                index += 1
+                continue
+            if char != "\n":
+                out[index] = " "
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+        elif char in ("'", '"', "`"):
+            quote = char
+            out[index] = " "
+        index += 1
+    return "".join(out)
+
+
+def scan_javascript_text(rel_path: str, text: str) -> list:
+    """Conservatively inventory common JS/Bun/Deno process APIs.
+    (Kiểm kê bảo thủ API process JS/Bun/Deno thường gặp.)"""
+    source = _mask_js_comments(text)
+    code = _mask_js_strings(source)
+    findings = []
+    aliases = {}
+    namespaces = set()
+    import_re = re.compile(
+        r"import\s*\{([^}]+)\}\s*from\s*(['\"])(?:node:)?child_process\2"
+        r"|require\s*\(\s*(['\"])(?:node:)?child_process\3\s*\)"
+    )
+    for match in import_re.finditer(source):
+        imported = match.group(1)
+        if imported:
+            for item in imported.split(","):
+                parts = re.split(r"\s+as\s+", item.strip())
+                name = parts[0].strip()
+                alias = parts[-1].strip()
+                if name in JS_PROCESS_APIS:
+                    aliases[alias] = f"child_process.{name}"
+        else:
+            line_start = code.rfind("\n", 0, match.start()) + 1
+            prefix = code[line_start:match.start()]
+            assigned = re.search(r"(?:const|let|var)\s+(\w+)\s*=\s*$", prefix)
+            if assigned:
+                namespaces.add(assigned.group(1))
+    commonjs_destructure = re.compile(
+        r"(?:const|let|var)\s*\{([^}]+)\}\s*=\s*require\s*\(\s*(['\"])(?:node:)?child_process\2\s*\)"
+    )
+    for match in commonjs_destructure.finditer(source):
+        for item in match.group(1).split(","):
+            parts = re.split(r"\s*:\s*", item.strip())
+            name = parts[0].strip()
+            alias = parts[-1].strip()
+            if name in JS_PROCESS_APIS:
+                aliases[alias] = f"child_process.{name}"
+    namespace_import = re.compile(
+        r"import\s+(?:\*\s+as\s+)?([A-Za-z_$][\w$]*)\s+from\s*(['\"])(?:node:)?child_process\2"
+    )
+    for match in namespace_import.finditer(source):
+        namespaces.add(match.group(1))
+
+    dynamic_namespace_import = re.compile(
+        r"(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:await\s*)?"
+        r"import\s*\(\s*(['\"])(?:node:)?child_process\2\s*\)"
+    )
+    for match in dynamic_namespace_import.finditer(source):
+        namespaces.add(match.group(1))
+
+    dynamic_destructure_import = re.compile(
+        r"(?:const|let|var)\s*\{([^}]+)\}\s*=\s*(?:await\s*)?"
+        r"import\s*\(\s*(['\"])(?:node:)?child_process\2\s*\)"
+    )
+    for match in dynamic_destructure_import.finditer(source):
+        for item in match.group(1).split(","):
+            parts = re.split(r"\s*:\s*", item.strip(), maxsplit=1)
+            imported = parts[0].strip()
+            alias = parts[-1].strip()
+            if imported in JS_PROCESS_APIS:
+                aliases[alias] = f"child_process.{imported}"
+
+    # Follow simple literal namespace copies, but do not claim arbitrary data-flow coverage.
+    # Theo alias namespace dạng literal; không tuyên bố đã bao phủ data-flow tổng quát.
+    namespace_alias = re.compile(
+        r"\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*([A-Za-z_$][\w$]*)\s*;?"
+    )
+    while True:
+        added = {
+            match.group(1)
+            for match in namespace_alias.finditer(code)
+            if match.group(2) in namespaces and match.group(1) not in namespaces
+        }
+        if not added:
+            break
+        namespaces.update(added)
+
+    computed_calls = []
+    for namespace in namespaces:
+        computed_member = re.compile(
+            rf"\b{re.escape(namespace)}\s*(?:\?\.|\.)?\s*"
+            r"\[\s*(['\"])(" + "|".join(sorted(JS_PROCESS_APIS)) + r")\1\s*\]"
+        )
+        for match in computed_member.finditer(source):
+            api_name = match.group(2)
+            if re.match(r"\s*\(", code[match.end():]):
+                computed_calls.append((match.start(), api_name))
+            line_start = code.rfind("\n", 0, match.start()) + 1
+            prefix = code[line_start:match.start()]
+            assigned = re.search(r"(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*$", prefix)
+            if assigned:
+                aliases[assigned.group(1)] = f"child_process.{api_name}"
+
+    patterns = [(re.compile(rf"\b{re.escape(alias)}\s*\("), api) for alias, api in aliases.items()]
+    for namespace in namespaces:
+        patterns.extend(
+            (
+                re.compile(rf"\b{re.escape(namespace)}\s*(?:\?\.|\.)\s*{api}\s*\("),
+                f"child_process.{api}",
+            )
+            for api in JS_PROCESS_APIS
+        )
+        patterns.extend(
+            (
+                re.compile(
+                    rf"\b{re.escape(namespace)}\s*(?:\?\.|\.)?\s*"
+                    rf"\[\s*(['\"]){api}\1\s*\]\s*\("
+                ),
+                f"child_process.{api}",
+            )
+            for api in JS_PROCESS_APIS
+        )
+    patterns.extend([
+        (re.compile(r"\bBun\s*\.\s*spawn\s*\("), "Bun.spawn"),
+        (re.compile(r"\bDeno\s*\.\s*(?:Command|run)\s*\("), "Deno.Command"),
+        (re.compile(r"\beval\s*\("), "eval"),
+        (re.compile(r"\bnew\s+Function\s*\("), "Function"),
+    ])
+    seen = set()
+    inline_require = re.compile(
+        r"require\s*\(\s*(['\"])(?:node:)?child_process\1\s*\)\s*\.\s*(" + "|".join(sorted(JS_PROCESS_APIS)) + r")\s*\("
+    )
+    for match in inline_require.finditer(source):
+        line = source.count("\n", 0, match.start()) + 1
+        api = f"child_process.{match.group(2)}"
+        seen.add((line, api))
+        findings.append({
+            "file": rel_path,
+            "line": line,
+            "api": api,
+            "executable": "<dynamic-or-unreviewed>",
+            "review_status": "unreviewed",
+        })
+    for pattern, api in patterns:
+        for match in pattern.finditer(code):
+            line = code.count("\n", 0, match.start()) + 1
+            key = (line, api)
+            if key in seen:
+                continue
+            seen.add(key)
+            findings.append({
+                "file": rel_path,
+                "line": line,
+                "api": api,
+                "executable": "<dynamic-or-unreviewed>",
+                "review_status": "unreviewed",
+            })
+    for offset, api_name in computed_calls:
+        line = source.count("\n", 0, offset) + 1
+        key = (line, f"child_process.{api_name}")
+        if key in seen:
+            continue
+        seen.add(key)
+        findings.append({
+            "file": rel_path,
+            "line": line,
+            "api": key[1],
+            "executable": "<dynamic-or-unreviewed>",
+            "review_status": "unreviewed",
+        })
+    return sorted(findings, key=lambda item: (item["line"], item["api"]))
+
+
+def _mask_powershell_comments_and_strings(line: str) -> str:
+    """Blank single/double-quoted values and trailing PowerShell comments.
+    (Xóa chuỗi và comment cuối dòng PowerShell để tránh match ví dụ.)"""
+    out = list(line)
+    quote = None
+    index = 0
+    while index < len(line):
+        char = line[index]
+        if quote:
+            out[index] = " "
+            if char == quote:
+                if quote == "'" and index + 1 < len(line) and line[index + 1] == "'":
+                    out[index + 1] = " "
+                    index += 2
+                    continue
+                if index == 0 or line[index - 1] != "`":
+                    quote = None
+        elif char in ("'", '"'):
+            quote = char
+            out[index] = " "
+        elif char == "#":
+            for pos in range(index, len(line)):
+                out[pos] = " "
+            break
+        index += 1
+    return "".join(out)
+
+
+def scan_powershell_text(rel_path: str, text: str) -> list:
+    """Inventory PowerShell process operators and known native command heads.
+    (Kiểm kê toán tử process PowerShell và command native đã biết.)"""
+    findings = []
+    tool_alt = "|".join(re.escape(tool) for tool in sorted(TOOLS, key=len, reverse=True))
+    native_re = re.compile(rf"(?:^|[|;&{{]\s*)(?:[\w./\\:-]+/)?({tool_alt})(?=\s|$)", re.IGNORECASE)
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        code = _mask_powershell_comments_and_strings(line)
+        matches = []
+        for api in PS_PROCESS_APIS:
+            if re.search(rf"\b{re.escape(api)}\b", code, re.IGNORECASE):
+                matches.append((api, api))
+        alias_alt = "|".join(re.escape(alias) for alias in sorted(PS_PROCESS_ALIASES, key=len, reverse=True))
+        for match in re.finditer(
+            rf"(?:^|[|;&{{}}]\s*)({alias_alt})(?=\s|$|[|;&{{}}])",
+            code,
+            re.IGNORECASE,
+        ):
+            alias = match.group(1).lower()
+            matches.append(("process-alias", PS_PROCESS_ALIASES[alias]))
+        if re.search(r"(?:^|\s)&\s*(?:\$|\(|\{)", code):
+            matches.append(("call-operator", "<dynamic>"))
+        quoted_tool = re.search(
+            rf"^\s*&\s*(['\"])(?:[A-Za-z]:[\\/])?(?:[^'\"]*[\\/])?({tool_alt})\1(?=\s|$)",
+            line,
+            re.IGNORECASE,
+        )
+        if quoted_tool:
+            matches.append(("call-operator", quoted_tool.group(2).lower()))
+        if re.search(r"\b(?:cmd|pwsh|powershell)\s+(?:/c|-Command)\b", code, re.IGNORECASE):
+            matches.append(("shell-command", "<dynamic>"))
+        for match in native_re.finditer(code):
+            matches.append(("native-command", match.group(1).lower()))
+        for api, executable in sorted(set(matches)):
+            findings.append({
+                "file": rel_path,
+                "line": line_no,
+                "api": api,
+                "executable": executable,
+                "review_status": "unreviewed",
+            })
+    return findings
+
+
+def _iter_files_with_suffixes(suffixes: tuple) -> list:
+    """Enumerate first-party source files for supplemental process scans.
+    (Liệt kê source first-party cho các lượt quét process bổ sung.)"""
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    excluded = {
+        ".git", ".gitnexus", ".kilo", ".venv", "__pycache__", ".pytest_cache",
+        "build", "deps", "dist", "node_modules", "target", "vendor",
+    }
+    files = []
+    for dirpath, dirnames, filenames in os.walk(repo_root):
+        dirnames[:] = sorted(name for name in dirnames if name not in excluded)
+        for filename in sorted(filenames):
+            if filename.endswith(suffixes) and "gitnexus" not in filename.lower():
+                files.append(os.path.join(dirpath, filename))
+    return sorted(files)
+
+
+def scan_supplemental_file(abs_path: str, repo_root: str, scanner) -> list:
+    """Run a supplemental scanner and preserve read failures in its ledger.
+    (Chạy scanner bổ sung; lỗi đọc phải xuất hiện trong ledger.)"""
+    rel_path = os.path.relpath(abs_path, repo_root).replace(os.sep, "/")
+    try:
+        with open(abs_path, "r", encoding="utf-8") as handle:
+            return scanner(rel_path, handle.read())
+    except (OSError, UnicodeError) as error:
+        return [{
+            "file": rel_path,
+            "line": 1,
+            "api": "<read-error>",
+            "executable": "<unreadable-source>",
+            "review_status": "unreviewed",
+            "parse_error": str(error),
+        }]
+
+
+def _python_call_api(node: ast.Call, module_aliases: dict, function_aliases: dict):
+    """Resolve known Python stdlib process API calls through import aliases.
+    (Phân giải lời gọi API process stdlib qua alias import.)"""
+    func = node.func
+    if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
+        module = module_aliases.get(func.value.id)
+        if module in PYTHON_PROCESS_FUNCTIONS:
+            name = func.attr
+            if name in PYTHON_PROCESS_FUNCTIONS[module]:
+                return f"{module}.{name}"
+            if module == "os" and name.startswith(("exec", "spawn")):
+                return f"os.{name}"
+    if isinstance(func, ast.Name):
+        return function_aliases.get(func.id)
+    return None
+
+
+def _python_executable(node: ast.Call, api: str) -> str:
+    """Extract a static argv head when safe; preserve dynamic calls explicitly.
+    (Lấy argv tĩnh khi an toàn; giữ nguyên nhãn cho lệnh động.)"""
+    if not node.args:
+        return "<dynamic>"
+    try:
+        argument = ast.literal_eval(node.args[0])
+    except (ValueError, TypeError, SyntaxError):
+        return "<dynamic>"
+    if isinstance(argument, (list, tuple)):
+        if not argument:
+            return "<dynamic>"
+        argument = argument[0]
+    if not isinstance(argument, str):
+        return "<dynamic>"
+    shell_string = api in {
+        "os.system", "os.popen", "subprocess.getoutput", "subprocess.getstatusoutput",
+        "asyncio.create_subprocess_shell",
+    } or any(
+        keyword.arg == "shell"
+        and isinstance(keyword.value, ast.Constant)
+        and keyword.value.value is True
+        for keyword in node.keywords
+    )
+    if shell_string:
+        return "<shell-command>"
+    return argument
+
+
+def scan_python_text(rel_path: str, text: str) -> list:
+    """Inventory known Python stdlib process calls; findings need review.
+    (Kiểm kê lời gọi process stdlib đã biết; mọi finding cần review.)"""
+    try:
+        tree = ast.parse(text, filename=rel_path)
+    except SyntaxError as error:
+        return [{
+            "file": rel_path,
+            "line": error.lineno or 1,
+            "api": "<parse-error>",
+            "executable": "<unparsed-python>",
+            "review_status": "unreviewed",
+            "parse_error": error.msg,
+        }]
+
+    module_aliases = {}
+    function_aliases = {}
+    wildcard_imports = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                root_module = alias.name.split(".", 1)[0]
+                bound_name = alias.asname or root_module
+                module_aliases[bound_name] = root_module
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            module = node.module.split(".", 1)[0]
+            if module not in PYTHON_PROCESS_FUNCTIONS:
+                continue
+            for alias in node.names:
+                if alias.name == "*":
+                    wildcard_imports.append({
+                        "file": rel_path,
+                        "line": node.lineno,
+                        "api": f"<wildcard-import:{module}>",
+                        "executable": "<dynamic>",
+                        "review_status": "unreviewed",
+                        "parse_error": "wildcard import prevents resolving process API calls",
+                    })
+                    continue
+                if alias.name in PYTHON_PROCESS_FUNCTIONS[module] or (
+                    module == "os"
+                    and alias.name.startswith(("exec", "spawn"))
+                ):
+                    function_aliases[alias.asname or alias.name] = f"{module}.{alias.name}"
+
+    findings = list(wildcard_imports)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        api = _python_call_api(node, module_aliases, function_aliases)
+        if api is None:
+            continue
+        findings.append({
+            "file": rel_path,
+            "line": node.lineno,
+            "api": api,
+            "executable": _python_executable(node, api),
+            "review_status": "unreviewed",
+            "parse_error": None,
+        })
+    return sorted(findings, key=lambda item: (item["line"], item["api"]))
 
 
 def _functions(lines: list) -> list:
@@ -362,6 +1199,33 @@ def _enclosing_function(spans: list, line_idx: int):
     return best
 
 
+def _is_test_function(lines: list, start_idx: int) -> bool:
+    """Whether a function has an explicit Rust test attribute.
+    (Xác định hàm có thuộc tính test Rust tường minh hay không.)"""
+    cursor = start_idx - 1
+    while cursor >= 0:
+        stripped = lines[cursor].strip()
+        if not stripped or stripped.startswith("///") or stripped.startswith("//!"):
+            cursor -= 1
+            continue
+        if stripped.startswith("#["):
+            if re.match(r"#\[(?:tokio::)?test(?:\s*\(|\s*\])", stripped):
+                return True
+            cursor -= 1
+            continue
+        break
+    return False
+
+
+def _is_external_harness_path(path_parts: list) -> bool:
+    """Only non-`src` integration/bench roots get a path-level exemption.
+    (Chỉ root integration/bench ngoài `src` mới được miễn theo đường dẫn.)"""
+    for idx, segment in enumerate(path_parts):
+        if segment in {"tests", "bench", "benches"} and "src" not in path_parts[:idx]:
+            return True
+    return False
+
+
 def _doc_block(lines: list, start_idx: int) -> str:
     """Contiguous comment lines directly above a function start, skipping
     attribute lines (`#[allow(...)]`) that sit between the docs and the
@@ -390,52 +1254,64 @@ def _classify(rel_path: str, fn_name: str):
     path_parts = [p.lower() for p in parts[:-1]]
     fn_lower = fn_name.lower()
     fn_parts = [p for p in fn_lower.split("_") if p]
-    # 1) Path-level whitelist wins first: a file under a dev/test/flash
-    #    tree is that lane's code, even when a parent segment says
-    #    install/add (`cli/.../add/test/ai.rs`). Plural and bench
-    #    spellings (tests/, benches/) count — tests and measurement
-    #    harnesses are not the dependency lifecycle.
-    #    (Whitelist mức đường dẫn thắng trước: file dưới cây dev/test/
-    #    flash là code của lane đó, dù segment cha là install/add. Số
-    #    nhiều và bench (tests/, benches/) cũng tính — test và harness đo
-    #    đạc không phải lifecycle dependency.)
-    for segment in path_parts:
-        matched = next(
-            (op for op in ALLOWED_OPS + ALLOWED_PATH_SEGMENTS
-             if segment == op or segment.startswith(op)),
-            None,
-        )
-        if matched is not None:
-            return matched, "allowed"
 
-    # 2) Function-level dependency scope wins over function-level whitelist:
-    #    `run_install` is still a dependency operation. File location alone
-    #    must not turn a dev/runtime helper in an install module into an
-    #    install spawn; such helpers are classified by their own function.
-    #    (Tên hàm dependency thắng whitelist; path install không làm helper
-    #    dev/runtime thành install nếu spawn nằm trong hàm riêng.)
+    # Exact non-mutating OS/tool-version probes owned by `mgc doctor`.
+    # This exception is path+symbol scoped; a directory name alone is not
+    # enough to waive arbitrary external execution.
+    # (Chỉ probe OS/version chính xác của doctor; không miễn cả directory.)
+    if rel_path.replace(os.sep, "/") == "cli/src/commands/doctor.rs" and fn_name in {
+        "tool_version",
+        "fs_avail",
+    }:
+        return "doctor", "allowed"
+
+    # Only integration/bench roots outside any `src` tree are path-exempt.
+    # Singular `test` and source subdirectories named `tests` are not.
+    # (Chỉ integration/bench root ngoài mọi cây `src` mới được miễn theo
+    # path; `test` đơn lẻ và `src/tests` không được miễn.)
+    if _is_external_harness_path(path_parts):
+        return next(
+            segment for segment in path_parts
+            if segment in {"tests", "bench", "benches"}
+        ), "allowed"
+
+    # Function-level dependency scope wins over runtime/deploy paths:
+    # `run_install` inside a dev module remains a dependency operation.
+    # Conversely, `dev_command` inside an install module stays a runtime
+    # boundary and is classified by its own function.
+    # (Tên hàm lifecycle thắng path runtime/deploy; helper runtime riêng
+    # trong module install vẫn theo tên hàm của chính nó.)
     for op in DEPENDENCY_OPS:
         if op in fn_parts or op in fn_lower:
             # A declaration records debt; it never grants dependency ownership.
             # Khai báo ghi nhận khoản nợ; không biến spawn ngoài thành native.
             return op, "violation"
 
-    # 3) Whitelisted operation by function name (run_test_step, flash_fw,
-    #    doctor_store, build_release, dev_server…).
-    #    (Operation whitelist theo tên hàm.)
-    for op in ALLOWED_OPS:
-        if op in fn_parts or fn_lower.startswith(op):
-            return op, "allowed"
-
-    # A top-level spawn has no function context; use the lane path as the
-    # conservative scope fallback. Function-local spawns without an
-    # operation classification remain unclassified blockers.
+    # A top-level spawn has no function context; a dependency path is the
+    # conservative fallback, never a runtime exception.
     if fn_name == "<top-level>":
         for op in DEPENDENCY_OPS:
             if op in path_parts:
                 return op, "violation"
 
-    # 4) Unclassified spawn is a blocker; a marker never grants an exception.
+    # Production workflow names do not grant permission to delegate that
+    # workflow to an external package/build/runtime CLI. A test/bench path
+    # was already classified above; all other matching tool spawns block.
+    # (Tên workflow production không cấp quyền giao việc cho CLI ngoài;
+    # test/bench đã được phân loại riêng phía trên.)
+    for op in ECOSYSTEM_OWNED_OPS:
+        if op in fn_parts or fn_lower.startswith(op):
+            return op, "violation"
+
+    # Diagnostic-only tool probes are non-mutating and may be reported as
+    # such; this is not a native capability verdict.
+    # (Probe doctor không mutation; đây không phải verdict native.)
+    for op in ALLOWED_OPS:
+        if op in fn_parts or fn_lower.startswith(op):
+            return op, "allowed"
+
+    # Unclassified spawn is a blocker; a marker or directory never grants
+    # an exception.
     #    (Spawn chưa phân loại luôn bị chặn; marker không tạo ngoại lệ.)
     return "unclassified", "violation"
 
@@ -452,21 +1328,36 @@ def scan_file(rel_path: str, abs_path: str) -> list:
     try:
         with open(abs_path, "r", encoding="utf-8", errors="replace") as handle:
             text = handle.read()
-    except OSError:
-        return []
+    except OSError as error:
+        return [{
+            "file": rel_path,
+            "line": 1,
+            "tool": "<unreadable-rust>",
+            "evidence_kind": "scan_error",
+            "op_class": "unscanned",
+            "function": "<scan-error>",
+            "status": "violation",
+            "declared_delegation": False,
+            "scan_error": str(error),
+        }]
     lines = text.splitlines()
     spans = _functions(lines)
     message_macro_spans = _message_spans(text)
     const_array_spans = _const_array_spans(lines)
     findings = []
 
-    for pattern, matches_inside_message in SPAWN_PATTERNS:
+    all_patterns = SPAWN_PATTERNS + [
+        (pattern, True) for pattern in DYNAMIC_SPAWN_PATTERNS
+    ]
+    for pattern, matches_inside_message in all_patterns:
         for match in pattern.finditer(text):
             if not matches_inside_message and _inside_spans(
                 message_macro_spans, match.start(1)
             ):
                 continue
-            line_no = text.count("\n", 0, match.start()) + 1
+            # Report/deduplicate at the executable literal, not the start
+            # of a multi-line wrapper call (which may be on another line).
+            line_no = text.count("\n", 0, match.start(1)) + 1
             span = _enclosing_function(spans, line_no - 1)
             if (
                 not matches_inside_message
@@ -477,6 +1368,24 @@ def scan_file(rel_path: str, abs_path: str) -> list:
                 # (Khai báo deny/allow-list top-level, không phải spawn.)
                 continue
             tool = match.group(1)
+            if tool in NON_EXECUTABLE_SENTINELS:
+                continue
+            if (
+                pattern in DESCRIPTOR_PATTERNS
+                and tool.split(None, 1)[0].upper() in NON_EXECUTABLE_SQL_PREFIXES
+            ):
+                # SQL APIs commonly look like ("statement", []) and must
+                # not become process-command descriptors.
+                # (SQL API thường có dạng ("câu lệnh", []), không phải
+                # descriptor để chạy process.)
+                continue
+            if pattern in DYNAMIC_SPAWN_PATTERNS:
+                tool = f"<dynamic:{tool}>"
+                evidence_kind = "dynamic_spawn_call"
+            elif pattern in DESCRIPTOR_PATTERNS:
+                evidence_kind = "command_descriptor"
+            else:
+                evidence_kind = "spawn_or_wrapper_call"
             line = lines[line_no - 1] if line_no <= len(lines) else ""
             if _line_excluded(line):
                 continue
@@ -488,14 +1397,33 @@ def scan_file(rel_path: str, abs_path: str) -> list:
                 fn_name = name
                 fn_lines = lines[start:end + 1]
                 doc_text = _doc_block(lines, start)
-            op_class, status = _classify(rel_path, fn_name)
+            if span is not None and _is_test_function(lines, span[1]):
+                op_class, status = "test-fixture", "allowed"
+                classification_reason = None
+            else:
+                classification_reason = PLATFORM_PROCESS_BOUNDARY_REVIEWS.get(
+                    (rel_path.replace(os.sep, "/"), fn_name, tool)
+                )
+                if classification_reason is not None:
+                    op_class, status = "platform-process-boundary", "review-required"
+                else:
+                    op_class, status = _classify(rel_path, fn_name)
+            # A literal command descriptor proves a route can select an
+            # executable, not that this source line spawns it. Keep unknown
+            # production routes release-blocking until linked to a launcher,
+            # but do not report them as observed process executions.
+            if evidence_kind == "command_descriptor" and status == "violation":
+                status = "review-required"
             findings.append({
                 "file": rel_path,
                 "line": line_no,
                 "tool": tool,
+                "evidence_kind": evidence_kind,
                 "op_class": op_class,
                 "function": fn_name,
                 "status": status,
+                "blocking": status in {"violation", "review-required"},
+                "classification_reason": classification_reason,
                 "declared_delegation": MARKER in "\n".join(fn_lines) or MARKER in doc_text,
             })
 
@@ -522,7 +1450,21 @@ def check_lane_gate(repo_root: str) -> tuple:
     missing = []
     for root in LANE_GATE_ROOTS:
         base = os.path.join(repo_root, root)
-        for dirpath, _dirnames, filenames in os.walk(base):
+
+        if not os.path.isdir(base):
+            checked += 1
+            missing.append(f"<scan-error:missing-root> {os.path.normpath(root)}")
+            continue
+
+        def record_walk_error(error):
+            nonlocal checked
+            checked += 1
+            error_path = getattr(error, "filename", None) or base
+            missing.append(
+                f"<scan-error:walk> {os.path.relpath(error_path, repo_root)}"
+            )
+
+        for dirpath, _dirnames, filenames in os.walk(base, onerror=record_walk_error):
             rel_dir = os.path.relpath(dirpath, repo_root)
             segments = [p.lower() for p in rel_dir.replace(os.sep, "/").split("/")]
             if any(seg in ("test", "tests", "bench", "benches") for seg in segments):
@@ -536,6 +1478,8 @@ def check_lane_gate(repo_root: str) -> tuple:
                     with open(abs_path, "r", encoding="utf-8", errors="replace") as handle:
                         text = handle.read()
                 except OSError:
+                    checked += 1
+                    missing.append(f"<scan-error:unreadable> {rel_path}")
                     continue
                 if "dep_gate::" in text or "GATE-EXEMPT:" in text:
                     checked += 1
@@ -544,7 +1488,7 @@ def check_lane_gate(repo_root: str) -> tuple:
                     continue  # pure router — no logic to gate
                 checked += 1
                 missing.append(rel_path)
-    return checked, missing
+    return checked, sorted(set(missing))
 
 
 def main() -> int:
@@ -553,8 +1497,32 @@ def main() -> int:
     for abs_path in _iter_rust_files():
         rel_path = os.path.relpath(abs_path, repo_root)
         findings.extend(scan_file(rel_path, abs_path))
+    python_files = _iter_python_files()
+    python_process_calls = [
+        item
+        for abs_path in python_files
+        for item in scan_python_file(abs_path, repo_root)
+    ]
+    shell_files = _iter_shell_files()
+    shell_process_calls = [
+        item
+        for abs_path in shell_files
+        for item in scan_shell_file(abs_path, repo_root)
+    ]
+    javascript_files = _iter_files_with_suffixes((".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"))
+    javascript_process_calls = [
+        item
+        for abs_path in javascript_files
+        for item in scan_supplemental_file(abs_path, repo_root, scan_javascript_text)
+    ]
+    powershell_files = _iter_files_with_suffixes((".ps1", ".psm1", ".psd1"))
+    powershell_process_calls = [
+        item
+        for abs_path in powershell_files
+        for item in scan_supplemental_file(abs_path, repo_root, scan_powershell_text)
+    ]
 
-    counts = {"allowed": 0, "violation": 0}
+    counts = {"allowed": 0, "violation": 0, "review-required": 0}
     for finding in findings:
         counts[finding["status"]] = counts.get(finding["status"], 0) + 1
 
@@ -568,13 +1536,47 @@ def main() -> int:
     except OSError:
         commit = ""
 
+    try:
+        status = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=all"],
+            cwd=repo_root, capture_output=True, text=True, check=True,
+        )
+        dirty_paths = [line for line in status.stdout.splitlines() if line.strip()]
+        working_tree_clean = not dirty_paths
+    except (OSError, subprocess.CalledProcessError):
+        dirty_paths = []
+        working_tree_clean = None
+
     report = {
-        "schema": "dependency-delegation-audit/2",
+        "schema": "dependency-delegation-audit/10",
         "generated_at": datetime.datetime.now(datetime.timezone.utc).strftime(
             "%Y-%m-%dT%H:%M:%SZ"
         ),
         "commit": commit,
+        "working_tree_clean": working_tree_clean,
+        "dirty_paths_count": (
+            len(dirty_paths) if working_tree_clean is not None else None
+        ),
         "scan_roots": SCAN_ROOTS,
+        "python_scan_roots": PYTHON_SCAN_ROOTS,
+        "python_files_scanned": len(python_files),
+        "shell_scan_roots": SHELL_SCAN_ROOTS,
+        "shell_files_scanned": len(shell_files),
+        "javascript_files_scanned": len(javascript_files),
+        "powershell_files_scanned": len(powershell_files),
+        "scan_languages": [
+            "Rust process boundaries",
+            "Python stdlib process APIs",
+            "Shell command/process surfaces (static inventory)",
+            "JavaScript/TypeScript process APIs (lexical inventory)",
+            "PowerShell process APIs (lexical inventory)",
+        ],
+        "coverage_complete": not UNSCANNED_PROCESS_SURFACES,
+        "unscanned_process_surfaces": UNSCANNED_PROCESS_SURFACES,
+        "python_process_calls": python_process_calls,
+        "shell_process_calls": shell_process_calls,
+        "javascript_process_calls": javascript_process_calls,
+        "powershell_process_calls": powershell_process_calls,
         "tools": TOOLS,
         "allowed_ops": list(ALLOWED_OPS),
         "declaration_marker": MARKER,
@@ -582,6 +1584,8 @@ def main() -> int:
             "total": len(findings),
             "allowed": counts["allowed"],
             "violation": counts["violation"],
+            "review_required": counts["review-required"],
+            "blocking": counts["violation"] + counts["review-required"],
             "declared_delegations": sum(
                 1 for finding in findings if finding["declared_delegation"]
             ),
@@ -602,19 +1606,24 @@ def main() -> int:
     print(
         f"dependency-delegation audit: {len(findings)} finding(s) — "
         f"allowed={counts['allowed']} "
-        f"violation={counts['violation']}"
+        f"violation={counts['violation']} "
+        f"python-process-api={len(python_process_calls)} "
+        f"shell-process-surfaces={len(shell_process_calls)} "
+        f"js-process-api={len(javascript_process_calls)} "
+        f"powershell-process-api={len(powershell_process_calls)}"
     )
-    violated = [f for f in findings if f["status"] == "violation"]
-    if violated:
+    blocked = [f for f in findings if f.get("blocking", f["status"] == "violation")]
+    if blocked:
         print(
-            "DEPENDENCY OWNERSHIP BLOCKED — remove the external package-manager "
-            "spawn or implement the operation natively; `DELEGATED:` does not waive it:",
+            "PLATFORM OWNERSHIP BLOCKED — resolve production process spawns and "
+            "unreviewed command routes; `DELEGATED:` does not waive them:",
             file=sys.stderr,
         )
-        for finding in violated:
+        for finding in blocked:
             declaration = " [documented debt]" if finding["declared_delegation"] else ""
+            label = finding["status"]
             print(
-                f"  [violation] {finding['file']}:{finding['line']} "
+                f"  [{label}] {finding['file']}:{finding['line']} "
                 f"{finding['tool']} ({finding['function']}){declaration}",
                 file=sys.stderr,
             )
@@ -622,18 +1631,53 @@ def main() -> int:
         return 1
     if lane_missing:
         print(
-            "LANE WITHOUT OWNERSHIP GATE — call `dep_gate::gate()` in the "
-            "lane or declare `GATE-EXEMPT:` with a reason:",
+            "LANE OWNERSHIP GATE INCOMPLETE — fix scan errors or add "
+            "`dep_gate::gate()` / a reasoned `GATE-EXEMPT:`:",
             file=sys.stderr,
         )
         for rel_path in lane_missing:
-            print(f"  [no-gate] {rel_path}", file=sys.stderr)
+            label = "coverage-error" if rel_path.startswith("<scan-error:") else "no-gate"
+            print(f"  [{label}] {rel_path}", file=sys.stderr)
+        print(f"ledger: {os.path.relpath(out_path, repo_root)}", file=sys.stderr)
+        return 1
+    if python_process_calls:
+        print(
+            "PYTHON PROCESS REVIEW REQUIRED — every Python process API is "
+            "listed as unreviewed in the ledger:",
+            file=sys.stderr,
+        )
+        print(f"ledger: {os.path.relpath(out_path, repo_root)}", file=sys.stderr)
+        return 1
+    if shell_process_calls:
+        print(
+            "SHELL PROCESS REVIEW REQUIRED — direct known-tool command heads "
+            "are listed as unreviewed in the ledger:",
+            file=sys.stderr,
+        )
+        print(f"ledger: {os.path.relpath(out_path, repo_root)}", file=sys.stderr)
+        return 1
+    if javascript_process_calls or powershell_process_calls:
+        print(
+            "JAVASCRIPT/POWERSHELL PROCESS REVIEW REQUIRED — lexical findings "
+            "are unreviewed and block a clean result:",
+            file=sys.stderr,
+        )
         print(f"ledger: {os.path.relpath(out_path, repo_root)}", file=sys.stderr)
         return 1
     print(
         f"lane-gate coverage: {lane_checked} lane file(s) reference "
         "dep_gate:: or GATE-EXEMPT:"
     )
+    if UNSCANNED_PROCESS_SURFACES:
+        print(
+            "PROCESS AUDIT INCOMPLETE — non-Rust executable and workflow command/provenance "
+            "surfaces remain incomplete; a clean Rust ledger is not repository-wide evidence:",
+            file=sys.stderr,
+        )
+        for surface in UNSCANNED_PROCESS_SURFACES:
+            print(f"  [unscanned] {surface['path']}: {surface['reason']}", file=sys.stderr)
+        print(f"ledger: {os.path.relpath(out_path, repo_root)}", file=sys.stderr)
+        return 1
     print(f"ledger: {os.path.relpath(out_path, repo_root)}")
     return 0
 

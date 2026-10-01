@@ -6,6 +6,7 @@ use mgc_exec::prelude::*;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(unix)]
 use std::time::Duration;
 
 // Monotonic per-process counter: two threads calling tmp_dir() in the SAME
@@ -111,7 +112,10 @@ fn legacy_compat_option_never_authorizes_package_manager_or_rival_runtime() {
 
 #[test]
 fn package_resolution_subcommands_are_rejected_before_spawn() {
-    let opts = ExecOptions::default();
+    let opts = ExecOptions {
+        dry_run: true,
+        ..Default::default()
+    };
     for (tool, args) in [
         ("cargo", vec!["fetch".to_string()]),
         ("cargo", vec!["+stable".to_string(), "fetch".to_string()]),
@@ -132,6 +136,23 @@ fn package_resolution_subcommands_are_rejected_before_spawn() {
             "go",
             vec!["get".to_string(), "example.test/pkg".to_string()],
         ),
+        (
+            "go",
+            vec![
+                "mod".to_string(),
+                "edit".to_string(),
+                "-require=example.test/pkg@v1.2.3".to_string(),
+            ],
+        ),
+        (
+            "go",
+            vec![
+                "mod".to_string(),
+                "init".to_string(),
+                "example.test/project".to_string(),
+            ],
+        ),
+        ("go", vec!["work".to_string(), "sync".to_string()]),
         ("flutter", vec!["pub".to_string(), "get".to_string()]),
         ("dotnet", vec!["restore".to_string()]),
         ("swift", vec!["package".to_string(), "resolve".to_string()]),
@@ -325,6 +346,47 @@ fn clean_env_blocks_forbidden_pm_spawned_by_child_path_lookup() {
                 .to_string()
                 .contains("references forbidden package manager 'npm'"),
         "unexpected error: {err}"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn inherited_env_still_blocks_forbidden_pm_spawned_by_project_tool() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tmp_dir().join("inherited-child-pm-bin");
+    fs::create_dir_all(&dir).unwrap();
+    let fake_cargo = dir.join("cargo");
+    let fake_npm = dir.join("npm");
+    let marker = dir.join("npm-was-run");
+    fs::write(
+        &fake_npm,
+        format!("#!/bin/sh\nprintf ran > '{}'\n", marker.display()),
+    )
+    .unwrap();
+    fs::write(&fake_cargo, "#!/bin/sh\nnpm --version\n").unwrap();
+    for path in [&fake_cargo, &fake_npm] {
+        let mut permissions = fs::metadata(path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions).unwrap();
+    }
+
+    let opts = ExecOptions {
+        cwd: Some(dir.clone()),
+        clean_env: false,
+        env: vec![("PATH".to_string(), dir.display().to_string())],
+        timeout: Some(Duration::from_secs(2)),
+        ..Default::default()
+    };
+
+    let result = run_project_binary_inherited(&fake_cargo, &[], &opts);
+    assert!(
+        result.is_err(),
+        "MagiCore must reject a forbidden child process"
+    );
+    assert!(
+        !marker.exists(),
+        "the package-manager child must not execute before detection"
     );
 }
 

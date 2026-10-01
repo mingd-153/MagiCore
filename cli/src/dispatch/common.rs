@@ -49,7 +49,7 @@ pub async fn dispatch_common(
         CommonCommand::Flash { .. } => Err(crate::error::core_not_in_build("iot")),
         CommonCommand::Deploy { run } => {
             let _ = run;
-            match super::types::detect_ecosystem().ok().flatten().as_deref() {
+            match super::types::detect_ecosystem()?.as_deref() {
                 #[cfg(feature = "cicd")]
                 Some("cicd") => commands::core::dev::cicd::deploy(run).await,
                 #[cfg(all(not(feature = "cicd"), feature = "clo"))]

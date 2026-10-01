@@ -78,6 +78,7 @@ fn project_root() -> Result<std::path::PathBuf> {
     let cwd = std::env::current_dir().map_err(|e| crate::error::cwd_deleted(&e))?;
     let root = shared::find_project_root(&cwd)?
         .ok_or_else(|| crate::error::no_mgc_project_found("web"))?;
+    shared::ensure_project_core_identity(&root, "web")?;
     web_command_profile_mark("project_root", started_at);
     Ok(root)
 }
@@ -121,7 +122,9 @@ fn web_backend_language(root: &Path) -> Option<mgc_lib_adapter::LibLanguage> {
     {
         return Some(LibLanguage::DotNet);
     }
-    let mgc_toml = std::fs::read_to_string(root.join("mgc.toml")).ok()?;
+    let mgc_toml =
+        mgc_config::project::read_regular_project_text(&root.join("mgc.toml"), "project config")
+            .ok()??;
     let value: toml::Value = toml::from_str(&mgc_toml).ok()?;
     let frameworks: Vec<&str> = value
         .get("frameworks")
@@ -340,7 +343,7 @@ pub async fn install(
     allow_scripts: bool,
     prefer_dedupe: bool,
     repair: bool,
-    _offline: bool, // Issue #3: Implement offline mode (v1.2.0 milestone)
+    offline: bool,
     compat_runtime: Option<String>,
 ) -> Result<()> {
     // C0 ownership firewall (T0.3): web is native — the gate records the
@@ -348,6 +351,12 @@ pub async fn install(
     // (Tường lửa C0: web native — gate ghi nhận và cảnh báo nếu compat
     // thừa.)
     let root = project_root()?;
+    if offline {
+        crate::offline::set_offline_mode(true);
+        if !packages.is_empty() {
+            anyhow::bail!("offline install cannot add packages; run `mgc add` online first");
+        }
+    }
     // Non-JS backend: the lib lane owns this lifecycle (see add()).
     // Web-pipeline-only flags have no meaning there — fail loudly.
     // (Backend non-JS: giao cho lane lib; flag web-only thì fail rõ.)
@@ -377,7 +386,7 @@ pub async fn install(
                 "--repair", language,
             ));
         }
-        return super::install::library::install(packages, compat_runtime, frozen).await;
+        return super::install::library::install(packages, compat_runtime, frozen, offline).await;
     }
     let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
     crate::commands::dep_gate::gate(
@@ -464,11 +473,18 @@ pub async fn install(
             }
         }
 
+        if offline && !mix_targets.is_empty() {
+            anyhow::bail!(
+                "offline install for mixed-core monorepos is not yet supported; no workspace install was started"
+            );
+        }
+
         if !web_targets.is_empty() {
             install_monorepo_targets(MonorepoInstallParams {
                 adapter: Arc::clone(&adapter),
                 targets: web_targets.clone(),
                 frozen,
+                offline,
                 ignore_scripts,
                 allow_scripts,
                 prefer_dedupe,
@@ -489,7 +505,7 @@ pub async fn install(
                 &packages,
                 ignore_scripts,
                 allow_scripts,
-                false, // offline - Issue #3: pass from command args when offline mode implemented
+                offline,
                 frozen, // frozen mode
             )
             .await?;
@@ -501,12 +517,13 @@ pub async fn install(
                     adapter.as_ref(),
                     target,
                     "mgc add",
-                    frozen,
+                    frozen || offline,
                     mgc_types::adapter::InstallOptions {
                         allow_scripts,
                         prefer_dedupe: dedupe_enabled,
                         repair,
                         legacy_flat: shared::should_use_legacy_flat_layout("web"),
+                        offline,
                         ..Default::default()
                     },
                 )
@@ -626,9 +643,7 @@ fn detect_dev_target(project_root: &Path) -> Result<PathBuf> {
 }
 
 fn workspace_frontend_dir(project_root: &Path) -> Result<PathBuf> {
-    let workspace_path = project_root.join("magicore.workspace.toml");
-    if workspace_path.exists() {
-        let contents = std::fs::read_to_string(&workspace_path)?;
+    if let Some(contents) = mgc_workspace::read_workspace_config(project_root)? {
         let config: WorkspaceConfig = toml::from_str(&contents)?;
         if is_workspace_monorepo(&config) {
             let apps_dir = config
@@ -636,16 +651,18 @@ fn workspace_frontend_dir(project_root: &Path) -> Result<PathBuf> {
                 .as_ref()
                 .and_then(|layout| layout.apps_dir.as_deref())
                 .unwrap_or("apps");
-            return Ok(project_root.join(apps_dir).join("frontend"));
+            let apps_dir =
+                mgc_workspace::resolve_workspace_layout_dir(project_root, apps_dir, "apps_dir")?;
+            let frontend = apps_dir.join("frontend");
+            mgc_workspace::workspace_entry_is_directory(&frontend)?;
+            return Ok(frontend);
         }
     }
     Ok(project_root.join("apps").join("frontend"))
 }
 
 fn workspace_backend_dir(project_root: &Path) -> Result<PathBuf> {
-    let workspace_path = project_root.join("magicore.workspace.toml");
-    if workspace_path.exists() {
-        let contents = std::fs::read_to_string(&workspace_path)?;
+    if let Some(contents) = mgc_workspace::read_workspace_config(project_root)? {
         let config: WorkspaceConfig = toml::from_str(&contents)?;
         if is_workspace_monorepo(&config) {
             let apps_dir = config
@@ -653,16 +670,18 @@ fn workspace_backend_dir(project_root: &Path) -> Result<PathBuf> {
                 .as_ref()
                 .and_then(|layout| layout.apps_dir.as_deref())
                 .unwrap_or("apps");
-            return Ok(project_root.join(apps_dir).join("backend"));
+            let apps_dir =
+                mgc_workspace::resolve_workspace_layout_dir(project_root, apps_dir, "apps_dir")?;
+            let backend = apps_dir.join("backend");
+            mgc_workspace::workspace_entry_is_directory(&backend)?;
+            return Ok(backend);
         }
     }
     Ok(project_root.join("apps").join("backend"))
 }
 
 fn detect_project_mode(project_root: &Path) -> Result<WebProjectMode> {
-    let workspace_path = project_root.join("magicore.workspace.toml");
-    if workspace_path.exists() {
-        let contents = std::fs::read_to_string(&workspace_path)?;
+    if let Some(contents) = mgc_workspace::read_workspace_config(project_root)? {
         let config: WorkspaceConfig = toml::from_str(&contents)?;
         if is_workspace_monorepo(&config) {
             return Ok(WebProjectMode::Monorepo);
@@ -798,6 +817,7 @@ struct MonorepoInstallParams {
     adapter: Arc<dyn PackageAdapter>,
     targets: Vec<PathBuf>,
     frozen: bool,
+    offline: bool,
     ignore_scripts: bool,
     allow_scripts: bool,
     prefer_dedupe: bool,
@@ -815,6 +835,12 @@ async fn install_monorepo_targets(params: MonorepoInstallParams) -> Result<()> {
         } else {
             native_targets.push(target.clone());
         }
+    }
+
+    if params.offline && !native_targets.is_empty() {
+        anyhow::bail!(
+            "offline install cannot use delegated non-package workspace members; no workspace install was started"
+        );
     }
 
     if !package_targets.is_empty() {
@@ -837,14 +863,21 @@ async fn install_monorepo_targets(params: MonorepoInstallParams) -> Result<()> {
                         .await
                         .map_err(|e| crate::error::install_slot_failed(&e))?;
                     mgc_ui::info(&format!("Installing workspace: {}", node.path.display()));
+                    let install_options = mgc_types::adapter::InstallOptions {
+                        ignore_scripts: params.ignore_scripts,
+                        allow_scripts: params.allow_scripts,
+                        prefer_dedupe: params.prefer_dedupe,
+                        repair: params.repair,
+                        legacy_flat: shared::should_use_legacy_flat_layout("web"),
+                        frozen: params.frozen,
+                        offline: params.offline,
+                        ..Default::default()
+                    };
                     install_web_target_quiet(
                         adapter.as_ref(),
                         &node.path,
                         params.frozen,
-                        params.ignore_scripts,
-                        params.allow_scripts,
-                        params.prefer_dedupe,
-                        params.repair,
+                        install_options,
                     )
                     .await?;
                     Ok::<PathBuf, anyhow::Error>(node.path)
@@ -904,24 +937,13 @@ async fn install_web_target_quiet(
     adapter: &dyn PackageAdapter,
     target: &Path,
     frozen: bool,
-    ignore_scripts: bool,
-    allow_scripts: bool,
-    prefer_dedupe: bool,
-    repair: bool,
+    opts: mgc_types::adapter::InstallOptions,
 ) -> Result<()> {
-    let execution = shared::prepare_install_execution(adapter, target, frozen, None).await?;
+    let execution =
+        shared::prepare_install_execution(adapter, target, frozen || opts.offline, None).await?;
     if execution.graph.is_empty() {
         return Ok(());
     }
-    let opts = mgc_types::adapter::InstallOptions {
-        ignore_scripts,
-        allow_scripts,
-        prefer_dedupe,
-        repair,
-        legacy_flat: shared::should_use_legacy_flat_layout("web"),
-        frozen,
-        ..Default::default()
-    };
     adapter.install(&execution.graph, target, opts).await?;
     Ok(())
 }
@@ -1952,11 +1974,11 @@ pub async fn run_create_with_options(
                     report.add_optional(rel.clone());
                 }
             }
-            Err(_) => {
+            Err(error) => {
                 if web_layer_has_scaffold_fallback(&config, rel) {
                     report.add_optional(rel.clone());
                 } else {
-                    report.add_required(rel.clone());
+                    report.add_required_failure(rel, error);
                 }
             }
         }

@@ -117,6 +117,19 @@ fn test_missing_layers_report_format_shows_count() {
 }
 
 #[test]
+fn test_missing_layers_report_preserves_resolution_failure_cause() {
+    let mut report = MissingLayersReport::new();
+    report.add_required_failure(
+        "web/shared/partials/base",
+        "OS lock denied: operation not permitted",
+    );
+
+    let msg = report.format_error("web", "remix");
+    assert!(msg.contains("web/shared/partials/base"));
+    assert!(msg.contains("OS lock denied: operation not permitted"));
+}
+
+#[test]
 fn test_spec_to_layer_path_web() {
     use mgc::scaffold::resolver::spec_to_layer_path;
 

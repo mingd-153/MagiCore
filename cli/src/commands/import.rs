@@ -83,17 +83,31 @@ fn project_lock_owner(root: &std::path::Path) -> Result<String> {
     Ok(core)
 }
 
-fn read_optional_regular_file(path: &std::path::Path) -> Result<Option<Vec<u8>>> {
-    match std::fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_file() => {
-            Ok(Some(std::fs::read(path).map_err(|error| {
-                anyhow::anyhow!("cannot read '{}': {error}", path.display())
-            })?))
+fn read_optional_lock(path: &std::path::Path) -> Result<Option<Vec<u8>>> {
+    match mgc_lockfile::read_lockfile_bytes(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(mgc_lockfile::LockfileError::IoError(error))
+            if error.kind() == std::io::ErrorKind::NotFound =>
+        {
+            Ok(None)
         }
-        Ok(_) => anyhow::bail!("refusing non-regular import artifact '{}'", path.display()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(anyhow::anyhow!(
-            "cannot inspect import artifact '{}': {error}",
+            "cannot safely read '{}': {error}",
+            path.display()
+        )),
+    }
+}
+
+fn read_optional_signature(path: &std::path::Path) -> Result<Option<Vec<u8>>> {
+    match mgc_lockfile::read_signature_file_bytes(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(mgc_lockfile::LockfileError::IoError(error))
+            if error.kind() == std::io::ErrorKind::NotFound =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(anyhow::anyhow!(
+            "cannot safely read '{}': {error}",
             path.display()
         )),
     }
@@ -154,8 +168,8 @@ pub async fn run(project_dir: Option<PathBuf>, allow_unsigned: bool) -> Result<(
     // Snapshot pre-existing artifacts for transactional rollback (P0-2):
     // a failed sign/verify below restores BOTH files, never half a pair.
     // (Snapshot lock+sig — lỗi là rollback cả hai.)
-    let prior_lock = read_optional_regular_file(&lock_path)?;
-    let prior_sig = read_optional_regular_file(&sig_path)?;
+    let prior_lock = read_optional_lock(&lock_path)?;
+    let prior_sig = read_optional_signature(&sig_path)?;
     let existing_lock = match prior_lock.as_deref() {
         Some(bytes) => {
             let text = std::str::from_utf8(bytes)

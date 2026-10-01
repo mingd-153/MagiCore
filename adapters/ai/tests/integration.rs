@@ -26,6 +26,44 @@ fn adapter_without_lane() -> AiAdapter {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn framework_detection_does_not_follow_external_mgc_config_symlink() {
+    let project = tmp("external-mgc-config-link");
+    let external = tmp("external-mgc-config-target");
+    std::fs::write(
+        external.join("mgc.toml"),
+        "[ai]\nframework = 'python-agent'\n",
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(external.join("mgc.toml"), project.join("mgc.toml")).unwrap();
+
+    assert_eq!(detect_framework(&project), None);
+    let _ = std::fs::remove_dir_all(project);
+    let _ = std::fs::remove_dir_all(external);
+}
+
+#[cfg(unix)]
+#[test]
+fn framework_detection_does_not_follow_external_pyproject_symlink() {
+    let project = tmp("external-pyproject-link");
+    let external = tmp("external-pyproject-target");
+    std::fs::write(
+        external.join("pyproject.toml"),
+        "[tool.magicore]\nframework = 'python-agent'\n",
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(
+        external.join("pyproject.toml"),
+        project.join("pyproject.toml"),
+    )
+    .unwrap();
+
+    assert_eq!(mgc_ai_adapter::detect_framework(&project), None);
+    let _ = std::fs::remove_dir_all(project);
+    let _ = std::fs::remove_dir_all(external);
+}
+
 #[test]
 fn native_python_lane_does_not_take_over_foreign_lockfiles() {
     let dir = tmp("native-lane-lock-policy");

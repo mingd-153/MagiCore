@@ -72,10 +72,17 @@ pub fn reachable_public(host: &str, port: u16) -> bool {
 
 /// Gộp host registry user-configured (mgc.toml [registry]) — đọc an toàn, thiếu file → bỏ qua.
 fn user_registries() -> Vec<Connection> {
+    let Ok(cwd) = std::env::current_dir() else {
+        return Vec::new();
+    };
+    user_registries_from(&cwd)
+}
+
+fn user_registries_from(root: &std::path::Path) -> Vec<Connection> {
     let mut out = Vec::new();
     // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
-    if let Ok(cwd) = std::env::current_dir()
-        && let Ok(raw) = std::fs::read_to_string(cwd.join("mgc.toml"))
+    if let Ok(Some(raw)) =
+        mgc_config::project::read_regular_project_text(&root.join("mgc.toml"), "project config")
         && let Some(cfg) = toml::from_str::<toml::Value>(&raw).ok()
         && let Some(regs) = cfg.get("registry")
     {

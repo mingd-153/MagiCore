@@ -1,4 +1,5 @@
 use super::*;
+use sha2::{Digest, Sha256};
 
 #[test]
 fn cloudflare_deploy_command() {
@@ -69,6 +70,35 @@ fn ci_templates_cover_all_providers() {
     assert!(CIRCLE_TEMPLATE.contains("version: 2.1"));
     assert!(CIRCLE_TEMPLATE.contains("install-from-gh.sh"));
     assert!(CIRCLE_TEMPLATE.contains("--version {tag}"));
+}
+
+#[test]
+fn generated_ci_release_tag_matches_this_mgc_build() {
+    // Generated workflows must install the exact MagiCore build that emitted
+    // them; a stale manually copied tag silently pins old behavior.
+    // (Workflow sinh ra phải cài đúng phiên bản MagiCore đang chạy; tag chép
+    // tay bị cũ sẽ âm thầm ghim hành vi lỗi thời.)
+    assert_eq!(MGC_RELEASE_TAG, format!("v{}", env!("CARGO_PKG_VERSION")));
+}
+
+#[test]
+fn generated_ci_installer_pin_matches_current_release_contract() {
+    // The pin must identify the immutable commit that contains this exact
+    // installer body; stale case-sensitive asset names break release installs.
+    // (Pin phải trỏ tới commit bất biến chứa đúng installer này; tên asset
+    // sai hoa-thường làm hỏng cài đặt release.)
+    const TRACKED_INSTALLER: &[u8] = include_bytes!("../../../../../../scripts/install-from-gh.sh");
+    assert_eq!(
+        MGC_INSTALLER_SHA,
+        "80a383763377413c4a50d8de3bd815a0f8f01284"
+    );
+    assert_eq!(
+        MGC_INSTALLER_SHA256,
+        hex::encode(Sha256::digest(TRACKED_INSTALLER))
+    );
+    let installer = std::str::from_utf8(TRACKED_INSTALLER).expect("installer is UTF-8");
+    assert!(installer.contains("OS_LABEL=\"macos\""));
+    assert!(installer.contains("EXT=\"zip\""));
 }
 
 #[test]
@@ -208,4 +238,50 @@ fn verify_chain_parses_custom_or_default() {
     .unwrap();
     assert_eq!(verify_chain(&tmp).unwrap(), vec!["audit", "test", "build"]);
     let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[cfg(unix)]
+#[test]
+fn cicd_config_readers_reject_external_mgc_toml_symlink() {
+    let root = tempfile::tempdir().unwrap();
+    let external = tempfile::tempdir().unwrap();
+    std::fs::write(
+        external.path().join("mgc.toml"),
+        "[cicd]\nverify = ['audit']\n\n[[deploy.targets]]\nprovider = 'cloudflare'\n",
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(
+        external.path().join("mgc.toml"),
+        root.path().join("mgc.toml"),
+    )
+    .unwrap();
+
+    assert!(verify_chain(root.path()).is_err());
+    assert!(deploy_targets(root.path()).is_err());
+}
+
+#[tokio::test]
+async fn verify_test_step_rejects_cores_without_a_verified_test_path() {
+    // A verify chain must fail when its test step is not implemented for a core.
+    // Chuỗi verify phải lỗi nếu bước test chưa được triển khai cho core đó.
+    let tmp = tempfile::tempdir().expect("temporary project directory");
+    for core in ["ai", "app", "game", "iot", "clo", "cicd", "hardware"] {
+        let result = run_test_step(tmp.path(), core).await;
+        assert!(
+            result.is_err(),
+            "verify must not report a skipped test step as success for core '{core}'"
+        );
+        let error = result.expect_err("unsupported verify test step must fail");
+        assert!(error.to_string().contains(core));
+    }
+}
+
+#[test]
+fn verify_build_step_rejects_cicd_instead_of_reporting_success() {
+    // CI/CD definitions do not produce build artifacts; a configured build must fail explicitly.
+    // Định nghĩa CI/CD không tạo build artifact; bước build được cấu hình phải báo lỗi tường minh.
+    let error = ensure_build_step_supported("cicd").expect_err("CI/CD build must not be skipped");
+    assert!(error.to_string().contains("cicd"));
+    assert!(error.to_string().contains("no build artifact"));
+    assert!(ensure_build_step_supported("web").is_ok());
 }

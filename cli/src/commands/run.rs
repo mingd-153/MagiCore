@@ -131,6 +131,13 @@ fn execute_task_with_bin(
     ];
     env.extend(invocation.env);
 
+    // Native Python packages are materialized in MagiCore's store rather
+    // than a toolchain venv. Expose them only when the selected executable
+    // is Python; unrelated runtimes must not inherit a Python project lock.
+    if matches!(program.as_str(), "python" | "python3" | "pytest") {
+        crate::commands::python_runtime::extend_native_python_env(&mut env, cwd, false)?;
+    }
+
     // Load optimizer env for run command
     // Tải env optimizer cho lệnh run
     let runtime = detect_run_runtime(cwd);

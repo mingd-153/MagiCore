@@ -16,6 +16,11 @@ fn project_root() -> Result<PathBuf> {
     Ok(root)
 }
 
+fn optimizer_owner(root: &std::path::Path) -> Result<String> {
+    mgc_config::project::ProjectConfig::detect_core(root)?
+        .ok_or_else(|| crate::error::project_core_identity_missing(root, "hardware optimizer"))
+}
+
 fn hardware_kind(pkg: &str) -> Result<()> {
     match pkg {
         OPTIMIZER_PKG | BENCH_PKG => Ok(()),
@@ -39,9 +44,10 @@ pub async fn add(
     for pkg in &packages {
         hardware_kind(pkg)?;
         if pkg == OPTIMIZER_PKG {
-            // Xác định core hiện tại của project để optimize đúng profile
-            let core = mgc_config::project::ProjectConfig::read_core_marker(&root)?
-                .unwrap_or_else(|| "web".to_string());
+            // Resolve the full project identity; a missing marker must not
+            // silently route another ecosystem through the Web profile.
+            // (Đọc identity đầy đủ; thiếu marker không được âm thầm chọn Web.)
+            let core = optimizer_owner(&root)?;
             crate::commands::optimizer::optimize_project(&root, &core, false)?;
         } else {
             let spinner = mgc_ui::create_spinner(&format!("  Materializing {pkg}..."));

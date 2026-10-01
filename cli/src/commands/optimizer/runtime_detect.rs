@@ -89,7 +89,7 @@ fn detect_web_runtime(project_root: &Path) -> Vec<DetectedRuntime> {
     }
 
     // Check for Node.js (package.json) — kiểm tra Node.js
-    if project_root.join("package.json").exists() {
+    if project_text(project_root, "package.json").is_some() {
         let pm = detect_package_manager(project_root);
         runtimes.push(DetectedRuntime::NodeJs {
             package_manager: pm,
@@ -127,8 +127,7 @@ fn detect_ai_runtime(project_root: &Path) -> Vec<DetectedRuntime> {
 
     // Check for Rust/Candle (Cargo.toml + candle dependency) — kiểm tra Rust/Candle
     // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
-    if project_root.join("Cargo.toml").exists()
-        && let Ok(content) = std::fs::read_to_string(project_root.join("Cargo.toml"))
+    if let Some(content) = project_text(project_root, "Cargo.toml")
         && (content.contains("candle") || content.contains("burn"))
     {
         runtimes.push(DetectedRuntime::RustCandle);
@@ -136,8 +135,7 @@ fn detect_ai_runtime(project_root: &Path) -> Vec<DetectedRuntime> {
 
     // Check for Go AI (go.mod + tensorflow/onnx) — kiểm tra Go AI
     // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
-    if project_root.join("go.mod").exists()
-        && let Ok(content) = std::fs::read_to_string(project_root.join("go.mod"))
+    if let Some(content) = project_text(project_root, "go.mod")
         && (content.contains("tensorflow") || content.contains("onnx"))
     {
         runtimes.push(DetectedRuntime::GoTensorFlow);
@@ -151,19 +149,29 @@ fn detect_ai_runtime(project_root: &Path) -> Vec<DetectedRuntime> {
 pub(crate) fn python_project_declares_package(project_root: &Path, package: &str) -> bool {
     let normalized_package = normalize_python_package_name(package);
     requirements_file_declares_package(project_root.join("requirements.txt"), &normalized_package)
-        || std::fs::read_to_string(project_root.join("pyproject.toml"))
-            .ok()
+        || project_text(project_root, "pyproject.toml")
             .and_then(|content| content.parse::<toml::Value>().ok())
             .is_some_and(|manifest| pyproject_declares_package(&manifest, &normalized_package))
 }
 
 fn requirements_file_declares_package(path: std::path::PathBuf, package: &str) -> bool {
-    std::fs::read_to_string(path).ok().is_some_and(|content| {
-        content.lines().any(|line| {
-            let requirement = line.split('#').next().unwrap_or_default().trim();
-            normalize_python_requirement(requirement) == package
+    mgc_config::project::read_regular_project_text(&path, "requirements manifest")
+        .ok()
+        .flatten()
+        .is_some_and(|content| {
+            content.lines().any(|line| {
+                let requirement = line.split('#').next().unwrap_or_default().trim();
+                normalize_python_requirement(requirement) == package
+            })
         })
-    })
+}
+
+/// Read a regular project manifest without following a symlink.
+/// Đọc manifest thường trong project, không đi theo symlink.
+fn project_text(project_root: &Path, name: &str) -> Option<String> {
+    mgc_config::project::read_regular_project_text(&project_root.join(name), name)
+        .ok()
+        .flatten()
 }
 
 fn pyproject_declares_package(manifest: &toml::Value, package: &str) -> bool {
@@ -259,8 +267,7 @@ fn detect_lib_runtime(project_root: &Path) -> Vec<DetectedRuntime> {
     // Cargo treats src/lib.rs as an implicit library target even without [lib].
     // Cargo coi src/lib.rs là library target ngầm ngay cả khi không có [lib].
     // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
-    if project_root.join("Cargo.toml").exists()
-        && let Ok(content) = std::fs::read_to_string(project_root.join("Cargo.toml"))
+    if let Some(content) = project_text(project_root, "Cargo.toml")
         && (project_root.join("src/lib.rs").is_file()
             || content.contains("[lib]")
             || content.contains("crate-type"))
@@ -279,9 +286,9 @@ fn detect_lib_runtime(project_root: &Path) -> Vec<DetectedRuntime> {
     }
 
     // Check for TypeScript lib (package.json + tsconfig.json, no framework) — kiểm tra thư viện TypeScript
-    if project_root.join("package.json").exists()
+    if project_text(project_root, "package.json").is_some()
         && project_root.join("tsconfig.json").exists()
-        && let Ok(content) = std::fs::read_to_string(project_root.join("package.json"))
+        && let Some(content) = project_text(project_root, "package.json")
     {
         // Not a web framework if no "react", "vue", "svelte", "next" etc. — không phải web framework
         if !content.contains("react")
@@ -308,8 +315,7 @@ fn detect_app_runtime(project_root: &Path) -> Vec<DetectedRuntime> {
 
     // Check for React Native (package.json + metro.config.js or react-native dependency) — kiểm tra React Native
     // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
-    if project_root.join("package.json").exists()
-        && let Ok(content) = std::fs::read_to_string(project_root.join("package.json"))
+    if let Some(content) = project_text(project_root, "package.json")
         && (content.contains("react-native") || project_root.join("metro.config.js").exists())
     {
         runtimes.push(DetectedRuntime::ReactNative);

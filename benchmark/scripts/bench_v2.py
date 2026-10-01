@@ -47,7 +47,7 @@ WORKLOADS = {
 
 PMS = {
     "mgc": {
-        "install": ["--core", "web", "install"],
+        "install": ["--core", "web", "install", "--ignore-scripts"],
         "cache_clean": ["rm_store"],
         "bin": [str(MGC_BIN)],
     },

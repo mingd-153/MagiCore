@@ -280,6 +280,7 @@ pub fn migrate_v3_to_v4(
         sources,
         peer_contexts: Default::default(),
         root_dependencies,
+        root_dependencies_by_owner: lockfile.root_dependencies_by_owner.clone(),
         packages: packages_v4,
         workspace: lockfile.workspace.clone(),
         optimizer_profile: lockfile.optimizer_profile.clone(),

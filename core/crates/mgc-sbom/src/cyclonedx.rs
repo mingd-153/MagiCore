@@ -67,6 +67,7 @@ pub struct Component {
     pub component_type: ComponentType,
 
     /// BOM-Ref (unique ID) — BOM-Ref (ID duy nhất)
+    #[serde(rename = "bom-ref")]
     pub bom_ref: String,
 
     /// Name — Tên

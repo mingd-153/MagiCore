@@ -43,7 +43,13 @@ fn test_verify_missing_file() {
 }
 
 #[test]
-fn test_compute_hash() {
-    let hash = compute_hash(b"hello");
-    assert_eq!(hash.len(), 64); // BLAKE3 = 32 bytes = 64 hex chars
+fn test_verify_sha256_prefixed_checksum() {
+    use sha2::Digest;
+
+    let tmp = tmp();
+    let model = tmp.path().join("model.bin");
+    std::fs::write(&model, b"test data").unwrap();
+    let checksum = format!("sha256:{}", hex::encode(sha2::Sha256::digest(b"test data")));
+
+    assert!(verify_model_checksum(&model, &checksum).unwrap());
 }

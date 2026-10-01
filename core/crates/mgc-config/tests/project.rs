@@ -143,7 +143,10 @@ fn save_roundtrip_with_scaffold_fields() {
 fn auto_detect_package_json_returns_web() {
     let dir = temp_test_dir("auto-web");
     std::fs::write(dir.join("package.json"), "{}").unwrap();
-    assert_eq!(ProjectConfig::auto_detect(&dir), Some("web".to_string()));
+    assert_eq!(
+        ProjectConfig::auto_detect(&dir).unwrap(),
+        Some("web".to_string())
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -151,7 +154,10 @@ fn auto_detect_package_json_returns_web() {
 fn auto_detect_cargo_toml_returns_lib() {
     let dir = temp_test_dir("auto-lib");
     std::fs::write(dir.join("Cargo.toml"), "").unwrap();
-    assert_eq!(ProjectConfig::auto_detect(&dir), Some("lib".to_string()));
+    assert_eq!(
+        ProjectConfig::auto_detect(&dir).unwrap(),
+        Some("lib".to_string())
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -159,14 +165,17 @@ fn auto_detect_cargo_toml_returns_lib() {
 fn auto_detect_pyproject_toml_returns_ai() {
     let dir = temp_test_dir("auto-ai");
     std::fs::write(dir.join("pyproject.toml"), "").unwrap();
-    assert_eq!(ProjectConfig::auto_detect(&dir), Some("ai".to_string()));
+    assert_eq!(
+        ProjectConfig::auto_detect(&dir).unwrap(),
+        Some("ai".to_string())
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn auto_detect_no_manifest_returns_none() {
     let dir = temp_test_dir("auto-none");
-    assert_eq!(ProjectConfig::auto_detect(&dir), None);
+    assert_eq!(ProjectConfig::auto_detect(&dir).unwrap(), None);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -174,7 +183,10 @@ fn auto_detect_no_manifest_returns_none() {
 fn auto_detect_pubspec_returns_app() {
     let dir = temp_test_dir("auto-app");
     std::fs::write(dir.join("pubspec.yaml"), "name: a\n").unwrap();
-    assert_eq!(ProjectConfig::auto_detect(&dir), Some("app".to_string()));
+    assert_eq!(
+        ProjectConfig::auto_detect(&dir).unwrap(),
+        Some("app".to_string())
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -186,7 +198,10 @@ fn auto_detect_mgc_toml_ecosystem_wins() {
         "name = \"x\"\necosystem = \"game\"\n[game]\nengine = \"bevy\"\n",
     )
     .unwrap();
-    assert_eq!(ProjectConfig::auto_detect(&dir), Some("game".to_string()));
+    assert_eq!(
+        ProjectConfig::auto_detect(&dir).unwrap(),
+        Some("game".to_string())
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -442,6 +457,27 @@ fn script_decision_deny_wins_from_either_source() {
         decide_scripts("plain-pkg", "1.0.0", Some(&file), None, true),
         ScriptVerdict::Deny(_)
     ));
+}
+
+#[cfg(unix)]
+#[test]
+fn scripts_policy_rejects_symlinked_project_config() {
+    use mgc_config::project::load_scripts_table;
+
+    let dir = temp_test_dir("scripts-config-symlink");
+    let external_dir = temp_test_dir("scripts-config-external");
+    let outside = external_dir.join("mgc.toml");
+    std::fs::write(&outside, "[scripts]\npolicy = 'deny'\n").unwrap();
+    std::os::unix::fs::symlink(&outside, dir.join("mgc.toml")).unwrap();
+
+    let result = load_scripts_table(&dir);
+    assert!(
+        result.is_err(),
+        "a symlinked project config must not supply lifecycle trust policy"
+    );
+    assert!(result.unwrap_err().contains("must not be a symlink"));
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&external_dir);
 }
 
 #[test]

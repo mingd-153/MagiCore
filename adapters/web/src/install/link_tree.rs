@@ -231,13 +231,6 @@ pub fn backing_link_file(
         }
     }
 
-    if let Ok(()) = std::fs::hard_link(source, target) {
-        if let Some(profile) = profile {
-            profile.record_hardlink();
-        }
-        return Ok(());
-    }
-
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent).map_err(|err| {
             MgError::Other(format!(
@@ -257,12 +250,12 @@ pub fn backing_link_file(
             ))
         })?;
     }
-    if std::fs::hard_link(source, target).is_ok() {
-        if let Some(profile) = profile {
-            profile.record_hardlink();
-        }
-        return Ok(());
-    }
+    // A hardlink is not an isolation-safe fallback: an in-place edit in a
+    // project would mutate the shared extracted package/cache and every
+    // other project linked to it. Prefer a real copy when the filesystem
+    // cannot provide copy-on-write reflinks.
+    // Hardlink không cô lập: sửa in-place trong project sẽ làm đổi cache
+    // package dùng chung và các project khác; filesystem không reflink thì copy.
     std::fs::copy(source, target).map_err(|err| {
         MgError::Other(format!(
             "failed to materialize '{}' to '{}': {}",

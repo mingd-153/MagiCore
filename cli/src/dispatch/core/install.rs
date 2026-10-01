@@ -96,7 +96,11 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
             packages,
             compat_runtime,
             frozen,
-        } => commands::core::install::library::install(packages, compat_runtime, frozen).await,
+            offline,
+        } => {
+            commands::core::install::library::install(packages, compat_runtime, frozen, offline)
+                .await
+        }
         #[cfg(not(feature = "lib"))]
         CoreCommand::InstallLib { .. } => Err(crate::error::core_not_in_build("lib")),
         #[cfg(feature = "hardware")]

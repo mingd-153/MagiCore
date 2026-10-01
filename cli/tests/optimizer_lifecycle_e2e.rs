@@ -264,6 +264,11 @@ echo "1 passed""#,
         "echo OPTIMIZER_STATUS: %PYTHON_OPTIMIZER_MARKER%\r\nif not \"%PYTHON_OPTIMIZER_MARKER%\"==\"PYTHON_OPTIMIZED\" exit /b 1\r\necho 1 passed",
     );
 
+    // This test isolates optimizer environment propagation; dependency
+    // ownership/install is covered by native AI lifecycle tests. Keep the
+    // fixture dependency-free so it does not bypass the required mgc.lock.
+    // (Test này chỉ đo env optimizer; dependency ownership/install đã có test
+    // lifecycle AI riêng. Fixture không dependency để không né mgc.lock.)
     // Create Python project with pyproject.toml
     std::fs::write(
         project.join("pyproject.toml"),
@@ -274,7 +279,10 @@ framework = "python-agent"
 [project]
 name = "test-optimizer-ai"
 version = "0.1.0"
-dependencies = ["torch>=2.8"]
+dependencies = []
+
+[project.optional-dependencies]
+ai = ["torch>=2.8"]
 "#,
     )
     .unwrap();

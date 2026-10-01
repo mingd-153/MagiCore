@@ -83,7 +83,9 @@ def _workspace_version() -> str:
 def _matrix_sha_for_head(head: str):
     """(sha_or_none, is_current): the lifecycle matrix's recorded commit,
     plus whether it matches HEAD — a matrix collected on another SHA
-    proves nothing about THIS commit (the same-SHA contract).
+    proves nothing about THIS commit (the same-SHA contract). A matrix must
+    also record a clean source tree, and the current checkout must still be
+    clean before this local provenance collector accepts it.
     ((sha, is_current): commit đã ghi trong lifecycle matrix, kèm cờ khớp
     HEAD — matrix collect trên SHA khác không chứng minh gì cho commit
     NÀY (hợp đồng same-SHA).)"""
@@ -93,10 +95,29 @@ def _matrix_sha_for_head(head: str):
         return None, False
     if not isinstance(data, dict):
         return None, False
+    if data.get("working_tree_clean") is not True or not _working_tree_clean():
+        return None, False
     commit = data.get("commit")
     if not isinstance(commit, str) or not commit:
         return None, False
     return commit, commit == head
+
+
+def _working_tree_clean() -> bool:
+    """Fail closed if Git cannot prove that the checkout has no edits.
+    Fail-closed nếu Git không chứng minh được checkout không có sửa đổi.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=all"],
+            capture_output=True,
+            text=True,
+            cwd=ROOT,
+            check=False,
+        )
+    except OSError:
+        return False
+    return proc.returncode == 0 and not proc.stdout.strip()
 
 
 def collect() -> dict:
