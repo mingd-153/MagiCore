@@ -38,6 +38,11 @@ pnpm-lock.yaml
 .DS_Store
 Thumbs.db
 
+# Python bytecode generated while running local and CI verification.
+# Bytecode Python được sinh khi chạy xác minh local và CI.
+__pycache__/
+*.py[cod]
+
 # Task docs (internal, not public)
 task/
 

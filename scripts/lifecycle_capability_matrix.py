@@ -60,6 +60,17 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
+
+def run_text_capture(*args, **kwargs):
+    """Run a child process with stable UTF-8 decoding for captured text.
+    Chạy tiến trình con với giải mã UTF-8 ổn định cho output dạng text.
+    """
+    kwargs.setdefault("text", True)
+    kwargs.setdefault("encoding", "utf-8")
+    kwargs.setdefault("errors", "replace")
+    return subprocess.run(*args, **kwargs)
+
+
 ALL_DEPENDENCY_OPERATIONS = (
     "install", "add", "remove", "update", "list", "resolve", "lock",
     "fetch", "verify", "store", "materialize", "frozen-install",
@@ -271,14 +282,21 @@ LANES = [
         "language": "dotnet",
         "framework_ids": ["dotnet"],
         "framework_id": "dotnet",
+        # NuGet resolve/fetch/install is native, but build/test cannot run
+        # without MSBuild's restore-generated assets. MGC does not generate
+        # that state, and §5.1 does not allow the dotnet executable.
+        # Resolve/fetch/install NuGet là native, nhưng build/test cần assets
+        # do MSBuild restore tạo. MGC chưa sinh state này và §5.1 chưa cho
+        # phép chạy executable dotnet.
+        "evidence_only": True,
         "scaffold": ["create-lib", "dotnet", "test-lib"],
         "steps": [
             ("install", ["install"]),
-            ("test", ["test"]),
-            ("build", ["build"]),
         ],
-        # No delegated lifecycle steps (native install; test/build run
-        # under mgc's own exec, same precedent as lib/python).
+        "lifecycle_owner_overrides": {
+            "test": "unsupported",
+            "build": "unsupported",
+        },
         "delegated": [],
         # Phase 2 native (2026-09-16): the NuGet v3 engine
         # (protocols/nuget.rs) resolves flat-container versions and
@@ -1119,7 +1137,7 @@ def lifecycle_working_tree_clean() -> bool:
     Chỉ trả true khi Git chứng minh không có thay đổi tracked hoặc untracked.
     """
     try:
-        result = subprocess.run(
+        result = run_text_capture(
             ["git", "status", "--porcelain", "--untracked-files=all"],
             capture_output=True,
             text=True,
@@ -1138,7 +1156,7 @@ def lifecycle_source_matches(commit: str, clean_before_run: bool) -> bool:
     if not clean_before_run or not commit or not lifecycle_working_tree_clean():
         return False
     try:
-        result = subprocess.run(
+        result = run_text_capture(
             ["git", "rev-parse", "HEAD"],
             capture_output=True,
             text=True,
@@ -1451,6 +1469,9 @@ LANE_RELEASE_SCOPE_OUT_REASONS = {
     ("lib", "java", "java"): (
         "Java dependency resolution exists, but native Java test/build execution is not implemented or release-qualified."
     ),
+    ("lib", "dotnet", "dotnet"): (
+        "Native NuGet install exists, but MGC does not produce the MSBuild restore state required by `dotnet test/build --no-restore`; .NET test/build is outside the approved 00-index §5.1 tool allowlist for this release."
+    ),
     ("app", "swift", ""): (
         "Swift lifecycle evidence remains non-blocking until release E2E qualifies app lifecycle parity."
     ),
@@ -1722,7 +1743,7 @@ def _materialize_marker(
         if go is None:
             return (None, None)
         try:
-            proc = subprocess.run(
+            proc = run_text_capture(
                 [go, "env", "GOMODCACHE"], capture_output=True, text=True,
                 timeout=30, env=env,
             )
@@ -1794,7 +1815,7 @@ def _recovery_probe(mgc_bin: str, project_path: str, sandbox: str,
     env = recovery_environment(sandbox, rec_project)
 
     def _doctor(*extra: str):
-        proc = subprocess.run(
+        proc = run_text_capture(
             [mgc_bin, "store", "doctor", "--core", "web", *extra],
             capture_output=True, text=True, cwd=rec_project, env=env,
             timeout=min(timeout_s, 120),
@@ -1806,7 +1827,7 @@ def _recovery_probe(mgc_bin: str, project_path: str, sandbox: str,
     # (Baseline: một install khỏe làm đầy store cô lập để victim crash
     # trên store thật (không rỗng).)
     try:
-        baseline = subprocess.run(
+        baseline = run_text_capture(
             [mgc_bin, "install"], capture_output=True, text=True,
             cwd=rec_project, env=env, timeout=timeout_s,
         )
@@ -2296,7 +2317,7 @@ def validate_dep_gate_consistency(mgc_bin=None) -> int:
         )
         return 1
     try:
-        raw = subprocess.run(
+        raw = run_text_capture(
             [binary, "capabilities"], capture_output=True, text=True, timeout=120
         )
     except (OSError, subprocess.SubprocessError) as err:
@@ -2554,7 +2575,7 @@ def record_platform_green(os_name: str) -> int:
             matrix = json.load(matrix_file)
     except (OSError, ValueError) as exc:
         _fail(f"cannot read lifecycle matrix before recording platform green: {exc}")
-    checkout = subprocess.run(
+    checkout = run_text_capture(
         ["git", "rev-parse", "HEAD"],
         capture_output=True,
         text=True,
@@ -2978,7 +2999,7 @@ def provision_python_build_tools(
         raise FileNotFoundError("python launcher not found on PATH")
 
     venv_root = os.path.join(sandbox, ".mgc-lifecycle-python")
-    created = subprocess.run(
+    created = run_text_capture(
         [launcher, "-m", "venv", venv_root],
         capture_output=True,
         text=True,
@@ -2994,7 +3015,7 @@ def provision_python_build_tools(
         venv_root, scripts_dir, "python.exe" if os.name == "nt" else "python"
     )
     venv_env = python_venv_environment(environment, venv_root)
-    installed = subprocess.run(
+    installed = run_text_capture(
         [
             python_bin,
             "-m",
@@ -3055,7 +3076,7 @@ def run_lane(mgc_bin: str, lane: dict) -> dict:
         # install/test/build thuộc project, không thuộc root sandbox.
         cwd = os.path.join(sandbox, subdir) if subdir else sandbox
         try:
-            proc = subprocess.run(
+            proc = run_text_capture(
                 [mgc_bin] + argv, capture_output=True, text=True,
                 cwd=cwd, env=lane_env, timeout=timeout_s,
             )
@@ -3131,7 +3152,7 @@ def run_lane(mgc_bin: str, lane: dict) -> dict:
             # recorded honestly.
             # (Bơm dependency THẬT bằng `mgc add-ai`, không uv.)
             try:
-                proc = subprocess.run(
+                proc = run_text_capture(
                     [mgc_bin, "add-ai", "six@1.17.0"],
                     capture_output=True,
                     text=True,
@@ -3200,7 +3221,7 @@ def run_lane(mgc_bin: str, lane: dict) -> dict:
             setup_failed = False
             for command in commands:
                 try:
-                    proc = subprocess.run(
+                    proc = run_text_capture(
                         command,
                         capture_output=True,
                         text=True,
@@ -3292,7 +3313,7 @@ def run_lane(mgc_bin: str, lane: dict) -> dict:
                 except (ProcessLookupError, PermissionError):
                     p.terminate()
             else:
-                subprocess.run(
+                run_text_capture(
                     ["taskkill", "/T", "/F", "/PID", str(p.pid)],
                     capture_output=True,
                 )
@@ -3311,7 +3332,7 @@ def run_lane(mgc_bin: str, lane: dict) -> dict:
             # trực tiếp. Listener sót làm vỡ mọi lane/test sau đó.
             if os.name != "nt":
                 try:
-                    out = subprocess.run(
+                    out = run_text_capture(
                         ["lsof", "-ti", f"tcp:{port}", "-sTCP:LISTEN"],
                         capture_output=True, text=True, timeout=10,
                     ).stdout.strip()
@@ -3421,7 +3442,7 @@ def run_lane(mgc_bin: str, lane: dict) -> dict:
                 except (ProcessLookupError, PermissionError):
                     dev_proc.terminate()
             else:
-                subprocess.run(
+                run_text_capture(
                     ["taskkill", "/T", "/F", "/PID", str(dev_proc.pid)],
                     capture_output=True,
                 )
@@ -3430,7 +3451,7 @@ def run_lane(mgc_bin: str, lane: dict) -> dict:
         def _dev_sweep_port():
             if os.name != "nt":
                 try:
-                    out = subprocess.run(
+                    out = run_text_capture(
                         ["lsof", "-ti", f"tcp:{port}", "-sTCP:LISTEN"],
                         capture_output=True, text=True, timeout=10,
                     ).stdout.strip()
@@ -3753,7 +3774,7 @@ def main() -> int:
     # chỉ có một ngôi nhà duy nhất.)
     cli_args = sys.argv[1:]
     is_ci = os.environ.get("GITHUB_ACTIONS", "").lower() == "true"
-    commit = subprocess.run(
+    commit = run_text_capture(
         ["git", "rev-parse", "HEAD"],
         capture_output=True,
         text=True,

@@ -6,11 +6,13 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from contextlib import redirect_stdout
 from unittest.mock import patch
+import lifecycle_capability_matrix as matrix_module
 
 from lifecycle_capability_matrix import (
     NATIVE_PM_REQUIRED_DIMENSIONS,
@@ -639,6 +641,7 @@ class NativePackageManagerVerdict(unittest.TestCase):
     def test_release_scopeouts_are_named_and_do_not_remove_lanes_from_inventory(self):
         expected = {
             ("lib", "java", "java"),
+            ("lib", "dotnet", "dotnet"),
             ("app", "swift", ""),
             ("app", "objc", ""),
             ("app", "react-native", ""),
@@ -660,12 +663,30 @@ class NativePackageManagerVerdict(unittest.TestCase):
             expected & native_pm_claim_scope(LANES),
             {
                 ("lib", "java", "java"),
+                ("lib", "dotnet", "dotnet"),
                 ("app", "swift", ""),
                 ("game", "rust", ""),
                 ("iot", "rust", ""),
             },
         )
         self.assertIsNone(release_scope_out_reason("web", "javascript"))
+
+    def test_dotnet_lifecycle_is_scoped_out_until_native_build_state_exists(self):
+        lane = next(
+            lane for lane in LANES
+            if (lane["core"], lane["language"], lane["framework_id"])
+            == ("lib", "dotnet", "dotnet")
+        )
+        reason = release_scope_out_reason("lib", "dotnet", "dotnet")
+
+        self.assertTrue(lane["evidence_only"])
+        self.assertEqual([step for step, _ in lane["steps"]], ["install"])
+        self.assertEqual(
+            lane["lifecycle_owner_overrides"],
+            {"test": "unsupported", "build": "unsupported"},
+        )
+        self.assertIn("MSBuild restore state", reason)
+        self.assertIn("00-index §5.1", reason)
 
     def test_lifecycle_workflow_uses_shared_native_claim_gate(self):
         workflow = (
@@ -1473,6 +1494,15 @@ class PlatformGreenCounter(unittest.TestCase):
             for dimension in ("test", "build", "run"):
                 with self.subTest(core=lane["core"], language=lane["language"], dimension=dimension):
                     owner = lifecycle_owner_for(lane, dimension)
+                    if owner == "unsupported":
+                        self.assertEqual(
+                            (lane["core"], lane["language"], lane.get("framework_id", "")),
+                            ("lib", "dotnet", "dotnet"),
+                        )
+                        self.assertEqual(
+                            lifecycle_pass_status(lane, dimension), STATUS_UNSUPPORTED
+                        )
+                        continue
                     self.assertEqual(owner, "plain-delegation")
                     self.assertEqual(lifecycle_pass_status(lane, dimension), STATUS_PLAIN)
 
@@ -1691,6 +1721,28 @@ class WorkingTreeCleanProbe(unittest.TestCase):
         run.reset_mock()
         self.assertFalse(lifecycle_source_matches("a" * 40, False))
         run.assert_not_called()
+
+
+class WindowsMatrixRuntime(unittest.TestCase):
+    def test_captured_child_output_replaces_bytes_outside_windows_ansi_codepage(self):
+        result = matrix_module.run_text_capture(
+            [
+                sys.executable,
+                "-c",
+                "import sys; sys.stdout.buffer.write(bytes([0x90]) + b'ok'); "
+                "sys.stderr.buffer.write(bytes([0x90]) + b'err')",
+            ],
+            capture_output=True,
+        )
+        self.assertEqual(result.stdout, "\ufffdok")
+        self.assertEqual(result.stderr, "\ufffderr")
+
+    def test_gitignore_excludes_python_bytecode_from_matrix_provenance(self):
+        ignore_rules = (
+            Path(__file__).resolve().parent.parent / ".gitignore"
+        ).read_text(encoding="utf-8")
+        self.assertIn("\n__pycache__/\n", ignore_rules)
+        self.assertIn("\n*.py[cod]\n", ignore_rules)
 
 
 if __name__ == "__main__":
