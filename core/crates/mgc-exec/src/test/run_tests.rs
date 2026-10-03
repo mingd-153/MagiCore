@@ -1,13 +1,18 @@
 //! Tests for process runner isolation — kiểm tra biên cô lập của process runner.
 
 #[cfg(unix)]
-use super::{ShadowPath, find_forbidden_descendant_with_program, inspect_forbidden_process_table};
+use super::{
+    ShadowPath, find_forbidden_descendant_with_program, inspect_forbidden_process_table,
+    is_shadow_npm_version_probe, npm_probe_command_line_matches_shim_path,
+};
 use super::{
     ensure_process_inspection_available, is_path_env_key, process_inspection_unavailable_error,
     reject_external_dependency_resolution,
 };
 #[cfg(unix)]
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::ffi::OsStrExt;
 
 #[test]
 fn path_environment_key_uses_host_case_semantics() {
@@ -150,8 +155,10 @@ fn process_inspection_policy_rejects_unsupported_monitored_mode() {
 fn unavailable_process_inspector_is_an_error_not_a_clean_process_tree() {
     let root = tempfile::tempdir().expect("create process-inspector test directory");
     let missing_inspector = root.path().join("missing-ps");
+    let shadow_dir = root.path().join("mgc-exec-shadow-path-test");
+    fs::create_dir(&shadow_dir).expect("create executor shim directory");
 
-    let result = find_forbidden_descendant_with_program(4242, &[], &missing_inspector);
+    let result = find_forbidden_descendant_with_program(4242, &[], &shadow_dir, &missing_inspector);
 
     assert!(
         result.is_err(),
@@ -165,12 +172,242 @@ fn incomplete_process_table_is_an_error_not_a_clean_process_tree() {
     let output = std::process::Command::new("/usr/bin/true")
         .output()
         .expect("run true to produce an empty process table");
+    let shadow_dir = tempfile::tempdir().expect("create npm shim directory");
 
-    let result = inspect_forbidden_process_table(4242, output, &[]);
+    let result = inspect_forbidden_process_table(4242, output, &[], shadow_dir.path());
 
     assert!(
         result.is_err(),
         "a process table that omits the live root cannot prove its descendants clean"
+    );
+}
+
+#[cfg(unix)]
+fn process_table_with_child(command: &str, command_line: &str) -> std::process::Output {
+    process_table_with_raw_child(command.as_bytes(), command_line.as_bytes())
+}
+
+#[cfg(unix)]
+fn process_table_with_raw_child(command: &[u8], command_line: &[u8]) -> std::process::Output {
+    let mut output = std::process::Command::new("/usr/bin/true")
+        .output()
+        .expect("run true to create process-table test output");
+    output.stdout = b"4242 1 cargo /usr/bin/cargo\n4243 4242 ".to_vec();
+    output.stdout.extend_from_slice(command);
+    output.stdout.push(b' ');
+    output.stdout.extend_from_slice(command_line);
+    output.stdout.push(b'\n');
+    output
+}
+
+#[cfg(unix)]
+#[test]
+fn process_table_accepts_linux_npm_comm_with_its_interpreter_command_line() {
+    let root = tempfile::tempdir().expect("create process-table test directory");
+    let shadow = ShadowPath::create_at(root.path().join("executor-shim"), &[])
+        .expect("create authenticated executor shims");
+    let command_line = format!("/bin/sh {} --version", shadow.path().join("npm").display());
+    let output = process_table_with_child("npm", &command_line);
+
+    let result = inspect_forbidden_process_table(4242, output, &[], shadow.path());
+
+    assert!(
+        matches!(result, Ok(None)),
+        "an exact executor shim version probe should be allowed: {result:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn process_table_preserves_repeated_spaces_in_the_executor_shim_path() {
+    let root = tempfile::tempdir().expect("create process-table test directory");
+    let shadow = ShadowPath::create_at(root.path().join("executor  shim"), &[])
+        .expect("create authenticated executor shims");
+    let command_line = format!("/bin/sh {} --version", shadow.path().join("npm").display());
+    let output = process_table_with_child("sh", &command_line);
+
+    let result = inspect_forbidden_process_table(4242, output, &[], shadow.path());
+
+    assert!(
+        matches!(result, Ok(None)),
+        "process inspection must preserve the exact shim path: {result:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn process_table_rejects_a_real_npm_command_with_a_fake_shim_suffix() {
+    let root = tempfile::tempdir().expect("create process-table test directory");
+    let shadow = ShadowPath::create_at(root.path().join("executor-shim"), &[])
+        .expect("create authenticated executor shims");
+    let command_line = format!(
+        "/bin/sh /real/path/npm --version {} --version",
+        shadow.path().join("npm").display()
+    );
+    let output = process_table_with_child("npm", &command_line);
+
+    let result = inspect_forbidden_process_table(4242, output, &[], shadow.path());
+
+    assert!(
+        matches!(result, Ok(Some(_))),
+        "a real npm invocation must remain forbidden: {result:?}"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn npm_version_probe_requires_exact_executor_shim_path_and_arguments() {
+    let root = tempfile::tempdir().expect("create process-shim test directory");
+    let shadow = ShadowPath::create_at(root.path().join("mgc-exec shadow path test"), &[])
+        .expect("create authenticated executor shims");
+    let shim = shadow.path().join("npm");
+    let unquoted_sh_probe = format!("/bin/sh {} --version", shim.display());
+    let quoted_sh_probe = format!("/bin/sh \"{}\" --version", shim.display());
+    let impostor_then_shim = format!(
+        "/bin/sh /real/path/npm --version {} --version",
+        shim.display()
+    );
+
+    assert!(is_shadow_npm_version_probe(
+        b"sh",
+        unquoted_sh_probe.as_bytes(),
+        shadow.path()
+    ));
+    assert!(is_shadow_npm_version_probe(
+        b"sh",
+        quoted_sh_probe.as_bytes(),
+        shadow.path()
+    ));
+    assert!(is_shadow_npm_version_probe(
+        b"npm",
+        format!("{} --version", shim.display()).as_bytes(),
+        shadow.path()
+    ));
+    assert!(!is_shadow_npm_version_probe(
+        b"sh",
+        impostor_then_shim.as_bytes(),
+        shadow.path()
+    ));
+    assert!(!is_shadow_npm_version_probe(
+        b"sh",
+        format!("/bin/sh {} install", shim.display()).as_bytes(),
+        shadow.path()
+    ));
+    assert!(!is_shadow_npm_version_probe(
+        b"sh",
+        format!("/bin/sh {} --version install", shim.display()).as_bytes(),
+        shadow.path()
+    ));
+    assert!(!is_shadow_npm_version_probe(
+        b"npm",
+        b"npm --version",
+        shadow.path()
+    ));
+    assert!(!is_shadow_npm_version_probe(
+        b"node",
+        format!("node {} --version", shim.display()).as_bytes(),
+        shadow.path()
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn process_table_rejects_a_modified_npm_probe_shim() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = tempfile::tempdir().expect("create process-table test directory");
+    let shadow = ShadowPath::create_at(root.path().join("executor-shim"), &[])
+        .expect("create authenticated executor shims");
+    let mut directory_permissions = fs::metadata(shadow.path())
+        .expect("read sealed executor directory permissions")
+        .permissions();
+    directory_permissions.set_mode(0o700);
+    fs::set_permissions(shadow.path(), directory_permissions)
+        .expect("temporarily make executor directory writable for tampering test");
+    let shim_path = shadow.path().join("npm");
+    let mut shim_permissions = fs::metadata(&shim_path)
+        .expect("read sealed shim permissions")
+        .permissions();
+    shim_permissions.set_mode(0o600);
+    fs::set_permissions(&shim_path, shim_permissions)
+        .expect("temporarily make npm shim writable for tampering test");
+    fs::write(&shim_path, "#!/bin/sh\nnpm install\n")
+        .expect("replace npm shim with a forbidden command");
+    let mut shim_permissions = fs::metadata(&shim_path)
+        .expect("read modified shim permissions")
+        .permissions();
+    shim_permissions.set_mode(0o500);
+    fs::set_permissions(&shim_path, shim_permissions).expect("reseal modified npm shim");
+    let mut directory_permissions = fs::metadata(shadow.path())
+        .expect("read writable executor directory permissions")
+        .permissions();
+    directory_permissions.set_mode(0o500);
+    fs::set_permissions(shadow.path(), directory_permissions)
+        .expect("reseal modified executor directory");
+
+    let command_line = format!("/bin/sh {} --version", shim_path.display());
+    let output = process_table_with_child("sh", &command_line);
+    let result = inspect_forbidden_process_table(4242, output, &[], shadow.path());
+
+    assert!(
+        matches!(result, Ok(Some(_))),
+        "a modified executor shim must no longer qualify for the read-only probe: {result:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn process_table_rejects_a_different_invalid_utf8_shim_path() {
+    let root = tempfile::tempdir().expect("create process-table test directory");
+    let shadow = ShadowPath::create_at(root.path().join("executor-shim"), &[])
+        .expect("create authenticated executor shims");
+    let shim_path = shadow.path().join("npm");
+    let impostor_line = b"/bin/sh /tmp/executor-\xff/npm --version".to_vec();
+    assert!(
+        !impostor_line
+            .windows(shim_path.as_os_str().as_bytes().len())
+            .any(|window| window == shim_path.as_os_str().as_bytes()),
+        "the synthetic invalid path must differ from the real shim path"
+    );
+    let output = process_table_with_raw_child(b"sh", &impostor_line);
+    let impostor_result = inspect_forbidden_process_table(4242, output, &[], shadow.path());
+    assert!(
+        matches!(impostor_result, Ok(Some(_))),
+        "a different invalid-UTF-8 path must not authenticate the real shim: {impostor_result:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn npm_probe_path_comparison_keeps_invalid_unix_bytes_distinct() {
+    let expected = b"/tmp/executor-\xff/npm";
+    let exact = b"/bin/sh /tmp/executor-\xff/npm --version";
+    let different = b"/bin/sh /tmp/executor-\xfe/npm --version";
+
+    assert!(npm_probe_command_line_matches_shim_path(
+        "sh", exact, expected
+    ));
+    assert!(!npm_probe_command_line_matches_shim_path(
+        "sh", different, expected
+    ));
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_npm_shim_never_interpolates_caller_arguments() {
+    let root = tempfile::tempdir().expect("create Windows shim test directory");
+    super::write_blocker(root.path(), "npm").expect("write Windows npm blocker");
+    let content =
+        std::fs::read_to_string(root.path().join("npm.cmd")).expect("read Windows npm blocker");
+
+    assert!(content.contains("MagiCore blocked forbidden package manager: npm"));
+    assert!(
+        !content.contains("%*"),
+        "caller arguments must never be expanded"
+    );
+    assert!(
+        !content.contains("%1"),
+        "individual caller arguments must not be expanded"
     );
 }
 

@@ -392,6 +392,96 @@ fn inherited_env_still_blocks_forbidden_pm_spawned_by_project_tool() {
 
 #[test]
 #[cfg(unix)]
+fn clean_env_allows_only_the_executor_npm_version_probe_shim() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tmp_dir().join("npm-version-probe");
+    fs::create_dir_all(&dir).unwrap();
+    let fake_cargo = dir.join("cargo");
+    let fake_npm = dir.join("npm");
+    let marker = dir.join("external-npm-was-run");
+    // Build the command indirectly so static script inspection cannot see it;
+    // this exercises the runtime process guard and its read-only probe shim.
+    // Dựng tên lệnh gián tiếp để đi qua guard runtime; kiểm tra shim chỉ đọc.
+    fs::write(
+        &fake_cargo,
+        "#!/bin/sh\npm=n\npm=\"${pm}pm\"\n\"$pm\" --version\n",
+    )
+    .unwrap();
+    fs::write(
+        &fake_npm,
+        format!("#!/bin/sh\nprintf ran > '{}'\nexit 99\n", marker.display()),
+    )
+    .unwrap();
+    for path in [&fake_cargo, &fake_npm] {
+        let mut permissions = fs::metadata(path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions).unwrap();
+    }
+
+    let opts = ExecOptions {
+        clean_env: true,
+        env: vec![("PATH".to_string(), dir.display().to_string())],
+        timeout: Some(Duration::from_secs(2)),
+        capture_full_stdout: true,
+        ..Default::default()
+    };
+    let report = run(fake_cargo.to_str().unwrap(), &[], &opts)
+        .expect("npm --version probe should use the executor's inert shim");
+
+    assert_eq!(report.exit_code, 0);
+    assert_eq!(report.stdout_full.trim(), "0.0.0");
+    assert!(!marker.exists(), "the real npm executable must never run");
+}
+
+#[test]
+#[cfg(unix)]
+fn clean_env_still_blocks_npm_install_from_an_indirect_child() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tmp_dir().join("npm-install-blocked");
+    fs::create_dir_all(&dir).unwrap();
+    let fake_cargo = dir.join("cargo");
+    let fake_npm = dir.join("npm");
+    let marker = dir.join("external-npm-was-run");
+    fs::write(
+        &fake_cargo,
+        "#!/bin/sh\npm=n\npm=\"${pm}pm\"\n\"$pm\" install\n",
+    )
+    .unwrap();
+    fs::write(
+        &fake_npm,
+        format!("#!/bin/sh\nprintf ran > '{}'\n", marker.display()),
+    )
+    .unwrap();
+    for path in [&fake_cargo, &fake_npm] {
+        let mut permissions = fs::metadata(path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions).unwrap();
+    }
+
+    let opts = ExecOptions {
+        clean_env: true,
+        env: vec![("PATH".to_string(), dir.display().to_string())],
+        timeout: Some(Duration::from_secs(2)),
+        ..Default::default()
+    };
+    let error = run(fake_cargo.to_str().unwrap(), &[], &opts).unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("MagiCore blocked forbidden package manager: npm")
+            || error
+                .to_string()
+                .contains("forbidden package manager 'npm' spawned"),
+        "unexpected error: {error}"
+    );
+    assert!(!marker.exists(), "npm install must not execute");
+}
+
+#[test]
+#[cfg(unix)]
 fn clean_env_kills_forbidden_pm_spawned_by_absolute_child_path() {
     use std::os::unix::fs::PermissionsExt;
 

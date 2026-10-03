@@ -13,6 +13,10 @@ use std::time::{Duration, Instant};
 const DEFAULT_EXEC_TIMEOUT_SECS: u64 = 1800;
 const EXEC_TIMEOUT_ENV: &str = "MGC_EXEC_TIMEOUT_SECS";
 const WAIT_POLL_INTERVAL_MS: u64 = 20;
+/// Exact read-only npm shim body; the process guard authenticates these bytes.
+/// Nội dung chính xác của shim npm chỉ đọc; process guard xác thực byte này.
+#[cfg(unix)]
+const NPM_VERSION_PROBE_SHIM_CONTENT: &str = "#!/bin/sh\nif [ \"$#\" -eq 1 ] && [ \"$1\" = \"--version\" ]; then\n  printf '%s\\n' '0.0.0'\n  exit 0\nfi\nprintf '%s\\n' \"MagiCore blocked forbidden package manager: npm\" >&2\nexit 126\n";
 /// Grace window between the SIGTERM and SIGKILL sweep over the process
 /// group — long enough for a well-behaved tool to flush, short enough to
 /// keep `timeout + grace` far below any caller-visible wall-clock budget.
@@ -825,7 +829,14 @@ fn execute_command(
     } else {
         Some(opts.timeout.unwrap_or_else(default_timeout))
     };
-    let outcome = wait_with_timeout(child, timeout, opts.clean_env, scoped_exempt, mode)?;
+    let outcome = wait_with_timeout(
+        child,
+        timeout,
+        opts.clean_env,
+        scoped_exempt,
+        shadow_path.path(),
+        mode,
+    )?;
     let duration_ms = start.elapsed().as_millis() as u64;
     let exit_code = outcome.status.code().unwrap_or(-1);
 
@@ -893,7 +904,7 @@ impl ShadowPath {
     }
 
     fn create_at(dir: PathBuf, scoped_exempt: &[&str]) -> Result<Self> {
-        std::fs::create_dir(&dir)?;
+        create_shadow_directory(&dir)?;
         let shadow_path = Self { dir };
         for tool in FORBIDDEN_TOOLS {
             if !scoped_exempt.contains(tool)
@@ -903,6 +914,8 @@ impl ShadowPath {
                 return Err(error);
             }
         }
+        #[cfg(unix)]
+        set_shadow_directory_mode(shadow_path.path(), 0o500)?;
 
         Ok(shadow_path)
     }
@@ -912,10 +925,40 @@ impl ShadowPath {
     }
 }
 
+#[cfg(unix)]
+fn create_shadow_directory(dir: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+
+    let mut builder = std::fs::DirBuilder::new();
+    builder.mode(0o700);
+    builder.create(dir)
+}
+
+#[cfg(not(unix))]
+fn create_shadow_directory(dir: &Path) -> std::io::Result<()> {
+    std::fs::create_dir(dir)
+}
+
 impl Drop for ShadowPath {
     fn drop(&mut self) {
+        #[cfg(unix)]
+        {
+            // Restore owner write access so read-only shim files can be removed.
+            // Mở lại quyền ghi cho owner để xóa được các shim chỉ đọc.
+            let _ = set_shadow_directory_mode(&self.dir, 0o700);
+        }
         let _ = std::fs::remove_dir_all(&self.dir);
     }
+}
+
+#[cfg(unix)]
+fn set_shadow_directory_mode(dir: &Path, mode: u32) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut permissions = std::fs::metadata(dir)?.permissions();
+    permissions.set_mode(mode);
+    std::fs::set_permissions(dir, permissions)?;
+    Ok(())
 }
 
 fn unique_temp_dir(prefix: &str) -> PathBuf {
@@ -936,19 +979,25 @@ fn write_blocker(dir: &Path, tool: &str) -> Result<()> {
 
     let path = dir.join(tool);
     use std::io::Write;
+    // Framework CLIs may ask npm for its version during a build. Answer that
+    // read-only probe locally; every package-manager operation still fails.
+    // CLI framework đôi khi hỏi phiên bản npm khi build. Trả lời probe đọc;
+    // mọi thao tác package manager vẫn bị chặn.
+    let content = if tool == "npm" {
+        NPM_VERSION_PROBE_SHIM_CONTENT.to_string()
+    } else {
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"MagiCore blocked forbidden package manager: {tool}\" >&2\nexit 126\n"
+        )
+    };
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(&path)?;
-    file.write_all(
-        format!(
-            "#!/bin/sh\nprintf '%s\\n' \"MagiCore blocked forbidden package manager: {tool}\" >&2\nexit 126\n"
-        )
-        .as_bytes(),
-    )?;
+    file.write_all(content.as_bytes())?;
     drop(file);
     let mut permissions = std::fs::metadata(&path)?.permissions();
-    permissions.set_mode(0o755);
+    permissions.set_mode(0o500);
     std::fs::set_permissions(&path, permissions)?;
     Ok(())
 }
@@ -958,16 +1007,16 @@ fn write_blocker(dir: &Path, tool: &str) -> Result<()> {
     use std::io::Write;
 
     let path = dir.join(format!("{tool}.cmd"));
+    // Keep Windows deny-only: CMD argument expansion is unsafe to interpolate into script syntax.
+    // Windows luôn chặn npm: nội suy tham số CMD vào cú pháp script có thể tạo command injection.
+    let content = format!(
+        "@echo off\r\necho MagiCore blocked forbidden package manager: {tool} 1>&2\r\nexit /b 126\r\n"
+    );
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(path)?;
-    file.write_all(
-        format!(
-            "@echo off\r\necho MagiCore blocked forbidden package manager: {tool} 1>&2\r\nexit /b 126\r\n"
-        )
-        .as_bytes(),
-    )?;
+    file.write_all(content.as_bytes())?;
     Ok(())
 }
 
@@ -1035,6 +1084,7 @@ fn wait_with_timeout(
     timeout: Option<Duration>,
     monitor_forbidden_children: bool,
     exempt: &[&str],
+    shadow_dir: &Path,
     mode: OutputMode,
 ) -> Result<ExecOutcome> {
     let started = Instant::now();
@@ -1116,7 +1166,7 @@ fn wait_with_timeout(
             return Ok(drain(&mut child, None));
         }
         if monitor_forbidden_children {
-            match find_forbidden_descendant(child.id(), exempt) {
+            match find_forbidden_descendant(child.id(), exempt, shadow_dir) {
                 Ok(Some(found)) => {
                     terminate_process_tree(child.id());
                     let _ = child.kill();
@@ -1263,14 +1313,24 @@ struct ForbiddenProcess {
 }
 
 #[cfg(unix)]
-fn find_forbidden_descendant(root_pid: u32, exempt: &[&str]) -> Result<Option<ForbiddenProcess>> {
-    find_forbidden_descendant_with_program(root_pid, exempt, Path::new(PROCESS_TABLE_INSPECTOR))
+fn find_forbidden_descendant(
+    root_pid: u32,
+    exempt: &[&str],
+    shadow_dir: &Path,
+) -> Result<Option<ForbiddenProcess>> {
+    find_forbidden_descendant_with_program(
+        root_pid,
+        exempt,
+        shadow_dir,
+        Path::new(PROCESS_TABLE_INSPECTOR),
+    )
 }
 
 #[cfg(unix)]
 fn find_forbidden_descendant_with_program(
     root_pid: u32,
     exempt: &[&str],
+    shadow_dir: &Path,
     inspector: &Path,
 ) -> Result<Option<ForbiddenProcess>> {
     let output = Command::new(inspector)
@@ -1290,7 +1350,7 @@ fn find_forbidden_descendant_with_program(
         );
     }
 
-    inspect_forbidden_process_table(root_pid, output, exempt)
+    inspect_forbidden_process_table(root_pid, output, exempt, shadow_dir)
 }
 
 #[cfg(unix)]
@@ -1298,31 +1358,33 @@ fn inspect_forbidden_process_table(
     root_pid: u32,
     output: std::process::Output,
     exempt: &[&str],
+    shadow_dir: &Path,
 ) -> Result<Option<ForbiddenProcess>> {
     let mut processes = Vec::new();
     let mut root_seen = false;
-    for line in String::from_utf8_lossy(&output.stdout).lines() {
-        if line.trim().is_empty() {
+    for mut line in output.stdout.split(|byte| *byte == b'\n') {
+        if line.last() == Some(&b'\r') {
+            line = &line[..line.len() - 1];
+        }
+        if line.iter().all(u8::is_ascii_whitespace) {
             continue;
         }
-        let mut parts = line.split_whitespace();
-        let pid = parts
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("process-table row has no PID"))?
+        let (pid_field, remainder) = next_process_table_field(line)
+            .ok_or_else(|| anyhow::anyhow!("process-table row has no PID"))?;
+        let pid = std::str::from_utf8(pid_field)
+            .context("process-table row has a non-UTF-8 PID")?
             .parse::<u32>()
             .context("process-table row has an invalid PID")?;
-        let ppid = parts
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("process-table row has no parent PID"))?
+        let (ppid_field, remainder) = next_process_table_field(remainder)
+            .ok_or_else(|| anyhow::anyhow!("process-table row has no parent PID"))?;
+        let ppid = std::str::from_utf8(ppid_field)
+            .context("process-table row has a non-UTF-8 parent PID")?
             .parse::<u32>()
             .context("process-table row has an invalid parent PID")?;
-        let command = parts
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("process-table row has no executable name"))?
-            .to_string();
-        let command_line = parts.collect::<Vec<_>>().join(" ");
+        let (command, command_line) = next_process_table_field(remainder)
+            .ok_or_else(|| anyhow::anyhow!("process-table row has no executable name"))?;
         root_seen |= pid == root_pid;
-        processes.push((pid, ppid, command, command_line));
+        processes.push((pid, ppid, command.to_vec(), command_line.to_vec()));
     }
     if !root_seen {
         bail!("process table did not contain monitored root PID {root_pid}");
@@ -1338,7 +1400,13 @@ fn inspect_forbidden_process_table(
         for (pid, _ppid, command, command_line) in
             processes.iter().filter(|(_, ppid, _, _)| *ppid == parent)
         {
-            if let Some(name) = forbidden_process_name(command, command_line, exempt) {
+            let command_text = String::from_utf8_lossy(command);
+            let command_line_text = String::from_utf8_lossy(command_line);
+            if let Some(name) = forbidden_process_name(&command_text, &command_line_text, exempt) {
+                if name == "npm" && is_shadow_npm_version_probe(command, command_line, shadow_dir) {
+                    frontier.push(*pid);
+                    continue;
+                }
                 return Ok(Some(ForbiddenProcess { pid: *pid, name }));
             }
             frontier.push(*pid);
@@ -1348,10 +1416,111 @@ fn inspect_forbidden_process_table(
     Ok(None)
 }
 
+#[cfg(unix)]
+fn next_process_table_field(line: &[u8]) -> Option<(&[u8], &[u8])> {
+    let start = line.iter().position(|byte| !byte.is_ascii_whitespace())?;
+    let line = &line[start..];
+    let end = line
+        .iter()
+        .position(u8::is_ascii_whitespace)
+        .unwrap_or(line.len());
+    if end == 0 {
+        return None;
+    }
+
+    let remainder = &line[end..];
+    let remainder_start = remainder
+        .iter()
+        .position(|byte| !byte.is_ascii_whitespace())
+        .unwrap_or(remainder.len());
+    Some((&line[..end], &remainder[remainder_start..]))
+}
+
 #[cfg(not(unix))]
-fn find_forbidden_descendant(_root_pid: u32, _exempt: &[&str]) -> Result<Option<ForbiddenProcess>> {
+fn find_forbidden_descendant(
+    _root_pid: u32,
+    _exempt: &[&str],
+    _shadow_dir: &Path,
+) -> Result<Option<ForbiddenProcess>> {
     ensure_process_inspection_available(true, false)?;
     Ok(None)
+}
+
+#[cfg(unix)]
+fn is_shadow_npm_version_probe(command: &[u8], command_line: &[u8], shadow_dir: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::PermissionsExt;
+
+    let Ok(directory_metadata) = std::fs::metadata(shadow_dir) else {
+        return false;
+    };
+    let shim_path = shadow_dir.join("npm");
+    let Ok(shim_metadata) = std::fs::metadata(&shim_path) else {
+        return false;
+    };
+    let Ok(shim_content) = std::fs::read(&shim_path) else {
+        return false;
+    };
+    if directory_metadata.permissions().mode() & 0o222 != 0
+        || shim_metadata.permissions().mode() & 0o222 != 0
+        || shim_content != NPM_VERSION_PROBE_SHIM_CONTENT.as_bytes()
+    {
+        return false;
+    }
+
+    let process = process_basename(&String::from_utf8_lossy(command));
+    npm_probe_command_line_matches_shim_path(
+        &process,
+        command_line,
+        shim_path.as_os_str().as_bytes(),
+    )
+}
+
+#[cfg(unix)]
+fn npm_probe_command_line_matches_shim_path(
+    process: &str,
+    command_line: &[u8],
+    shim: &[u8],
+) -> bool {
+    let prefixes: &[&[u8]] = match process {
+        "sh" => &[b"sh", b"/bin/sh"],
+        "dash" => &[b"dash", b"/bin/dash"],
+        "bash" => &[b"bash", b"/bin/bash"],
+        "busybox" => &[b"busybox sh", b"/bin/busybox sh"],
+        "npm" => &[
+            b"",
+            b"sh",
+            b"/bin/sh",
+            b"dash",
+            b"/bin/dash",
+            b"bash",
+            b"/bin/bash",
+            b"busybox sh",
+            b"/bin/busybox sh",
+        ],
+        _ => return false,
+    };
+
+    prefixes.iter().any(|prefix| {
+        let mut direct = prefix.to_vec();
+        if !prefix.is_empty() {
+            direct.push(b' ');
+        }
+        direct.extend_from_slice(shim);
+        direct.extend_from_slice(b" --version");
+        if command_line == direct {
+            return true;
+        }
+
+        let mut quoted = prefix.to_vec();
+        if !prefix.is_empty() {
+            quoted.push(b' ');
+        }
+        quoted.push(b'\"');
+        quoted.extend_from_slice(shim);
+        quoted.extend_from_slice(b"\" --version");
+        command_line == quoted
+    })
 }
 
 fn ensure_process_inspection_available(
