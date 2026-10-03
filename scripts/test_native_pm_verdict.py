@@ -86,7 +86,7 @@ class LifecycleEnvironmentIsolation(unittest.TestCase):
 
         self.assertEqual(
             env["MGC_CACHE_DIR"],
-            os.path.join('/tmp/mgc-lane-sandbox/project', '.magicore'),
+            os.path.join("/tmp/mgc-lane-sandbox", "project", ".magicore"),
         )
         self.assertEqual(env["HOME"], os.path.join("/tmp/mgc-lane-sandbox", ".home"))
         self.assertEqual(
