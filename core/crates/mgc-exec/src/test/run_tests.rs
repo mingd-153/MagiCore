@@ -189,9 +189,12 @@ fn process_table_with_child(command: &str, command_line: &str) -> std::process::
 
 #[cfg(unix)]
 fn process_table_with_raw_child(command: &[u8], command_line: &[u8]) -> std::process::Output {
-    let mut output = std::process::Command::new("/usr/bin/true")
-        .output()
-        .expect("run true to create process-table test output");
+    use std::os::unix::process::ExitStatusExt;
+    let mut output = std::process::Output {
+        status: std::process::ExitStatus::from_raw(0),
+        stdout: Vec::new(),
+        stderr: Vec::new(),
+    };
     output.stdout = b"4242 1 cargo /usr/bin/cargo\n4243 4242 ".to_vec();
     output.stdout.extend_from_slice(command);
     output.stdout.push(b' ');
@@ -468,4 +471,45 @@ fn go_guard_checks_the_effective_goproxy_value() {
     ];
 
     assert!(reject_external_dependency_resolution("go", &args, &env).is_err());
+}
+
+/// Verify the Windows inspector sees a real forbidden descendant executable.
+/// Xác minh inspector Windows thấy executable descendant bị cấm thật.
+#[cfg(windows)]
+#[test]
+fn windows_native_inspector_detects_forbidden_descendant() -> Result<(), Box<dyn std::error::Error>>
+{
+    let directory = tempfile::tempdir()?;
+    let forbidden = directory.path().join("npm.exe");
+    std::fs::copy(
+        std::env::var_os("COMSPEC").ok_or("Windows must expose COMSPEC")?,
+        &forbidden,
+    )?;
+    let mut child = std::process::Command::new(&forbidden)
+        .args(["/D", "/C", "ping -n 10 127.0.0.1 > NUL"])
+        .spawn()?;
+    let found = super::find_forbidden_descendant(std::process::id(), &[], directory.path());
+    super::terminate_process_tree(child.id());
+    let _ = child.kill();
+    let _ = child.wait();
+    let found = found?.ok_or("native Windows inspector must detect npm.exe")?;
+    assert_eq!(found.name, "npm");
+    Ok(())
+}
+
+#[test]
+fn monitor_recognizes_runtime_package_manager_entrypoints() {
+    for (entry, expected) in [
+        ("npm-cli.js", "npm"),
+        ("pnpm-cli.cjs", "pnpm"),
+        ("yarn-cli.mjs", "yarn"),
+        ("bun-cli.js", "bun"),
+    ] {
+        let command = format!("node.exe C:/project/node_modules/{entry} install");
+        assert_eq!(
+            super::forbidden_process_name("node.exe", &command, &[]).as_deref(),
+            Some(expected)
+        );
+        assert!(super::forbidden_process_name("node.exe", &command, &[expected]).is_none());
+    }
 }

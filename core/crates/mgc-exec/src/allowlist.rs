@@ -398,6 +398,43 @@ pub fn parse_script_invocation(script: &str) -> Result<ScriptInvocation> {
     })
 }
 
+/// Parse top-level AND chains without interpreting quoted or escaped operators.
+/// Parse chuỗi AND ngoài quote; giữ nguyên toán tử được quote hoặc escape.
+pub fn parse_script_chain(script: &str) -> Result<Vec<ScriptInvocation>> {
+    let mut commands = Vec::new();
+    let mut quote = None;
+    let mut escaped = false;
+    let mut start = 0;
+    let mut chars = script.char_indices().peekable();
+    while let Some((index, ch)) = chars.next() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if let Some(active) = quote {
+            if ch == active {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '\'' | '"' => quote = Some(ch),
+            '&' if chars.peek().is_some_and(|(_, next)| *next == '&') => {
+                commands.push(parse_script_invocation(&script[start..index])?);
+                chars.next();
+                start = index + 2;
+            }
+            _ => {}
+        }
+    }
+    commands.push(parse_script_invocation(&script[start..])?);
+    Ok(commands)
+}
+
 /// Reject shell control characters that would require `sh -c` semantics.
 /// Chặn chaining/redirection/subshell để beta chạy fail-closed.
 pub fn reject_shell_control(script: &str) -> Result<()> {
@@ -443,7 +480,7 @@ pub fn reject_shell_control(script: &str) -> Result<()> {
     Ok(())
 }
 
-fn normalize_script_token(token: &str) -> Option<String> {
+pub(crate) fn normalize_script_token(token: &str) -> Option<String> {
     let trimmed = token
         .trim()
         .trim_matches(|c| matches!(c, '"' | '\'' | '`'))

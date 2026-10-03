@@ -819,7 +819,7 @@ fn execute_command(
         command.env("PATH", path_env);
     }
 
-    ensure_process_inspection_available(opts.clean_env, cfg!(unix))?;
+    ensure_process_inspection_available(opts.clean_env, cfg!(any(unix, windows)))?;
     let child = command
         .spawn()
         .map_err(|e| anyhow::anyhow!("failed to spawn '{cmd}': {e}"))?;
@@ -1436,7 +1436,65 @@ fn next_process_table_field(line: &[u8]) -> Option<(&[u8], &[u8])> {
     Some((&line[..end], &remainder[remainder_start..]))
 }
 
-#[cfg(not(unix))]
+/// Inspect native Windows process metadata, without a shell or WMI command.
+/// Kiểm metadata process Windows bằng API native, không shell hoặc lệnh WMI.
+#[cfg(windows)]
+fn find_forbidden_descendant(
+    root_pid: u32,
+    exempt: &[&str],
+    _shadow_dir: &Path,
+) -> Result<Option<ForbiddenProcess>> {
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+    let mut system = System::new();
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::nothing().with_cmd(UpdateKind::Always),
+    );
+    let root = Pid::from_u32(root_pid);
+    if system.process(root).is_none() {
+        bail!("process table did not contain monitored root PID {root_pid}");
+    }
+    let mut frontier = vec![root];
+    let mut seen = std::collections::HashSet::new();
+    while let Some(parent) = frontier.pop() {
+        if !seen.insert(parent) {
+            continue;
+        }
+        for (pid, process) in system
+            .processes()
+            .iter()
+            .filter(|(_, p)| p.parent() == Some(parent))
+        {
+            // Missing command metadata cannot prove that a script host is clean.
+            // Thiếu metadata command không chứng minh được script host an toàn.
+            if process.cmd().is_empty() {
+                bail!(
+                    "cannot read command line for monitored child PID {}",
+                    pid.as_u32()
+                );
+            }
+            let command_line = process
+                .cmd()
+                .iter()
+                .map(|arg| arg.to_string_lossy())
+                .collect::<Vec<_>>()
+                .join(" ");
+            if let Some(name) =
+                forbidden_process_name(&process.name().to_string_lossy(), &command_line, exempt)
+            {
+                return Ok(Some(ForbiddenProcess {
+                    pid: pid.as_u32(),
+                    name,
+                }));
+            }
+            frontier.push(*pid);
+        }
+    }
+    Ok(None)
+}
+
+#[cfg(not(any(unix, windows)))]
 fn find_forbidden_descendant(
     _root_pid: u32,
     _exempt: &[&str],
@@ -1563,7 +1621,7 @@ fn forbidden_process_name(command: &str, command_line: &str, exempt: &[&str]) ->
 
     command_line
         .split_whitespace()
-        .map(process_basename)
+        .filter_map(crate::allowlist::normalize_script_token)
         .find(|name| FORBIDDEN_TOOLS.contains(&name.as_str()) && !exempt(name))
 }
 

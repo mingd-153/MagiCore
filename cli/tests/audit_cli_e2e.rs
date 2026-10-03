@@ -1264,6 +1264,7 @@ fn run_mgc_audit_mock_registry(
     let out = Command::new(mgc)
         .arg("audit")
         .current_dir(cwd)
+        .env("MAGICORE_WEB_ALLOW_INSECURE_LOCALHOST", "1")
         .env("MAGICORE_WEB_REGISTRY_URL", format!("http://{addr}"))
         .output()
         .expect("spawn mgc");
@@ -1505,6 +1506,7 @@ fn audit_web_mock_registry_down_strict_exits_2() {
     let out = Command::new(&mgc)
         .arg("audit")
         .current_dir(sandbox.path())
+        .env("MAGICORE_WEB_ALLOW_INSECURE_LOCALHOST", "1")
         .env("MAGICORE_WEB_REGISTRY_URL", "http://127.0.0.1:1")
         .env("MGC_AUDIT_STRICT", "1")
         .output()

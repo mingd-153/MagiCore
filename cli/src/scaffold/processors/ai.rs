@@ -35,7 +35,7 @@ impl AiProcessor {
                  framework = \"{framework}\"\n\
                  core = \"ai\"\n\n\
                  [tool.setuptools]\n\
-                 py-modules = [\"agent\", \"compression\"]\n\
+                 py-modules = [\"agent\", \"mgc_model_runtime\"]\n\
                  package-dir = {{\"\" = \"src\"}}\n"
             ),
         )?;
@@ -58,7 +58,7 @@ impl AiProcessor {
         )?;
 
         write_file(
-            &target.join("src").join("compression.py"),
+            &target.join("src").join("mgc_model_runtime.py"),
             "\"\"\"Runtime configuration for optional model optimization.\"\"\"\n\nfrom typing import Optional\n\n\nclass ModelRuntimeConfig:\n    \"\"\"Describe requested optimization without mutating a model.\"\"\"\n\n    def __init__(self, target_bits: Optional[int] = None):\n        self.target_bits = target_bits\n",
         )?;
 
@@ -68,7 +68,7 @@ impl AiProcessor {
                 &format!(
                     r#"'''MagiCore MCP server entry point.'''
 
-from compression import ModelRuntimeConfig
+from mgc_model_runtime import ModelRuntimeConfig
 
 
 def main() -> None:
@@ -86,7 +86,7 @@ if __name__ == "__main__":
                 &target.join("src").join("agent.py"),
                 r#"'''MagiCore AI agent entry point.'''
 
-from compression import ModelRuntimeConfig
+from mgc_model_runtime import ModelRuntimeConfig
 
 
 class AIAgent:

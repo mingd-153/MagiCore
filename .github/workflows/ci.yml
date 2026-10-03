@@ -108,8 +108,12 @@ jobs:
           echo ""
 
           echo "=== Running mgc-exec Windows Tests ==="
-          cargo test -p mgc-exec --test windows_spawn_test --test multiplatform_tools_test -- --nocapture
-        timeout-minutes: 5
+          cargo test -p mgc-exec --test windows_spawn_test --test multiplatform_tools_test --locked -- --nocapture
+          # Native inspector and long-path publication must execute on Windows.
+          # Inspector native và publish path dài phải chạy thật trên Windows.
+          cargo test -p mgc-exec --lib windows_native_inspector_detects_forbidden_descendant --locked -- --nocapture
+          cargo test -p mgc-lockfile --test no_follow atomic_replace_handles_long_windows_paths --locked -- --nocapture
+        timeout-minutes: 10
       - name: Native dependency ownership matrix (Windows)
         shell: bash
         run: cargo test -p mgc --test native_ownership_matrix_e2e --locked -- --test-threads=1

@@ -542,3 +542,47 @@ fn framework_build_script_maps_ng_without_preserve_symlinks() {
     assert!(args.iter().any(|a| a.contains("node_modules")));
     assert_eq!(args.last().unwrap(), "build");
 }
+
+#[test]
+fn framework_build_chain_keeps_typecheck_separate_and_rejects_shell_controls() {
+    let dir = tempfile::tempdir().unwrap();
+    let bin = dir.path().join("node_modules/.bin");
+    fs::create_dir_all(&bin).unwrap();
+    fs::write(bin.join("vite"), "").unwrap();
+    fs::write(bin.join("tsc"), "").unwrap();
+    fs::write(bin.join("vue-tsc"), "").unwrap();
+    let compat = crate::commands::compat::CompatMode::Native;
+    let chain = map_framework_build_chain(dir.path(), "vite build && tsc --noEmit", &compat)
+        .unwrap()
+        .unwrap();
+    assert_eq!(chain.len(), 2);
+    assert_eq!(chain[0].1.last().unwrap(), "build");
+    assert_eq!(chain[1].1.last().unwrap(), "--noEmit");
+    let vue = map_framework_build_chain(dir.path(), "vue-tsc --noEmit && vite build", &compat)
+        .unwrap()
+        .unwrap();
+    assert_eq!(vue.len(), 2);
+    for script in [
+        r#"vite build --base "dist&&preview""#,
+        r"vite build --base dist\&\&preview",
+    ] {
+        let quoted = map_framework_build_chain(dir.path(), script, &compat)
+            .unwrap()
+            .unwrap();
+        assert_eq!(quoted.len(), 1);
+        assert_eq!(quoted[0].1.last().unwrap(), "dist&&preview");
+    }
+
+    for script in [
+        "vite build &&",
+        "vite build || tsc",
+        "vite build; tsc",
+        "vite build && unknown",
+        "vite build && npm install",
+    ] {
+        assert!(
+            map_framework_build_chain(dir.path(), script, &compat).is_err(),
+            "unsafe or unsupported build chain accepted: {script}"
+        );
+    }
+}

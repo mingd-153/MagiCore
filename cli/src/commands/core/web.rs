@@ -142,17 +142,16 @@ fn web_backend_language(root: &Path) -> Option<mgc_lib_adapter::LibLanguage> {
     })
 }
 
-fn web_adapter() -> Arc<dyn PackageAdapter> {
+fn web_adapter() -> Result<Arc<dyn PackageAdapter>> {
     let started_at = std::time::Instant::now();
     let registry_url = std::env::var("MAGICORE_WEB_REGISTRY_URL").ok();
     let token = std::env::var("MAGICORE_WEB_REGISTRY_TOKEN").ok();
     let adapter =
-        crate::factory::create_adapter(&Ecosystem::Web, registry_url.as_deref(), token.as_deref())
-            .expect("web adapter always available in web core build");
+        crate::factory::create_adapter(&Ecosystem::Web, registry_url.as_deref(), token.as_deref())?;
     // NOTE: mgc.toml [security] min-release-age is armed inside
     // WebAdapter::build (single point for every lane) — nothing to do here.
     web_command_profile_mark("web_adapter", started_at);
-    adapter
+    Ok(adapter)
 }
 
 /// Add web dependency
@@ -214,7 +213,7 @@ pub async fn add(
         &compat,
         Some(&root.join(".magicore").join("exec.log")),
     )?;
-    let adapter = web_adapter();
+    let adapter = web_adapter()?;
     let result = shared::add(
         &*adapter, &root, packages, version, dev, exact, optional, peer, no_save, install, global,
     )
@@ -258,7 +257,7 @@ pub async fn remove(
         &compat,
         Some(&root.join(".magicore").join("exec.log")),
     )?;
-    let adapter = web_adapter();
+    let adapter = web_adapter()?;
     let result = shared::remove(&*adapter, &root, packages, install).await;
     web_command_profile_mark("web_remove_total", started_at);
     result
@@ -292,7 +291,7 @@ pub async fn list(compat_runtime: Option<String>) -> Result<()> {
         &compat,
         Some(&root.join(".magicore").join("exec.log")),
     )?;
-    let adapter = web_adapter();
+    let adapter = web_adapter()?;
     let result = shared::list(&*adapter, &root).await;
     web_command_profile_mark("web_list_total", started_at);
     result
@@ -327,7 +326,7 @@ pub async fn update(
         &compat,
         Some(&root.join(".magicore").join("exec.log")),
     )?;
-    let adapter = web_adapter();
+    let adapter = web_adapter()?;
     let result = shared::update(&*adapter, &root, packages, install).await;
     web_command_profile_mark("web_update_total", started_at);
     result
@@ -399,7 +398,7 @@ pub async fn install(
         &compat,
         Some(&root.join(".magicore").join("exec.log")),
     )?;
-    let adapter: Arc<dyn PackageAdapter> = web_adapter();
+    let adapter: Arc<dyn PackageAdapter> = web_adapter()?;
     let targets = install_targets(&root)?;
 
     // Compat gate for monorepo native (non-package.json) members: the

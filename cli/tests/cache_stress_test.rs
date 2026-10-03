@@ -109,6 +109,7 @@ fn install_command(mgc: &str, project: &Path, cache_dir: &Path, registry_url: &s
         .arg("install")
         .current_dir(project)
         .env("MGC_CACHE_DIR", cache_dir)
+        .env("MAGICORE_WEB_ALLOW_INSECURE_LOCALHOST", "1")
         .env("MAGICORE_WEB_REGISTRY_URL", registry_url)
         .env("MAGICORE_WEB_ALLOWED_REGISTRIES", registry_url);
     command

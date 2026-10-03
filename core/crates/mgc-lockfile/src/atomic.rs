@@ -265,8 +265,28 @@ fn windows_replace(tmp_path: &Path, dest: &Path) -> std::io::Result<()> {
     fn wide(path: &Path) -> Vec<u16> {
         path.as_os_str().encode_wide().chain(Some(0)).collect()
     }
-    let from = wide(tmp_path);
-    let to = wide(dest);
+    // Extended absolute paths preserve long package/store filenames on Windows.
+    // Path tuyệt đối mở rộng giữ được tên package/store dài trên Windows.
+    fn extended_path(path: &Path) -> std::io::Result<std::path::PathBuf> {
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        let name = path.file_name().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "atomic path has no file name",
+            )
+        })?;
+        // Resolve only the parent: resolving a staging symlink could move its
+        // external target instead of the staging entry itself.
+        // Chỉ resolve parent: resolve symlink staging có thể move nhầm target bên ngoài.
+        Ok(std::fs::canonicalize(parent)?.join(name))
+    }
+    let from_path = extended_path(tmp_path)?;
+    let to_path = extended_path(dest)?;
+    let from = wide(&from_path);
+    let to = wide(&to_path);
     // SAFETY: nul-terminated buffers outlive the call; flags request an
     // atomic, write-through replace or a Windows error code; no memory
     // is shared beyond the synchronous call.

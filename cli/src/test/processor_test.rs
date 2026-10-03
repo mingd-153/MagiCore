@@ -106,7 +106,7 @@ fn test_ai_python_agent_scaffold_is_syntactically_valid() {
     let output = std::process::Command::new("python3")
         .args(["-m", "py_compile"])
         .arg(target.join("src/agent.py"))
-        .arg(target.join("src/compression.py"))
+        .arg(target.join("src/mgc_model_runtime.py"))
         .env("PYTHONPYCACHEPREFIX", target.join(".pycache"))
         .output()
         .expect("python3 is required by the AI scaffold lifecycle gate");
@@ -115,6 +115,20 @@ fn test_ai_python_agent_scaffold_is_syntactically_valid() {
         output.status.success(),
         "generated AI Python must compile: {}",
         String::from_utf8_lossy(&output.stderr)
+    );
+
+    // A preloaded stdlib compression module must not shadow scaffold configuration.
+    // Module compression stdlib đã load không được che cấu hình scaffold.
+    let runtime = std::process::Command::new("python3")
+        .arg("-c")
+        .arg("import sys, types; sys.modules['compression'] = types.ModuleType('compression'); import agent; assert agent.AIAgent().runtime.target_bits is None")
+        .env("PYTHONPATH", target.join("src"))
+        .output()
+        .unwrap();
+    assert!(
+        runtime.status.success(),
+        "AI scaffold import failed: {}",
+        String::from_utf8_lossy(&runtime.stderr)
     );
 
     let pyproject = std::fs::read_to_string(target.join("pyproject.toml")).unwrap();

@@ -181,65 +181,91 @@ fn run_framework_build_if_supported(
     };
 
     reject_external_package_manager_script(script, &package_json)?;
-    let tokens: Vec<&str> = script.split_whitespace().collect();
-    // F-B fix (2026-09-10 audit): script build trỏ runtime đối thủ
-    // (bun/deno) phải qua cổng compat TƯỜNG MINH — native fail hướng
-    // migration thay vì bỏ qua âm thầm rồi báo build thành công.
-    if let Some(program) = tokens.first() {
-        crate::commands::compat::gate_runtime_spawn(compat, program)?;
-    }
-    let Some((program, args, envs)) = map_framework_build_script(root, &tokens)? else {
-        // Script không map được (kể cả "deno task build") không còn bị
-        // bỏ qua im lặng: nếu program là runtime đối thủ đã bị gate ở
-        // trên (native fail / compat pass); chỉ script framework lạ mới
-        // rơi vào đây và nhường lane cho native bundler.
+    let Some(launches) = map_framework_build_chain(root, script, compat)? else {
         return Ok(false);
     };
-
-    info(&format!(
-        "Framework-aware build: {} {}",
-        program.display(),
-        args.iter()
-            .map(|arg| arg.to_string_lossy().to_string())
-            .collect::<Vec<_>>()
-            .join(" ")
-    ));
-
-    let local_bin = root.join("node_modules").join(".bin");
-    let mut env = vec![(
-        "PATH".to_string(),
-        prepend_path(&local_bin)?.to_string_lossy().to_string(),
-    )];
-    for (key, value) in envs {
-        env.push((
-            key.to_string_lossy().to_string(),
-            value.to_string_lossy().to_string(),
+    for (program, args, envs) in launches {
+        info(&format!(
+            "Framework-aware build: {} {}",
+            program.display(),
+            args.iter()
+                .map(|arg| arg.to_string_lossy().to_string())
+                .collect::<Vec<_>>()
+                .join(" ")
         ));
-    }
 
-    let args = args
-        .iter()
-        .map(|arg| arg.to_string_lossy().to_string())
-        .collect::<Vec<_>>();
-    // P0-1: compat lane truyền runtime đã chọn (gate ở trên đã kiểm).
-    let compat_runtime = match compat {
-        crate::commands::compat::CompatMode::Native => None,
-        crate::commands::compat::CompatMode::Explicit(runtime) => Some(runtime.clone()),
-    };
-    let opts = mgc_exec::prelude::ExecOptions {
-        cwd: Some(root.to_path_buf()),
-        env,
-        clean_env: true,
-        compat_runtime,
-        ..Default::default()
-    };
-    mgc_exec::prelude::run_inherited(&program.to_string_lossy(), &args, &opts)
-        .with_context(|| format!("failed to start build '{}'", program.display()))?;
+        let local_bin = root.join("node_modules").join(".bin");
+        let mut env = vec![(
+            "PATH".to_string(),
+            prepend_path(&local_bin)?.to_string_lossy().to_string(),
+        )];
+        for (key, value) in envs {
+            env.push((
+                key.to_string_lossy().to_string(),
+                value.to_string_lossy().to_string(),
+            ));
+        }
+
+        let args = args
+            .iter()
+            .map(|arg| arg.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        // Pass the explicitly selected runtime after the compatibility gate.
+        // Truyền runtime đã chọn tường minh sau khi qua cổng compatibility.
+        let compat_runtime = match compat {
+            crate::commands::compat::CompatMode::Native => None,
+            crate::commands::compat::CompatMode::Explicit(runtime) => Some(runtime.clone()),
+        };
+        let opts = mgc_exec::prelude::ExecOptions {
+            cwd: Some(root.to_path_buf()),
+            env,
+            clean_env: true,
+            compat_runtime,
+            ..Default::default()
+        };
+        mgc_exec::prelude::run_inherited(&program.to_string_lossy(), &args, &opts)
+            .with_context(|| format!("failed to start build '{}'", program.display()))?;
+    }
 
     Ok(true)
 }
 
 type BuildLaunch = (PathBuf, Vec<OsString>, Vec<(OsString, OsString)>);
+
+pub(crate) fn map_framework_build_chain(
+    root: &Path,
+    script: &str,
+    compat: &crate::commands::compat::CompatMode,
+) -> Result<Option<Vec<BuildLaunch>>> {
+    // Map every AND-linked command before executing any of them; never pass
+    // shell operators to a framework or invoke a shell to interpret them.
+    // Map toàn bộ chuỗi AND trước khi chạy; không đưa toán tử vào framework/shell.
+    let mut launches = Vec::new();
+    let invocations = mgc_exec::allowlist::parse_script_chain(script)?;
+    let compound = invocations.len() > 1;
+    for invocation in invocations {
+        crate::commands::compat::gate_runtime_spawn(compat, &invocation.program)?;
+        let mut words = vec![invocation.program.as_str()];
+        words.extend(invocation.args.iter().map(String::as_str));
+        let Some((program, args, mut envs)) = map_framework_build_script(root, &words)? else {
+            if compound {
+                anyhow::bail!(
+                    "unsupported command in framework build chain: {}",
+                    invocation.program
+                );
+            }
+            return Ok(None);
+        };
+        envs.extend(
+            invocation
+                .env
+                .into_iter()
+                .map(|(key, value)| (key.into(), value.into())),
+        );
+        launches.push((program, args, envs));
+    }
+    Ok(Some(launches))
+}
 
 pub(crate) fn map_framework_build_script(
     root: &Path,
@@ -265,6 +291,9 @@ pub(crate) fn map_framework_build_script(
         )));
     }
     let launch = match tokens {
+        [tool @ ("tsc" | "vue-tsc"), rest @ ..] => {
+            (node_runner(), node_bin_args(root, tool, rest)?, vec![])
+        }
         ["vite", "build"] => (
             node_runner(),
             node_bin_args(root, "vite", &["build"])?,

@@ -80,34 +80,34 @@ class LifecycleEnvironmentIsolation(unittest.TestCase):
         ):
             original_environment = os.environ.copy()
             env = lifecycle_environment(
-                "/tmp/mgc-lane-sandbox", "/tmp/mgc-lane-sandbox/project"
+                "/tmp/mgc-lane-sandbox", os.path.join("/tmp/mgc-lane-sandbox", "project")
             )
             self.assertEqual(os.environ, original_environment)
 
         self.assertEqual(
             env["MGC_CACHE_DIR"],
-            "/tmp/mgc-lane-sandbox/project/.magicore",
+            os.path.join('/tmp/mgc-lane-sandbox/project', '.magicore'),
         )
-        self.assertEqual(env["HOME"], "/tmp/mgc-lane-sandbox/.home")
+        self.assertEqual(env["HOME"], os.path.join("/tmp/mgc-lane-sandbox", ".home"))
         self.assertEqual(
-            env["CARGO_HOME"], "/tmp/mgc-lane-sandbox/.cargo-home"
-        )
-        self.assertEqual(
-            env["PIP_CACHE_DIR"], "/tmp/mgc-lane-sandbox/.cache/pip"
+            env["CARGO_HOME"], os.path.join("/tmp/mgc-lane-sandbox", ".cargo-home")
         )
         self.assertEqual(
-            env["npm_config_cache"], "/tmp/mgc-lane-sandbox/.cache/npm"
-        )
-        self.assertEqual(env["GOMODCACHE"], "/tmp/mgc-lane-sandbox/.go/pkg/mod")
-        self.assertEqual(env["GOCACHE"], "/tmp/mgc-lane-sandbox/.cache/go-build")
-        self.assertEqual(
-            env["DOTNET_CLI_HOME"], "/tmp/mgc-lane-sandbox/.home/.dotnet"
+            env["PIP_CACHE_DIR"], os.path.join("/tmp/mgc-lane-sandbox", ".cache", "pip")
         )
         self.assertEqual(
-            env["TMPDIR"], "/tmp/mgc-lane-sandbox/.tmp"
+            env["npm_config_cache"], os.path.join("/tmp/mgc-lane-sandbox", ".cache", "npm")
+        )
+        self.assertEqual(env["GOMODCACHE"], os.path.join("/tmp/mgc-lane-sandbox", ".go", "pkg", "mod"))
+        self.assertEqual(env["GOCACHE"], os.path.join("/tmp/mgc-lane-sandbox", ".cache", "go-build"))
+        self.assertEqual(
+            env["DOTNET_CLI_HOME"], os.path.join("/tmp/mgc-lane-sandbox", ".home", ".dotnet")
         )
         self.assertEqual(
-            env["DENO_DIR"], "/tmp/mgc-lane-sandbox/.cache/deno"
+            env["TMPDIR"], os.path.join("/tmp/mgc-lane-sandbox", ".tmp")
+        )
+        self.assertEqual(
+            env["DENO_DIR"], os.path.join("/tmp/mgc-lane-sandbox", ".cache", "deno")
         )
         self.assertNotIn("MAGICORE_STORE_ROOT", env)
 
@@ -176,10 +176,10 @@ class LifecycleEnvironmentIsolation(unittest.TestCase):
             self.assertEqual(os.environ, original_environment)
 
         self.assertEqual(
-            env["HOME"], "/tmp/lane/project/.magicore-recovery/home"
+            env["HOME"], os.path.join('/tmp/lane/project', '.magicore-recovery', 'home')
         )
         self.assertEqual(
-            env["MGC_CACHE_DIR"], "/tmp/lane/project/.magicore-recovery"
+            env["MGC_CACHE_DIR"], os.path.join('/tmp/lane/project', '.magicore-recovery')
         )
 
     def test_materialization_markers_resolve_inside_lane_environment(self):
@@ -188,7 +188,7 @@ class LifecycleEnvironmentIsolation(unittest.TestCase):
             _materialize_marker("/tmp/lane/project", "rust", rust_env),
             (
                 "mgc-cargo-store",
-                "/tmp/lane/.home/.magicore/store/cargo",
+                os.path.join('/tmp/lane/.home', '.magicore', 'store', 'cargo'),
             ),
         )
 

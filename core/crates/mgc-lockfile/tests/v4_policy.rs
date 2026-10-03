@@ -299,6 +299,9 @@ fn ci_policy_cannot_be_downgraded_by_flag_env_or_project_config() {
 #[test]
 fn project_lock_policy_ignores_external_config_symlink() {
     let _guard = SERIAL.lock().unwrap();
+    let previous_ci = std::env::var_os("CI");
+    let previous_policy = std::env::var_os("MGC_LOCK_POLICY");
+    unsafe_env_remove("CI");
     unsafe_env_remove("MGC_LOCK_POLICY");
     let root = tempfile::tempdir().unwrap();
     let external = tempfile::tempdir().unwrap();
@@ -313,10 +316,10 @@ fn project_lock_policy_ignores_external_config_symlink() {
     )
     .unwrap();
 
-    assert_eq!(
-        resolve_policy(None, Some(root.path())),
-        LockPolicyMode::Warn
-    );
+    let resolved = resolve_policy(None, Some(root.path()));
+    restore_env("CI", previous_ci);
+    restore_env("MGC_LOCK_POLICY", previous_policy);
+    assert_eq!(resolved, LockPolicyMode::Warn);
 }
 
 #[test]

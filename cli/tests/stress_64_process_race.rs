@@ -125,7 +125,8 @@ fn install_cmd(mgc: &str, project: &Path, registry_url: &str) -> Command {
     let mut cmd = Command::new(mgc);
     cmd.arg("--core").arg("web").arg("install");
     cmd.current_dir(project);
-    cmd.env("MAGICORE_WEB_REGISTRY_URL", registry_url);
+    cmd.env("MAGICORE_WEB_ALLOW_INSECURE_LOCALHOST", "1")
+        .env("MAGICORE_WEB_REGISTRY_URL", registry_url);
     cmd.env("MAGICORE_WEB_ALLOWED_REGISTRIES", registry_url);
     cmd.env("MGC_CACHE_DIR", project.join(".magicore"));
     cmd
