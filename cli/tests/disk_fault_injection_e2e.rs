@@ -66,6 +66,7 @@ fn install_cmd(mgc: &str, project: &Path, registry_url: &str, cache_dir: &Path) 
     cmd.current_dir(project);
     cmd.env("MAGICORE_WEB_REGISTRY_URL", registry_url);
     cmd.env("MAGICORE_WEB_ALLOWED_REGISTRIES", registry_url);
+    cmd.env("MAGICORE_WEB_ALLOW_INSECURE_LOCALHOST", "1");
     cmd.env("MGC_CACHE_DIR", cache_dir);
     cmd
 }

@@ -644,6 +644,7 @@ fn web_command_with_home(mgc: &str, project: &Path, registry_url: &str, home: &P
     cmd.arg("--core").arg("web");
     cmd.env("MAGICORE_WEB_REGISTRY_URL", registry_url);
     cmd.env("MAGICORE_WEB_ALLOWED_REGISTRIES", registry_url);
+    cmd.env("MAGICORE_WEB_ALLOW_INSECURE_LOCALHOST", "1");
     cmd.env("MGC_CACHE_DIR", project.join(".magicore"));
     cmd.current_dir(project);
     cmd

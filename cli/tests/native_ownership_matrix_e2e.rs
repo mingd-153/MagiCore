@@ -734,13 +734,17 @@ fn matrix_native_remove_all_lanes() {
         let (f, b) = dotnet_manifest();
         lib_project(d, "dotnet", f, &b);
     };
-    native_remove_cell(
+    let nuget = HermeticNuget::new();
+    let nuget_env = [("MGC_NUGET_INDEX_URL", nuget.index_url.as_str())];
+    native_remove_cell_with_env(
         net,
         &["add-lib", "Newtonsoft.Json"],
         &["remove-lib", "Newtonsoft.Json"],
         "m.csproj",
         "Newtonsoft.Json",
+        &nuget_env,
     );
+    nuget.assert_all_routes_used();
     let java = |d: &std::path::Path| {
         let (f, b) = java_manifest();
         lib_project(d, "java", f, &b);
@@ -1093,11 +1097,20 @@ fn matrix_python_cached_reinstall_survives_registry_outage() {
     std::fs::write(&manifest_path, &manifest_before_mismatch).unwrap();
 
     let cold_sandbox = MatrixSandbox::new();
-    let lock_before = std::fs::read(project.path().join("mgc.lock")).unwrap();
-    let manifest_before = std::fs::read(project.path().join("pyproject.toml")).unwrap();
+    let cold_project = TempDir::new().unwrap();
+    // Copy only inputs, leaving the package cache behind — chỉ chép đầu vào, bỏ cache cũ.
+    for file in ["mgc.toml", "pyproject.toml", "mgc.lock"] {
+        std::fs::copy(project.path().join(file), cold_project.path().join(file)).unwrap();
+    }
+    assert!(
+        !cold_project.path().join(".magicore").exists(),
+        "cold project must not inherit the warmed project-local package cache"
+    );
+    let lock_before = std::fs::read(cold_project.path().join("mgc.lock")).unwrap();
+    let manifest_before = std::fs::read(cold_project.path().join("pyproject.toml")).unwrap();
     let (code, out) = cold_sandbox.run_with_env(
         &["install", "--offline"],
-        project.path(),
+        cold_project.path(),
         &[("MGC_PYPI_INDEX_URL", "http://127.0.0.1:1")],
     );
     assert_ne!(
@@ -1110,11 +1123,11 @@ fn matrix_python_cached_reinstall_survives_registry_outage() {
         "cold offline failure must explain the missing cache entry:\n{out}"
     );
     assert_eq!(
-        std::fs::read(project.path().join("mgc.lock")).unwrap(),
+        std::fs::read(cold_project.path().join("mgc.lock")).unwrap(),
         lock_before
     );
     assert_eq!(
-        std::fs::read(project.path().join("pyproject.toml")).unwrap(),
+        std::fs::read(cold_project.path().join("pyproject.toml")).unwrap(),
         manifest_before
     );
     assert!(

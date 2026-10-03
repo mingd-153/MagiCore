@@ -14,7 +14,11 @@ jobs:
     name: Coverage Manifest Contract
     runs-on: ubuntu-latest
     steps:
+      # Installer integrity contract reads a pinned historical file with git show.
+      # Hợp đồng integrity cần đọc file ở commit lịch sử bằng git show.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
       - name: Validate CI, release, and action-pin contracts
         run: bash scripts/test_ci_workflow_contract.sh
       - name: Validate Phase 0 coverage schema, fixture, and anti-laundering rules

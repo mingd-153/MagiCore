@@ -141,6 +141,7 @@ fn add_cmd(
         .current_dir(project)
         .env("MAGICORE_WEB_REGISTRY_URL", registry_url)
         .env("MAGICORE_WEB_ALLOWED_REGISTRIES", registry_url)
+        .env("MAGICORE_WEB_ALLOW_INSECURE_LOCALHOST", "1")
         .env("MGC_CACHE_DIR", project.join(".magicore"))
         .stdout(stdout)
         .stderr(stderr);
@@ -177,6 +178,7 @@ fn update_cmd(
         .current_dir(project)
         .env("MAGICORE_WEB_REGISTRY_URL", registry_url)
         .env("MAGICORE_WEB_ALLOWED_REGISTRIES", registry_url)
+        .env("MAGICORE_WEB_ALLOW_INSECURE_LOCALHOST", "1")
         .env("MGC_CACHE_DIR", project.join(".magicore"))
         .stdout(stdout)
         .stderr(stderr);
@@ -487,6 +489,7 @@ fn sigkilled_remove_recovers_before_next_mutation() {
         .current_dir(&project)
         .env("MAGICORE_WEB_REGISTRY_URL", &fixture.url)
         .env("MAGICORE_WEB_ALLOWED_REGISTRIES", &fixture.url)
+        .env("MAGICORE_WEB_ALLOW_INSECURE_LOCALHOST", "1")
         .env("MGC_CACHE_DIR", project.join(".magicore"))
         .env("MGC_MUTATION_TAIL_DELAY_MS", "8000")
         .stdout(victim_out)
@@ -564,6 +567,7 @@ fn generic_install_cmd(
         .current_dir(project)
         .env("MAGICORE_WEB_REGISTRY_URL", registry_url)
         .env("MAGICORE_WEB_ALLOWED_REGISTRIES", registry_url)
+        .env("MAGICORE_WEB_ALLOW_INSECURE_LOCALHOST", "1")
         .env("MGC_CACHE_DIR", project.join(".magicore"))
         .stdout(stdout)
         .stderr(stderr);
@@ -588,6 +592,7 @@ fn frozen_install_cmd(
         .current_dir(project)
         .env("MAGICORE_WEB_REGISTRY_URL", registry_url)
         .env("MAGICORE_WEB_ALLOWED_REGISTRIES", registry_url)
+        .env("MAGICORE_WEB_ALLOW_INSECURE_LOCALHOST", "1")
         .env("MGC_CACHE_DIR", project.join(".magicore"))
         .stdout(stdout)
         .stderr(stderr);

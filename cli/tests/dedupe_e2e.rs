@@ -130,6 +130,7 @@ fn dedupe_dry_run_changes_absolutely_nothing() {
         .current_dir(&project)
         .env("MAGICORE_WEB_REGISTRY_URL", &fixture.url)
         .env("MAGICORE_WEB_ALLOWED_REGISTRIES", &fixture.url)
+        .env("MAGICORE_WEB_ALLOW_INSECURE_LOCALHOST", "1")
         .env("MGC_CACHE_DIR", project.join(".magicore"));
     assert!(install.status().unwrap().success(), "fixture install");
 
