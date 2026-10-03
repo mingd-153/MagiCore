@@ -1,55 +1,112 @@
 use super::*;
-use sha2::{Digest, Sha256};
 
 #[test]
-fn cloudflare_deploy_command() {
-    let cmd = deploy_command(mgc_cicd_adapter::CicdProvider::Cloudflare).expect("cloudflare ok");
-    assert_eq!(cmd.tool, "wrangler");
-    assert_eq!(cmd.args, vec!["deploy", "--dry-run"]);
+fn cloudflare_deploy_is_explicitly_unsupported_without_vendor_cli() {
+    let error = provider_deploy_unavailable(mgc_cicd_adapter::CicdProvider::Cloudflare);
+    assert!(
+        error
+            .to_string()
+            .contains("no MagiCore-native provider engine")
+    );
+    assert!(
+        error
+            .to_string()
+            .contains("no external provider CLI was started")
+    );
 }
 
 #[test]
-fn gcp_deploy_command() {
-    let cmd = deploy_command(mgc_cicd_adapter::CicdProvider::Gcp).expect("gcp ok");
-    assert_eq!(cmd.tool, "gcloud");
-    assert_eq!(cmd.args, vec!["app", "deploy", "--no-promote"]);
+fn gcp_deploy_is_explicitly_unsupported_without_vendor_cli() {
+    let error = provider_deploy_unavailable(mgc_cicd_adapter::CicdProvider::Gcp);
+    assert!(
+        error
+            .to_string()
+            .contains("no MagiCore-native provider engine")
+    );
+    assert!(
+        error
+            .to_string()
+            .contains("no external provider CLI was started")
+    );
 }
 
 #[test]
-fn target_deploy_commands() {
+fn configured_cloud_targets_are_explicitly_unsupported_without_vendor_cli() {
     let cf = DeployTarget {
         provider: "cloudflare".into(),
         stack: String::new(),
         region: String::new(),
     };
-    assert_eq!(
-        target_deploy_command(&cf, true).unwrap().args,
-        vec!["deploy", "--dry-run"]
+    let error = target_deploy_unavailable(&cf);
+    assert!(
+        error
+            .to_string()
+            .contains("no MagiCore-native provider engine")
     );
+    assert!(
+        error
+            .to_string()
+            .contains("no external provider CLI was started")
+    );
+
     let aws = DeployTarget {
         provider: "aws".into(),
         stack: "my-infra".into(),
         region: "ap-southeast-1".into(),
     };
-    let cmd = target_deploy_command(&aws, false).unwrap();
-    assert_eq!(cmd.tool, "aws");
-    assert!(cmd.args.iter().any(|a| a == "my-infra"));
-    assert!(cmd.args.iter().any(|a| a == "ap-southeast-1"));
+    let error = target_deploy_unavailable(&aws);
+    assert!(
+        error
+            .to_string()
+            .contains("no MagiCore-native provider engine")
+    );
+    assert!(
+        error
+            .to_string()
+            .contains("no external provider CLI was started")
+    );
+    assert!(error.to_string().contains("my-infra"));
+    assert!(error.to_string().contains("ap-southeast-1"));
+
     let no_stack = DeployTarget {
         provider: "aws".into(),
         stack: String::new(),
         region: String::new(),
     };
-    assert!(target_deploy_command(&no_stack, true).is_err());
+    assert!(
+        target_deploy_unavailable(&no_stack)
+            .to_string()
+            .contains("no MagiCore-native provider engine")
+    );
 }
 
 #[test]
 fn ci_only_providers_bail() {
-    assert!(deploy_command(mgc_cicd_adapter::CicdProvider::GithubActions).is_err());
-    assert!(deploy_command(mgc_cicd_adapter::CicdProvider::Gitlab).is_err());
-    assert!(deploy_command(mgc_cicd_adapter::CicdProvider::CircleCi).is_err());
-    assert!(deploy_command(mgc_cicd_adapter::CicdProvider::Aws).is_err());
-    assert!(deploy_command(mgc_cicd_adapter::CicdProvider::Argocd).is_err());
+    assert!(
+        provider_deploy_unavailable(mgc_cicd_adapter::CicdProvider::GithubActions)
+            .to_string()
+            .contains("CI-only")
+    );
+    assert!(
+        provider_deploy_unavailable(mgc_cicd_adapter::CicdProvider::Gitlab)
+            .to_string()
+            .contains("CI-only")
+    );
+    assert!(
+        provider_deploy_unavailable(mgc_cicd_adapter::CicdProvider::CircleCi)
+            .to_string()
+            .contains("CI-only")
+    );
+    assert!(
+        provider_deploy_unavailable(mgc_cicd_adapter::CicdProvider::Aws)
+            .to_string()
+            .contains("no MagiCore-native provider engine")
+    );
+    assert!(
+        provider_deploy_unavailable(mgc_cicd_adapter::CicdProvider::Argocd)
+            .to_string()
+            .contains("server-side")
+    );
 }
 
 #[test]
@@ -83,10 +140,11 @@ fn generated_ci_release_tag_matches_this_mgc_build() {
 
 #[test]
 fn generated_ci_installer_pin_matches_current_release_contract() {
-    // The pin must identify the immutable commit that contains this exact
-    // installer body; stale case-sensitive asset names break release installs.
-    // (Pin phải trỏ tới commit bất biến chứa đúng installer này; tên asset
-    // sai hoa-thường làm hỏng cài đặt release.)
+    // The embedded digest describes the immutable installer commit, not a
+    // possibly edited working-tree copy. The CI contract checks the digest
+    // against `git show <pin>:scripts/install-from-gh.sh`.
+    // (Digest nhúng thuộc installer commit bất biến, không phải bản đang
+    // sửa trong worktree; CI contract đối chiếu trực tiếp Git object.)
     const TRACKED_INSTALLER: &[u8] = include_bytes!("../../../../../../scripts/install-from-gh.sh");
     assert_eq!(
         MGC_INSTALLER_SHA,
@@ -94,7 +152,7 @@ fn generated_ci_installer_pin_matches_current_release_contract() {
     );
     assert_eq!(
         MGC_INSTALLER_SHA256,
-        hex::encode(Sha256::digest(TRACKED_INSTALLER))
+        "2e722bbebdccad1f00719da21f56963d44ff519d3868538f9abdc2e03a27ef56"
     );
     let installer = std::str::from_utf8(TRACKED_INSTALLER).expect("installer is UTF-8");
     assert!(installer.contains("OS_LABEL=\"macos\""));

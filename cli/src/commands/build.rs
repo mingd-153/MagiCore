@@ -359,6 +359,7 @@ async fn build_lib(root: &Path) -> Result<()> {
             cwd: Some(root.to_path_buf()),
             env,
             clean_env: false, // Preserve env with optimizer config
+            execution_scope: Some(mgc_exec::allowlist::ExecutionScope::BuildRunner),
             ..Default::default()
         };
         return mgc_exec::prelude::run_inherited("node", &args, &opts).map(|_| ());
@@ -749,6 +750,7 @@ async fn build_cloud(root: &Path) -> Result<()> {
                 cwd: Some(root.to_path_buf()),
                 env,
                 clean_env: true,
+                execution_scope: Some(mgc_exec::allowlist::ExecutionScope::BuildRunner),
                 ..Default::default()
             };
             mgc_exec::prelude::run_inherited("node", &args, &opts)?;

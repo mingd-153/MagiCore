@@ -40,6 +40,23 @@ struct Args {
     #[arg(long)]
     storage: Option<String>,
 
+    /// Trusted-publisher OIDC issuers; repeat for multiple trusted issuers.
+    #[arg(long = "oidc-issuer", env = "MAGICORE_REGISTRY_OIDC_ISSUER")]
+    oidc_issuers: Vec<String>,
+
+    /// OIDC audience expected in CI workload JWTs.
+    #[arg(long, env = "MAGICORE_REGISTRY_OIDC_AUDIENCE")]
+    oidc_audience: Option<String>,
+
+    /// Comma-separated peer IPs of TLS proxies allowed to assert X-Forwarded-Proto.
+    /// Danh sách IP peer proxy TLS được phép xác nhận X-Forwarded-Proto, phân tách bằng dấu phẩy.
+    #[arg(
+        long,
+        env = "MAGICORE_REGISTRY_TRUSTED_PROXY_IPS",
+        value_delimiter = ','
+    )]
+    trusted_proxy_ips: Vec<std::net::IpAddr>,
+
     /// Log level
     #[arg(long, default_value = "info")]
     log_level: String,
@@ -64,6 +81,9 @@ async fn main() -> Result<()> {
         rate_limit_rps: args.rate_limit,
         upstream: args.upstream,
         storage: args.storage,
+        oidc_issuers: args.oidc_issuers,
+        oidc_audience: args.oidc_audience,
+        trusted_proxy_ips: args.trusted_proxy_ips,
     })
     .await
 }

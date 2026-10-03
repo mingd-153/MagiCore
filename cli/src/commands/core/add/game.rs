@@ -39,6 +39,21 @@ pub async fn add(
     let (adapter_pkgs, has_optimizer) = game_split(&packages);
     if adapter_pkgs.is_empty() {
         if has_optimizer {
+            shared::validate_game_optimizer_project(&root)?;
+            let compat = crate::commands::dep_gate::from_dep_flag(compat_runtime.as_deref())?;
+            crate::commands::dep_gate::gate(
+                &crate::commands::dep_gate::DepContext::new(
+                    "game",
+                    Some("bevy"),
+                    Some("bevy"),
+                    None,
+                    crate::commands::dep_gate::DepOp::Add,
+                )
+                .with_manifest_format(Some("cargo-toml")),
+                None,
+                &compat,
+                Some(&root.join(".magicore").join("exec.log")),
+            )?;
             shared::game_optimizer_template(&root).await?;
         }
         return Ok(());

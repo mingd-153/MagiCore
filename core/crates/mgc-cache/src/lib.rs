@@ -65,7 +65,11 @@ impl PackageCache {
             .locks
             .entry(package_id.to_string())
             .or_insert_with(|| Arc::new(RwLock::new(())));
-        let _guard = lock.value().read().unwrap();
+        let _guard = lock.value().read().map_err(|_| {
+            anyhow::anyhow!(
+                "cache lock poisoned for '{package_id}' — refusing rather than reading uncertain state"
+            )
+        })?;
 
         let pkg_path = self.package_path(package_id);
         if !pkg_path.exists() {
@@ -98,7 +102,11 @@ impl PackageCache {
             .locks
             .entry(package_id.to_string())
             .or_insert_with(|| Arc::new(RwLock::new(())));
-        let _guard = lock.value().write().unwrap();
+        let _guard = lock.value().write().map_err(|_| {
+            anyhow::anyhow!(
+                "cache lock poisoned for '{package_id}' — refusing rather than writing uncertain state"
+            )
+        })?;
 
         let pkg_dir = self.package_dir(package_id);
         fs::create_dir_all(&pkg_dir)?;

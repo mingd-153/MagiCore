@@ -5,7 +5,7 @@ use mgc_crypto::keyring::Keyring;
 
 /// Execute `mgc trust list` — Thực thi `mgc trust list`
 pub fn execute() -> anyhow::Result<()> {
-    let keyring_path = Keyring::default_path();
+    let keyring_path = Keyring::default_path().map_err(|error| anyhow::anyhow!("{error}"))?;
 
     // Check if keyring exists
     if !keyring_path.exists() {

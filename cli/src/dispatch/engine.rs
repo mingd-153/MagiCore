@@ -333,6 +333,7 @@ fn recursive_supported(command: &Commands) -> bool {
             | Commands::RemoveIot { .. }
             | Commands::RemoveApp { .. }
             | Commands::RemoveLib { .. }
+            | Commands::RemoveHardware { .. }
             | Commands::UpdateWeb { .. }
             | Commands::UpdateGame { .. }
             | Commands::UpdateAi { .. }
@@ -341,6 +342,7 @@ fn recursive_supported(command: &Commands) -> bool {
             | Commands::UpdateIot { .. }
             | Commands::UpdateApp { .. }
             | Commands::UpdateLib { .. }
+            | Commands::UpdateHardware { .. }
             | Commands::ListWeb { .. }
             | Commands::ListGame { .. }
             | Commands::ListAi { .. }
@@ -380,8 +382,42 @@ fn reject_filter_without_recursive() -> Result<()> {
 }
 
 fn reject_unsupported_audit_strict(command: &Commands) -> Result<()> {
-    let _ = command;
-    Ok(())
+    // `--audit-strict` is meaningful exactly where the codebase consults
+    // strictness: the audit command (`StrictMode`), the verify chain
+    // (`run_strict`), and install/add flows (`prepare_install_execution`
+    // → `enforce_audit_strict_policy`). Everywhere else the flag would be
+    // silently ignored — refuse loudly with the supported set instead.
+    // (Chỉ cho phép cờ ở lệnh có dùng strict; nơi khác từ chối rõ ràng.)
+    if matches!(
+        command,
+        Commands::Audit { .. }
+            | Commands::Verify
+            | Commands::Install { .. }
+            | Commands::Add { .. }
+            | Commands::InstallWeb { .. }
+            | Commands::InstallGame { .. }
+            | Commands::InstallAi { .. }
+            | Commands::InstallClo { .. }
+            | Commands::InstallCicd { .. }
+            | Commands::InstallIot { .. }
+            | Commands::InstallApp { .. }
+            | Commands::InstallLib { .. }
+            | Commands::InstallHardware { .. }
+            | Commands::AddWeb { .. }
+            | Commands::AddGame { .. }
+            | Commands::AddAi { .. }
+            | Commands::AddClo { .. }
+            | Commands::AddCicd { .. }
+            | Commands::AddIot { .. }
+            | Commands::AddApp { .. }
+            | Commands::AddLib { .. }
+            | Commands::AddHardware { .. }
+    ) {
+        return Ok(());
+    }
+    Err(crate::error::audit_strict_unsupported_command(
+        command_name(command),
+    ))
 }
 
 fn command_name(command: &Commands) -> &'static str {
@@ -471,6 +507,7 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::RemoveIot { .. } => "remove-iot",
         Commands::RemoveApp { .. } => "remove-app",
         Commands::RemoveLib { .. } => "remove-lib",
+        Commands::RemoveHardware { .. } => "remove-hardware",
         Commands::ListWeb { .. } => "list-web",
         Commands::ListGame { .. } => "list-game",
         Commands::ListAi { .. } => "list-ai",
@@ -488,6 +525,7 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::UpdateIot { .. } => "update-iot",
         Commands::UpdateApp { .. } => "update-app",
         Commands::UpdateLib { .. } => "update-lib",
+        Commands::UpdateHardware { .. } => "update-hardware",
         Commands::Import { .. } => "import",
         Commands::Migrate { .. } => "migrate",
     }

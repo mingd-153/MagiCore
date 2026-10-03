@@ -452,3 +452,32 @@ fn merge_file_no_panic_on_missing_file() {
     merge_file(&mut map, std::path::Path::new("/nonexistent/path/.npmrc"));
     assert!(map.is_empty());
 }
+
+#[test]
+fn is_sensitive_catches_short_password_spellings() {
+    for key in [
+        "pass",
+        "db_pass",
+        "passwd",
+        "user_passwd",
+        "pwd",
+        "deploy_pwd",
+        "key",
+        "api_key",
+        "my_token",
+        "secret",
+        "auth",
+        "registry_auth",
+    ] {
+        assert!(is_sensitive(key), "{key} must be treated as sensitive");
+    }
+}
+
+#[test]
+fn is_sensitive_leaves_ordinary_words_visible() {
+    // `bypass_proxy` contains "pass" as a substring but is not a secret;
+    // `monkey`/`keyboard` contain "key" but are ordinary words.
+    for key in ["bypass_proxy", "monkey", "keyboard", "registry", "timeout"] {
+        assert!(!is_sensitive(key), "{key} must stay visible");
+    }
+}

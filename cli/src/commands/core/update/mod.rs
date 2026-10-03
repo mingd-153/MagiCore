@@ -10,6 +10,8 @@ pub mod cicd;
 pub mod clo;
 #[cfg(feature = "game")]
 pub mod game;
+#[cfg(feature = "hardware")]
+pub mod hardware;
 #[cfg(feature = "iot")]
 pub mod iot;
 #[cfg(feature = "lib")]

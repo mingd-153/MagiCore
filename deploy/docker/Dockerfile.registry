@@ -1,6 +1,8 @@
 # MagiCore Registry Server — multi-stage build
 # Usage: docker build -f deploy/docker/Dockerfile.registry -t magicore/registry-server .
-ARG RUST_IMAGE=docker.io/library/rust:1.85-slim-bookworm
+# The locked workspace dependencies require Rust 1.94 or newer.
+# Dependency đã khóa của workspace cần Rust 1.94 trở lên.
+ARG RUST_IMAGE=docker.io/library/rust:1.94-slim-bookworm
 ARG RUNTIME_IMAGE=debian:bookworm-slim
 
 # ── Build stage ───────────────────────────────────────────────────────────────
@@ -16,9 +18,14 @@ COPY core/ core/
 COPY adapters/ adapters/
 COPY cli/ cli/
 COPY tools/ tools/
+# Include the E2E workspace manifest so Cargo can resolve all members.
+# Thêm manifest workspace E2E để Cargo phân giải đầy đủ các thành viên.
+COPY tests/e2e/ tests/e2e/
 
+# Cargo names this target `mgc-registry` although its package is `mgc-registry-server`.
+# Cargo đặt tên binary là `mgc-registry` dù package có tên `mgc-registry-server`.
 RUN cargo build --release --package mgc-registry-server && \
-    cp target/release/mgc-registry-server /mgc-registry-server
+    cp target/release/mgc-registry /mgc-registry-server
 
 # ── Runtime stage ─────────────────────────────────────────────────────────────
 FROM ${RUNTIME_IMAGE}
@@ -32,8 +39,10 @@ COPY --from=build /mgc-registry-server /usr/local/bin/mgc-registry-server
 
 USER mgreg
 VOLUME ["/data"]
-EXPOSE 8080
+EXPOSE 4315
 
-HEALTHCHECK --interval=30s --timeout=5s CMD wget -qO- http://127.0.0.1:8080/v2/ || exit 1
+# The registry challenges unauthenticated OCI pings; Wget exit 6 means it is reachable.
+# Registry yêu cầu xác thực ở OCI ping; Wget exit 6 nghĩa là endpoint vẫn truy cập được.
+HEALTHCHECK --interval=30s --timeout=5s CMD wget -qO- http://127.0.0.1:4315/v2/ >/dev/null 2>&1 || test $? -eq 6
 
-ENTRYPOINT ["mgc-registry-server", "--host", "0.0.0.0", "--port", "8080"]
+ENTRYPOINT ["mgc-registry-server", "--host", "0.0.0.0", "--port", "4315"]

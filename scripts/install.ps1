@@ -37,7 +37,7 @@ Write-Host "Detected Platform: Windows ($ArchLabel)" -ForegroundColor Gray
 # Resolve Target Release URL
 # Asset names follow scripts/release-artifact-contract.sh (single source
 # of truth): {package}-{version}-{os}-{arch}.zip, all lowercase, version
-# WITHOUT the leading 'v' (e.g. magicore-1.1.0-rc.6-windows-x64.zip).
+# WITHOUT the leading 'v' (e.g. magicore-1.1.0-rc.9-windows-x64.zip).
 if ($Version -eq "latest") {
     $ReleaseApiUrl = "https://api.github.com/repos/$Repo/releases/latest"
     try {
@@ -46,7 +46,7 @@ if ($Version -eq "latest") {
     } catch {
         # Fail closed: never silently install a stale hardcoded version —
         # pass -Version explicitly as the escape hatch.
-        Write-Error "Could not resolve the latest release from $ReleaseApiUrl. Re-run with an explicit -Version (e.g. -Version 1.1.0-rc.6)."
+        Write-Error "Could not resolve the latest release from $ReleaseApiUrl. Re-run with an explicit -Version (e.g. -Version 1.1.0-rc.9)."
         exit 1
     }
 } else {
@@ -54,7 +54,7 @@ if ($Version -eq "latest") {
 }
 $VersionNumber = if ($Tag) { $Tag.TrimStart("v") } else { "" }
 if ([string]::IsNullOrEmpty($VersionNumber) -or $VersionNumber -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$') {
-    Write-Error "Invalid version: $Version (expected like 1.1.0-rc.6, with or without a leading 'v')."
+    Write-Error "Invalid version: $Version (expected like 1.1.0-rc.9, with or without a leading 'v')."
     exit 1
 }
 

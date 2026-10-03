@@ -187,6 +187,14 @@ pub struct ContentStore {
 /// không giới hạn.
 pub const MEMO_CAPACITY: usize = 4096;
 
+/// Compile-time proof the memo capacity is usable as `NonZeroUsize` — a
+/// zero value fails the build here instead of panicking at runtime.
+/// (Chứng minh compile-time capacity khác 0 — giá trị 0 rớt build.)
+const MEMO_NONZERO: std::num::NonZeroUsize = match std::num::NonZeroUsize::new(MEMO_CAPACITY) {
+    Some(capacity) => capacity,
+    None => panic!("MEMO_CAPACITY must be nonzero"),
+};
+
 /// Atomic hit/miss/eviction counters (P1-2) — lock-free, monotonic.
 /// (Bộ đếm hit/miss/eviction atomic (P1-2) — không khóa, monotonic.)
 #[cfg(unix)]
@@ -301,7 +309,7 @@ impl ContentStore {
             root,
             #[cfg(unix)]
             verified: std::sync::Arc::new(parking_lot::Mutex::new(lru::LruCache::new(
-                std::num::NonZeroUsize::new(MEMO_CAPACITY).expect("MEMO_CAPACITY is nonzero"),
+                MEMO_NONZERO,
             ))),
             #[cfg(unix)]
             memo_counters: std::sync::Arc::new(AtomicMemoCounters::default()),
@@ -375,7 +383,10 @@ impl ContentStore {
             let file = fs::File::open(src)?;
             let reader = BufReader::new(file);
             let tmp = self.tmp_path("import-file");
-            fs::create_dir_all(tmp.parent().expect("tmp path has parent"))?;
+            fs::create_dir_all(tmp.parent().ok_or_else(|| StoreError::Io {
+                path: tmp.clone(),
+                msg: "staging temp path has no parent directory".to_string(),
+            })?)?;
             let writer = fs::File::create_new(&tmp)?;
             let hash = stream_write_verify_and_set_perms(writer, &tmp, reader, is_exec)?;
             let dest = hash.cas_path(&self.root);
@@ -388,7 +399,10 @@ impl ContentStore {
                 return Ok(hash);
             }
 
-            fs::create_dir_all(dest.parent().expect("dest path has parent"))?;
+            fs::create_dir_all(dest.parent().ok_or_else(|| StoreError::Io {
+                path: dest.to_path_buf(),
+                msg: "import destination has no parent directory".to_string(),
+            })?)?;
             match fs::rename(&tmp, &dest) {
                 Ok(()) => {
                     // Crash-durable publish (audit vòng-3 P1-7).
@@ -488,9 +502,15 @@ impl ContentStore {
             return Ok(hash.clone());
         }
 
-        fs::create_dir_all(dest.parent().expect("dest path has parent"))?;
+        fs::create_dir_all(dest.parent().ok_or_else(|| StoreError::Io {
+            path: dest.to_path_buf(),
+            msg: "write destination has no parent directory".to_string(),
+        })?)?;
         let tmp = self.tmp_path("write-bytes");
-        fs::create_dir_all(tmp.parent().expect("tmp path has parent"))?;
+        fs::create_dir_all(tmp.parent().ok_or_else(|| StoreError::Io {
+            path: tmp.clone(),
+            msg: "staging temp path has no parent directory".to_string(),
+        })?)?;
         let writer = fs::File::create(&tmp)?;
 
         // The digest gate above already proved data==hash, and the write
@@ -947,7 +967,12 @@ impl ContentStore {
 
     fn tmp_path(&self, prefix: &str) -> PathBuf {
         let path = unique_tmp_path(&self.root.join("tmp"), prefix);
-        let _ = fs::create_dir_all(path.parent().expect("tmp path has parent"));
+        // Parent always exists by construction (join appends components),
+        // but a degenerate root must degrade to a downstream I/O error,
+        // never a panic — mirror the call-site guards above.
+        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            let _ = fs::create_dir_all(parent);
+        }
         path
     }
 

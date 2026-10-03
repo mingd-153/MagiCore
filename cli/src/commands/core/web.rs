@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -589,7 +587,6 @@ struct WorkspaceConfig {
 #[derive(Debug, Deserialize)]
 struct WorkspaceLayout {
     apps_dir: Option<String>,
-    packages_dir: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -952,22 +949,6 @@ async fn install_web_target_quiet(
 fn write_monorepo_root_lockfile(_project_root: &Path, _targets: &[PathBuf]) -> Result<()> {
     // Workspace lockfile merging requires v2 schema rewrite
     // For now, each workspace maintains its own lockfile
-    Ok(())
-}
-
-fn atomic_write(path: &Path, data: &[u8]) -> Result<()> {
-    let dir = path.parent().unwrap_or(Path::new("."));
-    let tmp_path = dir.join(format!(".mgc-tmp-{}", std::process::id()));
-    std::fs::write(&tmp_path, data)
-        .with_context(|| format!("failed to write temp file '{}'", tmp_path.display()))?;
-    std::fs::rename(&tmp_path, path).with_context(|| {
-        let _ = std::fs::remove_file(&tmp_path);
-        format!(
-            "failed to rename temp file '{}' into '{}'",
-            tmp_path.display(),
-            path.display()
-        )
-    })?;
     Ok(())
 }
 
@@ -3582,6 +3563,32 @@ fn ensure_package(root: &mut Map<String, Value>, section: &str, package: &str, v
     }
 }
 
+/// Update the existing primary-package section and remove duplicate declarations.
+/// Cập nhật section hiện có của primary package và xóa khai báo trùng.
+fn ensure_primary_package(root: &mut Map<String, Value>, package: &str, version: &str) {
+    const DEPENDENCY_SECTIONS: [&str; 2] = ["dependencies", "devDependencies"];
+    let existing_section = DEPENDENCY_SECTIONS.iter().copied().find(|section| {
+        root.get(*section)
+            .and_then(Value::as_object)
+            .is_some_and(|packages| packages.contains_key(package))
+    });
+    let target_section = existing_section.unwrap_or("dependencies");
+
+    for section in DEPENDENCY_SECTIONS {
+        if let Some(packages) = root.get_mut(section).and_then(Value::as_object_mut) {
+            if section == target_section {
+                packages.insert(package.to_string(), Value::String(version.to_string()));
+            } else {
+                packages.remove(package);
+            }
+        }
+    }
+
+    if existing_section.is_none() {
+        ensure_package(root, "dependencies", package, version);
+    }
+}
+
 async fn apply_web_manifest_seed(
     package_json_path: &Path,
     request: &FrameworkRequest,
@@ -3600,7 +3607,7 @@ async fn apply_web_manifest_seed(
         if !seed.primary.is_empty() {
             let primary = resolve_primary_version(request).await?;
             for &package in seed.primary {
-                ensure_package(object, "dependencies", package, &primary);
+                ensure_primary_package(object, package, &primary);
             }
         }
         for &package in seed.supplemental {

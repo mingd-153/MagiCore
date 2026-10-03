@@ -50,6 +50,10 @@ path = "tests/v4_atomic.rs"
 name = "v4_migrate"
 path = "tests/v4_migrate.rs"
 
+[[test]]
+name = "v4_install_ready"
+path = "tests/v4_install_ready.rs"
+
 [dependencies]
 # Crypto primitives (local crate)
 mgc-crypto = { path = "../mgc-crypto" }

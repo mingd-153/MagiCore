@@ -80,7 +80,7 @@ async fn model_push_pull_roundtrip() {
     );
 
     // Đợi server lên (401/405 fail-closed cũng = server sống)
-    let url = format!("http://localhost:{port}");
+    let url = format!("http://127.0.0.1:{port}");
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {
         if let Some(status) = server.0.try_wait().unwrap() {

@@ -4,7 +4,7 @@
 //! digest khai sai, path traversal qua repo/uuid, atomic upload, phát hiện
 //! blob hỏng khi serve. Đối chiếu finding Tech Lead 2026-09-12.
 
-use mgc_registry_server::storage::{BlobPresence, RegistryStore};
+use mgc_registry_server::storage::{BlobPresence, OciUploadAppendError, RegistryStore};
 
 fn tmp_dir() -> tempfile::TempDir {
     tempfile::tempdir().unwrap()
@@ -161,7 +161,7 @@ async fn oci_repo_traversal_is_rejected() {
     let res = store.create_oci_upload("my-repo", "../../etc/passwd").await;
     assert!(res.is_err(), "evil uuid in upload session must be rejected");
 
-    let res = store.append_oci_upload("my-repo", "../evil", b"x").await;
+    let res = store.append_oci_upload("my-repo", "../evil", 0, b"x").await;
     assert!(res.is_err(), "evil uuid in append must be rejected");
 }
 
@@ -218,6 +218,32 @@ async fn concurrent_oci_puts_same_digest_leave_valid_blob() {
         leftovers.is_empty(),
         "atomic writes must not leave temp files (recursive scan): {leftovers:?}"
     );
+}
+
+#[tokio::test]
+async fn concurrent_oci_uploads_across_store_instances_claim_one_offset() {
+    let tmp = tmp_dir();
+    let first = RegistryStore::new(tmp.path()).await.unwrap();
+    let second = RegistryStore::new(tmp.path()).await.unwrap();
+    let path = first
+        .create_oci_upload("ai/model", "session-1")
+        .await
+        .unwrap();
+
+    let (first_result, second_result) = tokio::join!(
+        first.append_oci_upload("ai/model", "session-1", 0, b"left"),
+        second.append_oci_upload("ai/model", "session-1", 0, b"rght")
+    );
+    assert!(
+        matches!(
+            (&first_result, &second_result),
+            (Ok(4), Err(OciUploadAppendError::OffsetMismatch))
+                | (Err(OciUploadAppendError::OffsetMismatch), Ok(4))
+        ),
+        "exactly one store may append at the current offset"
+    );
+    let bytes = tokio::fs::read(path).await.unwrap();
+    assert!(bytes == b"left" || bytes == b"rght");
 }
 
 // === P0-6: corrupt OCI blob must NOT be served (mirror of the npm test) ===

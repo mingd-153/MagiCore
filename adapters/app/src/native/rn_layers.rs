@@ -35,7 +35,6 @@ use mgc_resolver::protocols::reactnative::{
     collapse_gradle_pins, parse_gradle_lockfile, parse_podfile_lock, pod_root,
 };
 use mgc_resolver::protocols::{MavenProtocol, RegistryProtocol};
-use mgc_types::adapter::PackageAdapter;
 use mgc_types::capabilities::{ContentStoreProvider, DependencyResolver, unsupported_capability};
 use mgc_types::{
     DependencySpec, Ecosystem, Manifest, MgError, MgResult, PackageId, PackageName, ResolvedGraph,
@@ -78,7 +77,7 @@ pub async fn resolve_rn_layers(manifest: &Manifest, project_root: &Path) -> MgRe
     // P0/F6: arm from THIS operation's project (a fresh adapter starts
     // unarmed — an RN project with [security] policy must still filter).
     // (Nạp cổng tuổi từ project của operation này.)
-    web.arm_age_gate_for(project_root)?;
+    web.arm_age_gate_for_core(project_root, "app")?;
     let js_graph = DependencyResolver::resolve(&web, manifest).await?;
     graph.packages.extend(js_graph.packages);
 
@@ -184,6 +183,11 @@ pub async fn resolve_rn_layers(manifest: &Manifest, project_root: &Path) -> MgRe
                     size_bytes: None,
                     content_hash: String::new(),
                     downloaded_from: cocoapods_registry_tag(cocoapods.cdn()),
+                    // No registry SRI for CocoaPods pins yet — v4 install
+                    // refuses SRI-less pins (fail-closed).
+                    // Chưa có SRI registry cho pin CocoaPods — install v4
+                    // từ chối pin thiếu SRI (fail-closed).
+                    integrity_sri: None,
                 }),
                 provenance: Some(mgc_lockfile::Provenance {
                     source_kind: mgc_lockfile::SOURCE_KIND_NATIVE_RESOLVE.to_string(),

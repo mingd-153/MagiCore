@@ -26,7 +26,7 @@ pub fn effective_registry_url(default: &str) -> Result<String> {
         .unwrap_or_else(|| default.to_string());
     if !url.starts_with("https://") && !allow_insecure_loopback_url(&url) {
         return Err(anyhow::anyhow!(
-            "registry URL must use HTTPS: '{url}' (loopback http://127.0.0.1/localhost is allowed)"
+            "registry URL must use HTTPS: '{url}' (loopback http needs MAGICORE_WEB_ALLOW_INSECURE_LOCALHOST=1)"
         ));
     }
     validate_registry_allowed(&url)?;

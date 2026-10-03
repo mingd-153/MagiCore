@@ -162,29 +162,43 @@ impl PluginRegistry {
 
     pub fn register(&self, plugin: Plugin) -> Result<(), String> {
         let key = plugin.ecosystem.as_str();
-        let mut map = self.by_ecosystem.lock().unwrap();
+        // Poisoned lock means a previous holder panicked mid-insert —
+        // fail the registration instead of panicking every later caller.
+        let mut map = self
+            .by_ecosystem
+            .lock()
+            .map_err(|_| "plugin registry lock poisoned".to_string())?;
         if map.contains_key(key) {
-            return Err(format!("plugin already registered for ecosystem '{}'", key));
+            return Err(format!("plugin already registered for ecosystem '{key}'"));
         }
         map.insert(key, plugin);
         Ok(())
     }
 
     pub fn get(&self, ecosystem: Ecosystem) -> Option<Plugin> {
+        // Poisoned → None: callers (factory) fall through to the built-in
+        // adapters, which is the safe default. A poisoned global registry
+        // is reported by the panicking holder's own crash evidence.
         self.by_ecosystem
             .lock()
-            .unwrap()
+            .ok()?
             .get(ecosystem.as_str())
             .cloned()
     }
 
     pub fn registered(&self) -> Vec<Ecosystem> {
+        // Keys come only from `Ecosystem::as_str`, so `from_str` cannot
+        // fail on them — but a foreign key must never panic listing.
+        // (Key chỉ từ `as_str`; key lạ thì bỏ qua, không panic.)
         self.by_ecosystem
             .lock()
-            .unwrap()
-            .keys()
-            .map(|key| Ecosystem::from_str(key).unwrap())
-            .collect()
+            .ok()
+            .map(|map| {
+                map.keys()
+                    .filter_map(|key| Ecosystem::from_str(key))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 }
 

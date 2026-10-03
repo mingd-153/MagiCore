@@ -312,12 +312,6 @@ fn provider_config() -> Result<mgc_cicd_adapter::CicdProvider> {
         .ok_or_else(crate::error::cicd_project_not_detected)
 }
 
-/// Deploy command theo provider — dry-run mặc định, --run để chạy thật (§5.4/S2).
-struct DeployCommand {
-    tool: &'static str,
-    args: Vec<String>,
-}
-
 /// Một target trong `[deploy] targets` (07 §3).
 #[derive(Debug, serde::Deserialize)]
 struct DeployTarget {
@@ -352,142 +346,57 @@ fn deploy_targets(root: &std::path::Path) -> Result<Option<Vec<DeployTarget>>> {
     Ok(targets)
 }
 
-/// Lệnh deploy cho 1 target (dry_run=false khi --run).
-fn target_deploy_command(target: &DeployTarget, dry_run: bool) -> Result<DeployCommand> {
+/// Reject provider CLI pass-through until MagiCore owns a native deploy path.
+/// (Từ chối gọi CLI vendor cho tới khi MagiCore có đường deploy native.)
+fn target_deploy_unavailable(target: &DeployTarget) -> anyhow::Error {
     match target.provider.as_str() {
-        "cloudflare" => Ok(DeployCommand {
-            tool: "wrangler",
-            args: if dry_run {
-                vec!["deploy".to_string(), "--dry-run".to_string()]
+        "cloudflare" | "gcp" | "google" => crate::error::deploy_not_implemented(&target.provider),
+        "aws" => crate::error::cicd_deploy_target_not_implemented(
+            &target.provider,
+            &target.stack,
+            if target.region.is_empty() {
+                "default"
             } else {
-                vec!["deploy".to_string()]
+                &target.region
             },
-        }),
-        "gcp" | "google" => Ok(DeployCommand {
-            tool: "gcloud",
-            args: if dry_run {
-                vec![
-                    "app".to_string(),
-                    "deploy".to_string(),
-                    "--no-promote".to_string(),
-                ]
-            } else {
-                vec!["app".to_string(), "deploy".to_string()]
-            },
-        }),
-        "aws" => {
-            // Dry-run: validate template (không deploy). Thật: cloudformation deploy.
-            if target.stack.is_empty() {
-                return Err(crate::error::deploy_target_missing_stack());
-            }
-            let template = format!("{}.yaml", target.stack);
-            if dry_run {
-                Ok(DeployCommand {
-                    tool: "aws",
-                    args: vec![
-                        "cloudformation".to_string(),
-                        "validate-template".to_string(),
-                        "--template-body".to_string(),
-                        format!("file://{template}"),
-                    ],
-                })
-            } else {
-                let mut args = vec![
-                    "cloudformation".to_string(),
-                    "deploy".to_string(),
-                    "--stack-name".to_string(),
-                    target.stack.clone(),
-                    "--template-body".to_string(),
-                    format!("file://{template}"),
-                ];
-                if !target.region.is_empty() {
-                    args.extend(["--region".to_string(), target.region.clone()]);
-                }
-                Ok(DeployCommand { tool: "aws", args })
-            }
-        }
-        other => Err(crate::error::deploy_target_unknown(other)),
+        ),
+        other => crate::error::deploy_target_unknown(other),
     }
 }
 
-fn deploy_command(provider: mgc_cicd_adapter::CicdProvider) -> Result<DeployCommand> {
+fn provider_deploy_unavailable(provider: mgc_cicd_adapter::CicdProvider) -> anyhow::Error {
     match provider {
-        mgc_cicd_adapter::CicdProvider::Cloudflare => Ok(DeployCommand {
-            tool: "wrangler",
-            args: vec!["deploy".to_string(), "--dry-run".to_string()],
-        }),
-        mgc_cicd_adapter::CicdProvider::Gcp => Ok(DeployCommand {
-            tool: "gcloud",
-            args: vec![
-                "app".to_string(),
-                "deploy".to_string(),
-                "--no-promote".to_string(),
-            ],
-        }),
+        mgc_cicd_adapter::CicdProvider::Cloudflare => {
+            crate::error::deploy_not_implemented("cloudflare")
+        }
+        mgc_cicd_adapter::CicdProvider::Gcp => crate::error::deploy_not_implemented("gcp"),
         mgc_cicd_adapter::CicdProvider::GithubActions
         | mgc_cicd_adapter::CicdProvider::Gitlab
-        | mgc_cicd_adapter::CicdProvider::CircleCi => Err(not_available(
-            "is CI-only — push to trigger; no local deploy command.",
-        )),
-        mgc_cicd_adapter::CicdProvider::Aws => Err(not_available(
-            "aws deploy needs a target (s3 bucket/pipeline) — configure [deploy] targets then run `mgc deploy`.",
-        )),
-        mgc_cicd_adapter::CicdProvider::Argocd => Err(not_available(
-            "argocd runs server-side (GitOps) — commit + push to trigger sync; no local deploy command.",
-        )),
-    }
-}
-
-pub async fn deploy(run: bool) -> Result<()> {
-    let root = std::env::current_dir()?;
-    let targets = deploy_targets(&root)?;
-    let commands: Vec<DeployCommand> = if let Some(targets) = targets {
-        targets
-            .iter()
-            .map(|target| target_deploy_command(target, !run))
-            .collect::<Result<Vec<_>>>()?
-    } else {
-        let provider = provider_config()?;
-        vec![deploy_command(provider)?]
-    };
-
-    if commands.is_empty() {
-        return Err(crate::error::no_deploy_targets());
-    }
-
-    let opts = mgc_exec::prelude::ExecOptions {
-        cwd: Some(root.clone()),
-        log_path: Some(root.join(".magicore").join("exec.log")),
-        clean_env: true,
-        ..Default::default()
-    };
-    for cmd in &commands {
-        if !run {
-            mgc_ui::info(&format!(
-                "[dry-run] would run: {} {} (real deploy requires `mgc deploy --run`)",
-                cmd.tool,
-                cmd.args.join(" ")
-            ));
-            continue;
+        | mgc_cicd_adapter::CicdProvider::CircleCi => {
+            not_available("is CI-only — push to trigger; no local deploy command.")
         }
-        mgc_ui::info(&format!("Deploying: {} {}", cmd.tool, cmd.args.join(" ")));
-        mgc_exec::prelude::run_inherited(cmd.tool, &cmd.args, &opts)?;
+        mgc_cicd_adapter::CicdProvider::Aws => crate::error::deploy_not_implemented("aws"),
+        mgc_cicd_adapter::CicdProvider::Argocd => not_available(
+            "argocd runs server-side (GitOps) — commit + push to trigger sync; no local deploy command.",
+        ),
     }
-    Ok(())
 }
 
-/// `mgc dev` cho cicd — in lệnh deploy (dry-run), không chạy thật (§5.4/S2).
-pub async fn dev(dry_run: bool) -> Result<()> {
+pub async fn deploy(_run: bool) -> Result<()> {
     let root = std::env::current_dir()?;
-    let provider = provider_config()?;
-    let cmd = deploy_command(provider)?;
-    mgc_ui::info(&format!(
-        "[dry-run] preview: {} {} (run with `mgc deploy --run`)",
-        cmd.tool,
-        cmd.args.join(" ")
-    ));
-    let _ = (root, dry_run);
-    Ok(())
+    if let Some(targets) = deploy_targets(&root)? {
+        let Some(target) = targets.first() else {
+            return Err(crate::error::no_deploy_targets());
+        };
+        return Err(target_deploy_unavailable(target));
+    }
+    Err(provider_deploy_unavailable(provider_config()?))
+}
+
+/// CI core has no native local deploy flow yet; never preview a vendor CLI.
+/// (CI core chưa có deploy local native; không preview lệnh CLI vendor.)
+pub async fn dev(_dry_run: bool) -> Result<()> {
+    Err(provider_deploy_unavailable(provider_config()?))
 }
 
 #[cfg(test)]

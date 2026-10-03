@@ -176,6 +176,11 @@ async fn resolve_with_protocol_inner(
                 // blake3 filled at install (requires the downloaded bytes).
                 content_hash: String::new(),
                 downloaded_from: registry.to_string(),
+                // Registry SRI not supplied on this lane yet — v4 install
+                // refuses SRI-less pins (fail-closed).
+                // Lane này chưa cung cấp SRI registry — install v4 từ chối
+                // pin thiếu SRI (fail-closed).
+                integrity_sri: None,
             }),
             provenance: Some(Provenance {
                 source_kind: SOURCE_KIND_NATIVE_RESOLVE.to_string(),

@@ -12,7 +12,9 @@ fn package(name: &str, version: &str, registry: Option<&str>) -> Package {
         name: name.to_string(),
         version: version.to_string(),
         resolved: format!("https://example.invalid/{name}-{version}.tgz"),
-        integrity: format!("blake3-{name}-{version}"),
+        // Installer-enforced SRI so edge/identity tests stay warning-free;
+        // unenforceable values are covered by dedicated SRI tests.
+        integrity: "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==".to_string(),
         dependencies: Vec::new(),
         registry: registry.map(str::to_string),
         ..Default::default()

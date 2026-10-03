@@ -128,16 +128,53 @@ pub struct ExecReport {
     pub stdout_full: String,
 }
 
+/// Find a bare Windows command in the supplied PATH, preferring native PE
+/// executables over command shims and extensionless scripts.
+/// (Tìm executable Windows trong PATH được truyền, ưu tiên PE trước shim và script không đuôi.)
+#[cfg(any(windows, test))]
+fn find_windows_command(
+    cmd: &str,
+    search_path: Option<&std::ffi::OsStr>,
+) -> Option<std::ffi::OsString> {
+    let search_path = search_path
+        .map(std::ffi::OsStr::to_os_string)
+        .or_else(|| std::env::var_os("PATH"))?;
+    let suffixes = [".exe", ".com", ".cmd", ".bat", ""];
+    let mut matches: [Option<std::ffi::OsString>; 5] = Default::default();
+
+    for directory in std::env::split_paths(&search_path) {
+        // An empty PATH entry resolves against the current directory. Do not
+        // turn an absent/empty path entry into an implicit cwd search.
+        if directory.as_os_str().is_empty() {
+            continue;
+        }
+        for (rank, suffix) in suffixes.iter().enumerate() {
+            if matches[rank].is_some() {
+                continue;
+            }
+            let candidate = directory.join(format!("{cmd}{suffix}"));
+            if candidate.is_file() {
+                matches[rank] = Some(candidate.into_os_string());
+            }
+        }
+    }
+
+    matches.into_iter().flatten().next()
+}
+
 /// Resolve a bare command name to a Windows shim (.cmd/.bat) when the bare
-/// executable is not directly spawnable. Uses where.exe (PATH search) so the
-/// allowlist still governs WHICH tools can run — this only fixes HOW.
+/// executable is not directly spawnable. PATH lookup is performed in-process,
+/// so resolving a tool does not spawn a second executable.
+/// (Resolve tên lệnh sang shim Windows khi cần; tự dò PATH, không spawn helper.)
 /// The search PATH is the CALLER-PROVIDED one (opts.env PATH — which the
 /// task runner extends with node_modules/.bin), not the parent process env:
 /// resolving against the wrong PATH made every project-local shim
 /// (tsc.cmd, vite.cmd…) unspawnable (caught by the Windows E2E lane,
 /// 2026-09-12).
-/// Resolve tên lệnh sang shim Windows (.cmd/.bat) khi bare exe không spawn
-/// được — dùng where.exe (tìm theo PATH), allowlist vẫn kiểm soát CHỨNG TỪ.
+/// Resolve tên lệnh sang shim Windows (.cmd/.bat) bằng PATH lookup in-process;
+/// allowlist kiểm tra tên tool gốc trước bước resolve này.
+/// Resolve a command to a Windows shim (.cmd/.bat) with in-process PATH lookup;
+/// the allowlist validates the original tool name before this resolution.
 /// PATH tìm kiếm là PATH CỦA CALLER (opts.env PATH — task runner mở rộng
 /// bằng node_modules/.bin), không phải env của process cha: resolve theo
 /// PATH sai làm mọi shim local của project (tsc.cmd, vite.cmd…) không
@@ -145,64 +182,12 @@ pub struct ExecReport {
 #[cfg(not(unix))]
 fn resolve_windows_shim(cmd: &str, search_path: Option<&std::ffi::OsStr>) -> std::ffi::OsString {
     use std::ffi::OsString;
-    use std::os::windows::process::CommandExt;
 
     // Names that already carry an extension or path separators spawn as-is.
     if cmd.contains('.') || cmd.contains('\\') || cmd.contains('/') {
         return OsString::from(cmd);
     }
-
-    let mut where_cmd = Command::new("where.exe");
-    where_cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-    where_cmd.arg(cmd);
-    // Search the caller-provided PATH (node_modules/.bin etc.), falling
-    // back to the parent env only when no PATH was provided.
-    // Tìm theo PATH caller truyền (node_modules/.bin v.v.), chỉ fallback
-    // về env cha khi không có PATH.
-    if let Some(path) = search_path {
-        where_cmd.env("PATH", path);
-    }
-    let output = where_cmd.output();
-    if let Ok(out) = output
-        && out.status.success()
-    {
-        // Prefer real PE executable (.exe, .com) to avoid cmd.exe wrapper
-        // which can corrupt environment variables (Node CSPRNG crash on Windows runner).
-        // Only use .cmd/.bat if no PE executable available.
-        let text = String::from_utf8_lossy(&out.stdout);
-        let lines: Vec<&str> = text
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty())
-            .collect();
-
-        // Priority: .exe > .com > .cmd/.bat > extensionless.
-        // Rationale: an extensionless PATH entry on Windows is often a
-        // Git-bash sh script (flutter's bin ships both `flutter` sh script
-        // and `flutter.bat`) — spawning it yields ERROR_BAD_FORMAT (193).
-        // .cmd/.bat must go through cmd.exe; extensionless is last resort.
-        // Ưu tiên: .exe > .com > .cmd/.bat > không đuôi. Entry không đuôi
-        // trên Windows thường là sh script của Git-bash (flutter bin có cả
-        // `flutter` lẫn `flutter.bat`) — spawn trực tiếp sẽ lỗi 193.
-        let is_pe = |l: &str| {
-            let lower = l.to_ascii_lowercase();
-            lower.ends_with(".exe") || lower.ends_with(".com")
-        };
-        let is_shim = |l: &str| {
-            let lower = l.to_ascii_lowercase();
-            lower.ends_with(".cmd") || lower.ends_with(".bat")
-        };
-        if let Some(pe) = lines.iter().find(|l| is_pe(l)) {
-            return OsString::from(*pe);
-        }
-        if let Some(shim) = lines.iter().find(|l| is_shim(l)) {
-            return OsString::from(*shim);
-        }
-        if let Some(direct) = lines.first() {
-            return OsString::from(*direct);
-        }
-    }
-    OsString::from(cmd)
+    find_windows_command(cmd, search_path).unwrap_or_else(|| OsString::from(cmd))
 }
 
 /// Chạy `cmd args` sau khi check allowlist. Không dùng shell — args là Vec riêng (§5.6).
@@ -322,6 +307,8 @@ fn reject_external_dependency_resolution(
         // Bare `cargo` prints its help text and does not resolve dependencies.
         "cargo" if first.is_empty() => None,
         "cargo" => Some("unclassified Cargo subcommands are blocked by mgc-exec policy"),
+        "rustc" if args.len() == 1 && args[0] == "-vv" => None,
+        "rustc" => Some("rustc is restricted to the read-only -vV host target query"),
         "python"
             if args
                 .windows(2)

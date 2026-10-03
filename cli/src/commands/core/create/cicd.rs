@@ -46,6 +46,8 @@ pub async fn run(framework: &str, project_name: &str) -> Result<()> {
         }
     }
     super::scaffold_and_save_metadata(&config)?;
-    mgc_ui::success("CICD project created. Run `mgc deploy` (dry-run) to preview deployment.");
+    mgc_ui::success(
+        "CICD project created. `mgc deploy` remains unavailable until a native provider engine is implemented.",
+    );
     Ok(())
 }

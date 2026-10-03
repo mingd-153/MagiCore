@@ -1,11 +1,11 @@
 //! `mgc migrate` — explicit lockfile migrations (V1.2 §16.4).
 //! Migration lockfile tường minh.
 //!
-//! v4 is not currently writable from v1-v3: the install, mutation, and
-//! audit paths still consume the legacy lock schema. The explicit migration
-//! command therefore refuses without changing the existing lock until all
-//! runtime consumers can preserve v4 package identity. Existing v4 files are
-//! accepted as a no-op.
+//! v4 writes are allowed only when fully lossless: install/add (via the
+//! shared v4 loader) consume v4 without projecting away identity, and
+//! `migrate_v3_to_v4` reports zero warnings. Any dropped edge, peer,
+//! source, or installer SRI keeps the existing lock untouched.
+//! Existing v4 files are accepted as a no-op.
 
 use anyhow::Result;
 use clap::Subcommand;
@@ -14,7 +14,7 @@ use std::time::Duration;
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum MigrateCmd {
-    /// Migrate mgc.lock (v4 writes stay disabled until runtime support is complete)
+    /// Migrate mgc.lock (v4 writes require a fully lossless migration)
     Lock {
         /// Target schema version (only "4")
         #[arg(long)]
@@ -107,7 +107,47 @@ async fn run_lock(dir: Option<PathBuf>, to: &str) -> Result<()> {
         }
         1..=3 => {
             mgc_lockfile::ensure_lockfile_mutation_allowed(&lock_path)?;
-            Err(crate::error::migrate_v4_runtime_unavailable())
+            // Emit v4 only when the migration is fully lossless: any
+            // dropped edge/peer/source or SRI-less pin keeps the old lock
+            // untouched (fail-closed — a partial v4 could never drive
+            // install without silent verification gaps).
+            // (Chỉ ghi v4 khi migration lossless hoàn toàn: hao hụt nào
+            // cũng giữ nguyên lock cũ.)
+            let legacy = mgc_lockfile::parser::parse_lockfile(&text)
+                .map_err(|error| anyhow::anyhow!("{error}"))?;
+            let (mut v4, warnings) = mgc_lockfile::migrate_v3_to_v4(legacy)
+                .map_err(|error| anyhow::anyhow!("{error}"))?;
+            if !warnings.is_empty() {
+                return Err(crate::error::migrate_v4_lossy(&warnings));
+            }
+            v4.metadata.generated_at = chrono::Utc::now().to_rfc3339();
+            v4.metadata.generator = format!("mgc/{}", env!("CARGO_PKG_VERSION"));
+            v4.metadata.lockfile_hash = mgc_lockfile::canonical::payload_digest(&v4.payload());
+            v4.metadata.signature = None;
+            let document = mgc_lockfile::canonical::write_v4_document(&v4)
+                .map_err(|error| anyhow::anyhow!("{error}"))?;
+            // Re-parse what will hit disk: the emitted text must round-trip
+            // into the identical document (no serializer drift).
+            // (Parse lại đúng text sẽ ghi đĩa: phải round-trip y hệt.)
+            let round_trip = mgc_lockfile::canonical::parse_v4_document(&document)
+                .map_err(|error| anyhow::anyhow!("{error}"))?;
+            if round_trip != v4 {
+                return Err(crate::error::migrate_v4_roundtrip_mismatch());
+            }
+            mgc_lockfile::atomic::atomic_write_locked(
+                &guard,
+                &lock_path,
+                document.as_bytes(),
+                std::time::Duration::from_secs(60),
+            )
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
+            mgc_ui::warning(
+                "migrated mgc.lock to schema v4 unsigned: the previous lock signature (if any) no longer applies — run `mgc trust sign` to sign the new lock",
+            );
+            mgc_ui::info(
+                "migrated mgc.lock to schema v4 (lossless — no edge, peer, source, or SRI dropped).",
+            );
+            Ok(())
         }
         other => Err(crate::error::migrate_unsupported_version(other)),
     }

@@ -246,7 +246,16 @@ async fn app_rn_multi_tier_install_fails_closed_without_atomic_commit() {
         "MGC_COCOAPODS_CDN_URL",
         "MAGICORE_WEB_REGISTRY_URL",
         "MAGICORE_WEB_ALLOWED_REGISTRIES",
+        "MAGICORE_WEB_ALLOW_INSECURE_LOCALHOST",
     ]);
+    // SAFETY: test-only env overrides (process-local, restored below).
+    // (SAFETY: env override chỉ trong test (cục bộ process, phục hồi bên
+    // dưới).)
+    // Loopback http requires explicit opt-in (default deny); the mock
+    // registry below is test infrastructure, not production traffic.
+    unsafe {
+        std::env::set_var("MAGICORE_WEB_ALLOW_INSECURE_LOCALHOST", "1");
+    }
     // SAFETY: test-only env overrides (process-local, restored below).
     // (SAFETY: env override chỉ trong test (cục bộ process, phục hồi bên
     // dưới).)

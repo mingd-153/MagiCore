@@ -249,7 +249,11 @@ impl SwiftRegistryProtocol {
         let deps = swift_deps_from_archive(&zip_bytes)?;
         self.zip_cache
             .lock()
-            .expect("swift zip cache poisoned")
+            .map_err(|_| {
+                mgc_types::MgError::Other(
+                    "swift zip cache lock poisoned — refusing uncertain cache".to_string(),
+                )
+            })?
             .insert(format!("{name}@{version}"), zip_bytes);
 
         Ok(ResolvedEntry {
@@ -412,7 +416,11 @@ impl RegistryProtocol for SwiftRegistryProtocol {
         if let Some(bytes) = self
             .zip_cache
             .lock()
-            .expect("swift zip cache poisoned")
+            .map_err(|_| {
+                mgc_types::MgError::Other(
+                    "swift zip cache lock poisoned — refusing uncertain cache".to_string(),
+                )
+            })?
             .get(&key)
         {
             return Ok(bytes.clone());

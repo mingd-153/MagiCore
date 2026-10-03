@@ -467,7 +467,11 @@ pub async fn ensure_layer(
 
     // 5. Registry fetch (Phase 2 - NEW)
     use crate::scaffold::registry::ScaffoldRegistry;
-    let registry_client = ScaffoldRegistry::new();
+    let registry_client = ScaffoldRegistry::new().map_err(|error| {
+        crate::scaffold::resolver::ScaffoldResolveError::Other(format!(
+            "cannot reach the template registry: {error}"
+        ))
+    })?;
 
     // Resolve version from dist-tag (latest → 15.5.0)
     let version = match registry_client.resolve_version(&spec).await {

@@ -22,6 +22,17 @@ struct PackageManifest {
     scripts: PackageScripts,
 }
 
+/// Lifecycle executor available to the guarded install flow.
+/// Bộ chạy lifecycle chỉ được gọi từ luồng install đã kiểm tra trust.
+///
+/// External callers cannot bypass that approval gate:
+/// Caller bên ngoài không thể bỏ qua cổng phê duyệt đó:
+///
+/// ```compile_fail
+/// use mgc_web_adapter::lifecycle::LifecycleRunner;
+/// use std::path::Path;
+/// LifecycleRunner::run_scripts(Path::new("."), Path::new(".")).unwrap();
+/// ```
 pub struct LifecycleRunner;
 
 impl PackageScripts {
@@ -56,7 +67,8 @@ pub(crate) fn load_package_scripts(pkg_dir: &Path) -> MgResult<PackageScripts> {
 }
 
 impl LifecycleRunner {
-    pub fn run_scripts(pkg_dir: &Path, project_root: &Path) -> MgResult<()> {
+    #[cfg(test)]
+    pub(crate) fn run_scripts(pkg_dir: &Path, project_root: &Path) -> MgResult<()> {
         let scripts = load_package_scripts(pkg_dir)?;
         Self::run_scripts_with_snapshot(pkg_dir, project_root, scripts)
     }
@@ -197,6 +209,7 @@ impl LifecycleRunner {
             timeout: Some(lifecycle_timeout()),
             env,
             clean_env: true,
+            execution_scope: Some(mgc_exec::allowlist::ExecutionScope::Install),
             ..Default::default()
         };
 

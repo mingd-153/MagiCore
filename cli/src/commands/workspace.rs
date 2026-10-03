@@ -30,6 +30,40 @@ pub async fn run(cmd: WorkspaceCmd) -> Result<()> {
     }
 }
 
+/// Return workspace topology as JSON text without writing to process stdout.
+/// Trả topology workspace dạng JSON mà không ghi vào stdout của tiến trình.
+pub fn workspace_info_json() -> Result<String> {
+    let cwd = std::env::current_dir()?;
+    let project_root =
+        ProjectConfig::find_project_root(&cwd).ok_or_else(crate::error::project_root_missing)?;
+    let targets = mgc_workspace::discover_workspace_targets(&project_root)?;
+    let graph = mgc_workspace::build_workspace_graph(&targets)?;
+    let nodes: Vec<serde_json::Value> = graph
+        .nodes
+        .iter()
+        .map(|node| {
+            serde_json::json!({
+                "name": node.name,
+                "path": node.path.to_string_lossy(),
+            })
+        })
+        .collect();
+    let edges: Vec<serde_json::Value> = graph
+        .edges
+        .iter()
+        .map(|edge| {
+            serde_json::json!({
+                "from": graph.nodes[edge.from].name,
+                "to": graph.nodes[edge.to].name,
+            })
+        })
+        .collect();
+    Ok(serde_json::to_string(&serde_json::json!({
+        "nodes": nodes,
+        "edges": edges,
+    }))?)
+}
+
 fn list(project_root: &Path, filter: Option<&str>, json: bool) -> Result<()> {
     let targets = mgc_workspace::discover_workspace_targets(project_root)?;
     let graph = mgc_workspace::build_workspace_graph(&targets)?;

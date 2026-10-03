@@ -41,7 +41,14 @@ pub fn verify_python_package(package_path: &Path, expected_hash: Option<&str>) -
         )));
     }
 
-    let expected = expected_hash.expect("expected_hash checked non-None above");
+    let Some(expected) = expected_hash else {
+        // Guarded above, but re-check instead of unwrapping: a refactor
+        // that moves the guard must fail closed, not panic.
+        return Err(MgError::Other(format!(
+            "cannot verify Python package '{}': expected hash vanished after the availability check",
+            package_path.display()
+        )));
+    };
 
     // Compute SHA-256 of package file
     // Tính SHA-256 của package file

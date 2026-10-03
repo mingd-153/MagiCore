@@ -110,6 +110,58 @@ pub fn migrate_v2_to_v3(mut lockfile: Lockfile) -> Lockfile {
     lockfile
 }
 
+/// Carry the v3 SRI string into the v4 artifact when — and only when —
+/// it parses as installer-enforced SRI. Unsupported/empty values stay
+/// absent (with a warning) instead of being converted or fabricated:
+/// only the registry lane that fetched the bytes can mint a hash.
+/// Mang chuỗi SRI v3 sang artifact v4 khi — và chỉ khi — parse được SRI
+/// mà installer bắt buộc. Giá trị không hỗ trợ/trống giữ nguyên vắng
+/// (kèm warning), không convert hay bịa: chỉ lane registry tải byte mới
+/// được đúc hash.
+/// Carry the v3 SRI string into the v4 artifact when — and only when —
+/// it parses as installer-enforced SRI. Unsupported/empty values stay
+/// absent (with a warning) instead of being converted or fabricated:
+/// only the registry lane that fetched the bytes can mint a hash.
+/// A missing v3 artifact block is rebuilt from the pin's own resolved
+/// URL and registry (preservation, not fabrication); a pin with no URL
+/// at all stays absent with a warning.
+/// Mang chuỗi SRI v3 sang artifact v4 khi — và chỉ khi — parse được SRI
+/// mà installer bắt buộc. Giá trị không hỗ trợ/trống giữ nguyên vắng
+/// (kèm warning), không convert hay bịa: chỉ lane registry tải byte mới
+/// được đúc hash. Artifact v3 vắng được dựng lại từ URL/registry của
+/// chính pin (giữ liệu, không bịa); pin không URL giữ vắng kèm warning.
+fn carry_install_sri(
+    package: &Package,
+    warnings: &mut Vec<String>,
+) -> Option<crate::schema::ArtifactRef> {
+    let mut artifact = package
+        .artifact
+        .clone()
+        .unwrap_or_else(|| crate::schema::ArtifactRef {
+            url: package.resolved.clone(),
+            size_bytes: None,
+            content_hash: String::new(),
+            downloaded_from: package.registry.clone().unwrap_or_default(),
+            integrity_sri: None,
+        });
+    if artifact.url.is_empty() {
+        warnings.push(format!(
+            "pin {}@{} has no artifact URL: v4 install could never fetch it",
+            package.name, package.version
+        ));
+        return None;
+    }
+    if crate::policy::check_install_sri(&package.integrity).is_ok() {
+        artifact.integrity_sri = Some(package.integrity.clone());
+    } else if !package.integrity.is_empty() {
+        warnings.push(format!(
+            "pin {}@{} has SRI '{}' the installer cannot enforce: dropped from v4 artifact (re-resolve to refresh)",
+            package.name, package.version, package.integrity
+        ));
+    }
+    Some(artifact)
+}
+
 /// Migrate lockfile v3 to v4 — Migrate lockfile v3 sang v4.
 ///
 /// Returns the v4 document PLUS every lossy decision as warnings (never
@@ -126,8 +178,11 @@ pub fn migrate_v2_to_v3(mut lockfile: Lockfile) -> Lockfile {
 ///   would be fake data).
 /// - packages without a registry land on the explicit `"unknown"`
 ///   source (labeled, never a guessed URL).
-/// - empty v3 integrity stays empty (v4 verify will fail on it — the
-///   failure belongs to the artifact, not the migration).
+/// - v3 `integrity` (installer SRI) is carried into
+///   `artifact.integrity_sri` only when it parses as installer-enforced
+///   SRI; unsupported values are dropped with a warning, empty stays
+///   empty (v4 install refuses SRI-less pins — the failure belongs to
+///   the artifact, not the migration).
 pub fn migrate_v3_to_v4(
     lockfile: Lockfile,
 ) -> LockfileResult<(crate::canonical::LockfileV4, Vec<String>)> {
@@ -259,7 +314,7 @@ pub fn migrate_v3_to_v4(
         packages_v4.push(PackageV4 {
             key,
             edges,
-            artifact: package.artifact.clone(),
+            artifact: carry_install_sri(package, &mut warnings),
             provenance: package.provenance.clone(),
             toolchain: package.toolchain.clone(),
             scripts_policy: package.scripts_policy.clone(),

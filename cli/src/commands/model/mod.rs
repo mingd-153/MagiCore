@@ -689,10 +689,7 @@ async fn push(
     }
 
     let config = OciImageConfig {
-        created: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs().to_string())
-            .unwrap_or_default(),
+        created: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
         architecture: "any".into(),
         os: "any".into(),
         config: None,

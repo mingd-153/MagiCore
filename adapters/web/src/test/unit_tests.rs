@@ -916,6 +916,56 @@ async fn test_resolve_uses_shared_resolution_cache_when_registry_is_unavailable(
 }
 
 #[tokio::test]
+async fn test_resolve_bypasses_shared_cache_when_minimum_age_is_active() {
+    let shared = tempdir_real().unwrap();
+    let registry_url = "http://127.0.0.1:9";
+    let cache = SharedWebCache {
+        root: shared.path().to_path_buf(),
+    };
+    let mut manifest = Manifest::new("demo-age", mgc_types::ecosystem::Ecosystem::Web);
+    manifest.add_dep(
+        DependencySpec::new(
+            PackageName::new("react").unwrap(),
+            VersionRange::parse("^18.2.0").unwrap(),
+        ),
+        false,
+        false,
+        false,
+    );
+    let graph = ResolvedGraph {
+        packages: vec![ResolvedPackage {
+            id: PackageId::new(
+                PackageName::new("react").unwrap(),
+                Version::parse("18.2.0").unwrap(),
+            ),
+            integrity: "sha512-stale-age-unverified".to_string(),
+            tarball_url: "https://registry.example.test/react-18.2.0.tgz".to_string(),
+            deps: vec![],
+            peer_deps: vec![],
+            direct: true,
+            dev: false,
+        }],
+    };
+    let key = manifest_resolution_cache_key(&manifest, registry_url);
+    cache.write_resolution(&key, registry_url, &graph).unwrap();
+
+    let adapter = WebAdapter::with_registry_and_shared_cache(
+        registry_url.to_string(),
+        shared.path().to_path_buf(),
+    );
+    adapter.provider.set_age_policy(Some(AgePolicy {
+        cutoff_hours: 24,
+        allow_missing_time: false,
+    }));
+
+    let error = adapter.resolve(&manifest).await.unwrap_err();
+    assert!(
+        error.to_string().contains("127.0.0.1:9") || error.to_string().contains("offline mode"),
+        "active age gate must not reuse an unverified cached graph: {error}"
+    );
+}
+
+#[tokio::test]
 async fn test_resolve_does_not_reuse_legacy_resolution_cache_schema() {
     use sha2::{Digest, Sha256};
 
@@ -2293,6 +2343,11 @@ async fn test_install_finalizes_lock_and_cleans_staging_tmp() {
 
 #[tokio::test]
 async fn test_install_uses_cache_when_registry_is_unavailable() {
+    // Loopback http tarballs require explicit opt-in (default deny) —
+    // hold the env lock so parallel tests never observe a torn value.
+    let _env_guard = env_test_lock().lock().unwrap();
+    let old_insecure = std::env::var_os("MAGICORE_WEB_ALLOW_INSECURE_LOCALHOST");
+    unsafe { std::env::set_var("MAGICORE_WEB_ALLOW_INSECURE_LOCALHOST", "1") };
     let dir = tempdir_real().unwrap();
     std::fs::write(
         dir.path().join("package.json"),
@@ -2339,6 +2394,7 @@ async fn test_install_uses_cache_when_registry_is_unavailable() {
         .unwrap();
     assert_eq!(summary.added, vec![package_id]);
     assert!(summary.bytes_from_cache > 0);
+    restore_env_var("MAGICORE_WEB_ALLOW_INSECURE_LOCALHOST", old_insecure);
 }
 
 #[tokio::test]
@@ -2591,6 +2647,10 @@ async fn test_install_failure_does_not_materialize_partial_node_modules() {
 
 #[tokio::test]
 async fn test_install_skips_when_matching_package_is_already_materialized() {
+    // Same loopback opt-in as the cache test above (default deny).
+    let _env_guard = env_test_lock().lock().unwrap();
+    let old_insecure = std::env::var_os("MAGICORE_WEB_ALLOW_INSECURE_LOCALHOST");
+    unsafe { std::env::set_var("MAGICORE_WEB_ALLOW_INSECURE_LOCALHOST", "1") };
     let dir = tempdir_real().unwrap();
     std::fs::write(
         dir.path().join("package.json"),
@@ -2654,6 +2714,7 @@ async fn test_install_skips_when_matching_package_is_already_materialized() {
     // Nâng lên v3 có chủ đích (Phase 1): web writer giờ ghi schema v3.
     assert_eq!(parsed.version, "3");
     assert_eq!(parsed.packages[0].version, "4.4.3");
+    restore_env_var("MAGICORE_WEB_ALLOW_INSECURE_LOCALHOST", old_insecure);
 }
 
 #[tokio::test]
@@ -4142,7 +4203,7 @@ async fn test_age_policy_loader_is_per_project_and_fail_closed() {
     let good = tempfile::tempdir().unwrap();
     std::fs::write(
         good.path().join("mgc.toml"),
-        "name = \"g\"\n[security]\nmin_release_age = 100\n",
+        "name = \"g\"\n[security]\nmin_release_age = 100\ncloud = 7\n",
     )
     .unwrap();
     let policy = crate::WebAdapter::load_age_policy_for(good.path()).unwrap();
@@ -4154,6 +4215,17 @@ async fn test_age_policy_loader_is_per_project_and_fail_closed() {
         }),
         "project policy must load with its own cutoff"
     );
+    let cloud_policy = crate::WebAdapter::load_age_policy_for_core(good.path(), "clo").unwrap();
+    assert_eq!(
+        cloud_policy,
+        Some(AgePolicy {
+            cutoff_hours: 7,
+            allow_missing_time: false
+        })
+    );
+    let web = crate::WebAdapter::new().unwrap();
+    web.arm_age_gate_for_core(good.path(), "clo").unwrap();
+    assert_eq!(web.provider.age_policy(), cloud_policy);
 
     // Broken TOML → Err (fail-closed), not silent None.
     let broken = tempfile::tempdir().unwrap();
@@ -4192,6 +4264,33 @@ async fn test_age_policy_loader_is_per_project_and_fail_closed() {
 /// process-global first-wins) — multi-project processes arm per
 /// operation.
 /// Hai provider giữ policy ĐỘC LẬP (không global first-wins).
+#[test]
+fn test_age_policy_changes_invalidate_cached_version_decisions() {
+    use crate::provider::{AgePolicy, NpmDependencyProvider};
+
+    let provider = NpmDependencyProvider::new("https://example.invalid", None, None);
+    let package = PackageName::new("react").unwrap();
+    provider.insert_versions_for(&package, vec![Version::parse("18.2.0").unwrap()]);
+    provider
+        .optional_enqueue_cache
+        .insert("stale-policy-decision".to_string(), true);
+    assert!(provider.cached_versions_for(&package).is_some());
+
+    provider.set_age_policy(Some(AgePolicy {
+        cutoff_hours: 24,
+        allow_missing_time: false,
+    }));
+
+    assert!(
+        provider.cached_versions_for(&package).is_none(),
+        "version lists selected under the previous policy must be discarded"
+    );
+    assert!(
+        provider.optional_enqueue_cache.is_empty(),
+        "optional dependency decisions can depend on the age-filtered version set"
+    );
+}
+
 #[test]
 fn test_age_policy_is_per_provider_instance() {
     use crate::provider::{AgePolicy, NpmDependencyProvider};

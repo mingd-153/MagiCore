@@ -7,7 +7,17 @@ use std::path::Path;
 use crate::lockfile::{read_web_lockfile_checked, write_web_lockfile_with_state};
 use crate::manifest::{parse_manifest, write_manifest};
 
+/// Loopback http is allowed only with explicit opt-in
+/// (`MAGICORE_WEB_ALLOW_INSECURE_LOCALHOST=1`, e.g. local registries in
+/// tests) — default deny so production never silently fetches cleartext.
+/// (Loopback http chỉ cho phép khi opt-in rõ ràng — mặc định từ chối.)
 pub fn allow_insecure_loopback_url(url: &str) -> bool {
+    let explicitly_allowed = std::env::var("MAGICORE_WEB_ALLOW_INSECURE_LOCALHOST")
+        .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    if !explicitly_allowed {
+        return false;
+    }
     let Ok(parsed) = url::Url::parse(url) else {
         return false;
     };
@@ -81,6 +91,199 @@ pub fn registry_advisory_bulk_endpoint(registry_url: &str) -> MgResult<url::Url>
         })
 }
 
+/// Advisory pins split: `(npm-auditable, jsr-partial)`.
+/// (Pin advisory tách: npm kiểm được, jsr kiểm một phần.)
+type AuditPinSplit = (Vec<(String, String)>, Vec<String>);
+
+/// v4 audit pins: Web-ecosystem instances reachable from this owner's
+/// roots. Reachability scoping mirrors the install closure — orphans
+/// cannot smuggle names into an advisory query either. Returns `None`
+/// for missing/non-v4 locks so the legacy path below owns them.
+/// (Pin audit v4: instance Web tới được từ root của owner. Trả `None`
+/// cho lock thiếu/không-v4 để đường legacy xử lý.)
+pub(crate) fn v4_pins_for_audit(project_root: &Path) -> MgResult<Option<AuditPinSplit>> {
+    use crate::lockfile::web_lock_owner_core;
+    let lock_path = project_root.join("mgc.lock");
+    let bytes = match mgc_lockfile::read_lockfile_bytes(&lock_path) {
+        Ok(bytes) => bytes,
+        Err(mgc_lockfile::LockfileError::IoError(error))
+            if error.kind() == std::io::ErrorKind::NotFound =>
+        {
+            return Ok(None);
+        }
+        Err(error) => {
+            return Err(MgError::Other(format!("Failed to read lockfile: {error}")));
+        }
+    };
+    let content = String::from_utf8(bytes)
+        .map_err(|error| MgError::Other(format!("Lockfile is not valid UTF-8: {error}")))?;
+    if !mgc_lockfile::detect_lockfile_version(&content).is_ok_and(|version| version == 4) {
+        return Ok(None);
+    }
+    let doc = mgc_lockfile::canonical::parse_v4_document(&content)
+        .map_err(|error| MgError::Other(format!("Failed to parse v4 lockfile: {error}")))?;
+    let verification = crate::lockfile::verify_v4_document_integrity(&doc)?;
+    if !verification.signed {
+        mgc_ui::warning(
+            "mgc.lock v4 digest is valid, but the lock is unsigned; signer trust was not evaluated",
+        );
+    }
+    let owner = web_lock_owner_core(project_root)?;
+    let empty_roots: Vec<String> = Vec::new();
+    let raw_roots = doc
+        .root_dependencies_by_owner
+        .get(&owner)
+        .unwrap_or(&empty_roots);
+    let raw_roots: &[String] = if raw_roots.is_empty() {
+        &doc.root_dependencies
+    } else {
+        raw_roots
+    };
+    // Index by the full v4 identity. Collapsing to name@version merges
+    // distinct sources/peer variants and can silently audit the wrong node.
+    // Lập chỉ mục bằng đủ identity v4; gộp theo name@version sẽ nhập nhằng
+    // source/peer variant và có thể audit nhầm node.
+    let mut by_key = std::collections::HashMap::with_capacity(doc.packages.len());
+    for (position, package) in doc.packages.iter().enumerate() {
+        if by_key.insert(package.key.clone(), position).is_some() {
+            return Err(MgError::Other(format!(
+                "v4 lock contains a duplicate package identity '{}@{}'",
+                package.key.name, package.key.version
+            )));
+        }
+    }
+    for package in &doc.packages {
+        for edge in &package.edges {
+            if !by_key.contains_key(&edge.target_key) {
+                return Err(MgError::Other(format!(
+                    "v4 lock edge target from '{}@{}' references a missing full package identity '{}@{}'",
+                    package.key.name,
+                    package.key.version,
+                    edge.target_key.name,
+                    edge.target_key.version
+                )));
+            }
+        }
+    }
+    let mut reached = vec![false; doc.packages.len()];
+    let mut stack = Vec::new();
+    if raw_roots.is_empty() {
+        // Web v4 locks intentionally omit root pins, so use the manifest
+        // as the root source and require one exact Web instance per range.
+        // Lock Web v4 cố ý bỏ root pin; dùng manifest làm nguồn và yêu cầu
+        // mỗi range khớp đúng một instance Web.
+        let manifest = crate::manifest::parse_manifest(project_root)?;
+        for dependency in manifest.all_dependencies() {
+            let expected_name = mgc_lockfile::v4::canonical_name(
+                mgc_lockfile::EcosystemTag::Web,
+                dependency.name.as_str(),
+            );
+            let candidates: Vec<usize> = doc
+                .packages
+                .iter()
+                .enumerate()
+                .filter(|(_, package)| {
+                    package.key.ecosystem == mgc_lockfile::EcosystemTag::Web
+                        && package.key.name == expected_name
+                        && Version::parse(&package.key.version)
+                            .is_ok_and(|version| dependency.range.matches(&version))
+                })
+                .map(|(position, _)| position)
+                .collect();
+            if candidates.len() != 1 {
+                return Err(MgError::Other(format!(
+                    "v4 lock must contain exactly one Web instance for manifest dependency '{}' (found {})",
+                    dependency.name,
+                    candidates.len()
+                )));
+            }
+            stack.push(candidates[0]);
+        }
+        if stack.is_empty() && !doc.packages.is_empty() {
+            return Err(MgError::Other(
+                "v4 lock has packages but neither root pins nor manifest dependencies".into(),
+            ));
+        }
+    } else {
+        for root in raw_roots {
+            let pin = mgc_lockfile::root_pin::parse_root_pin(root);
+            let (name, version) = pin
+                .package_id
+                .rsplit_once('@')
+                .ok_or_else(|| MgError::Other(format!("invalid v4 root pin '{root}'")))?;
+            let candidates: Vec<usize> = doc
+                .packages
+                .iter()
+                .enumerate()
+                .filter(|(_, package)| {
+                    pin.ecosystem
+                        .is_none_or(|ecosystem| package.key.ecosystem == ecosystem)
+                        && package.key.name
+                            == mgc_lockfile::v4::canonical_name(package.key.ecosystem, name)
+                        && package.key.version == mgc_lockfile::v4::canonical_version(version)
+                })
+                .map(|(position, _)| position)
+                .collect();
+            if candidates.len() != 1 {
+                return Err(MgError::Other(format!(
+                    "v4 root pin '{root}' must match exactly one package identity (found {})",
+                    candidates.len()
+                )));
+            }
+            stack.push(candidates[0]);
+        }
+    }
+    while let Some(current) = stack.pop() {
+        if reached[current] {
+            continue;
+        }
+        reached[current] = true;
+        for edge in &doc.packages[current].edges {
+            stack.push(by_key[&edge.target_key]);
+        }
+    }
+    let mut pins = Vec::new();
+    let mut jsr_pins = Vec::new();
+    for (position, package) in doc.packages.iter().enumerate() {
+        if !reached[position] || package.key.ecosystem != mgc_lockfile::EcosystemTag::Web {
+            continue;
+        }
+        if package.key.name.starts_with("jsr:") {
+            jsr_pins.push(package.key.name.clone());
+        } else {
+            pins.push((package.key.name.clone(), package.key.version.clone()));
+        }
+    }
+    pins.sort();
+    pins.dedup();
+    jsr_pins.sort();
+    jsr_pins.dedup();
+    Ok(Some((pins, jsr_pins)))
+}
+
+/// Build the npm bulk request with every unique locked version per name.
+/// Dựng request npm bulk với mọi version lock duy nhất theo tên package.
+pub(crate) fn advisory_bulk_request_body(
+    pins: &[(String, String)],
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut versions_by_name: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
+    for (name, version) in pins {
+        versions_by_name
+            .entry(name.clone())
+            .or_default()
+            .push(version.clone());
+    }
+    versions_by_name
+        .into_iter()
+        .map(|(name, mut versions)| {
+            versions.sort();
+            versions.dedup();
+            (name, serde_json::json!(versions))
+        })
+        .collect()
+}
+
 pub async fn run_audit(project_root: &Path, registry_url: &str) -> MgResult<AuditReport> {
     // ARCHITECTURE CONTRACT (2026-09-10 P0-3 audit): mgc.lock là NGUỒN
     // CHÂN LÝ DUY NHẤT cho audit web. bun.lock / deno.lock là INPUT
@@ -90,52 +293,58 @@ pub async fn run_audit(project_root: &Path, registry_url: &str) -> MgResult<Audi
     // (mgc.lock is the ONLY operational audit source. Rival lockfiles
     // are migration inputs: detected without mgc.lock → fail with the
     // explicit `mgc import` remediation, never a silent fallback.)
-    let lockfile = read_web_lockfile_checked(project_root)?;
-    if lockfile.is_none() {
-        let rival = detect_rival_lockfiles(project_root);
-        if !rival.is_empty() {
-            return Err(MgError::Other(format!(
-                "rival lockfile(s) detected [{}] but mgc.lock is missing — mgc audit consumes mgc.lock ONLY. Run `mgc import {}` to migrate this project first.",
-                rival.join(", "),
-                if rival.iter().any(|r| r.contains("deno")) {
-                    "deno"
-                } else {
-                    "bun"
+    let (pins, jsr_pins): AuditPinSplit = match v4_pins_for_audit(project_root)? {
+        Some(v4_pins) => v4_pins,
+        None => {
+            let lockfile = read_web_lockfile_checked(project_root)?;
+            if lockfile.is_none() {
+                let rival = detect_rival_lockfiles(project_root);
+                if !rival.is_empty() {
+                    return Err(MgError::Other(format!(
+                        "rival lockfile(s) detected [{}] but mgc.lock is missing — mgc audit consumes mgc.lock ONLY. Run `mgc import {}` to migrate this project first.",
+                        rival.join(", "),
+                        if rival.iter().any(|r| r.contains("deno")) {
+                            "deno"
+                        } else {
+                            "bun"
+                        }
+                    )));
                 }
-            )));
+                return Ok(AuditReport::clean(0));
+            }
+
+            // Tách 2 tập pin: npm-auditable và JSR (tiền tố "jsr:" import từ
+            // deno.lock migration). JSR không có advisory DB npm — gửi tên "jsr:"
+            // vào npm bulk API sẽ 400/fake-failure; chúng chỉ được báo Partial
+            // skipped trung thực, KHÔNG vào body request.
+            // (Split pins: npm-auditable vs JSR-prefixed. JSR names never enter
+            // the npm bulk body — they ride the honest Partial-skip lane.)
+            let mut pins: Vec<(String, String)> = lockfile
+                .as_ref()
+                .map(|l| {
+                    l.packages
+                        .iter()
+                        .filter(|p| !p.name.as_str().starts_with("jsr:"))
+                        .map(|p| (p.name.to_string(), p.version.clone()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let jsr_pins: Vec<String> = lockfile
+                .as_ref()
+                .map(|l| {
+                    l.packages
+                        .iter()
+                        .filter(|p| p.name.as_str().starts_with("jsr:"))
+                        .map(|p| p.name.as_str().to_string())
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            pins.sort();
+            pins.dedup();
+            (pins, jsr_pins)
         }
-        return Ok(AuditReport::clean(0));
-    }
-
-    // Tách 2 tập pin: npm-auditable và JSR (tiền tố "jsr:" import từ
-    // deno.lock migration). JSR không có advisory DB npm — gửi tên "jsr:"
-    // vào npm bulk API sẽ 400/fake-failure; chúng chỉ được báo Partial
-    // skipped trung thực, KHÔNG vào body request.
-    // (Split pins: npm-auditable vs JSR-prefixed. JSR names never enter
-    // the npm bulk body — they ride the honest Partial-skip lane.)
-    let mut pins: Vec<(String, String)> = lockfile
-        .as_ref()
-        .map(|l| {
-            l.packages
-                .iter()
-                .filter(|p| !p.name.as_str().starts_with("jsr:"))
-                .map(|p| (p.name.to_string(), p.version.clone()))
-                .collect()
-        })
-        .unwrap_or_default();
-    let jsr_pins: Vec<String> = lockfile
-        .as_ref()
-        .map(|l| {
-            l.packages
-                .iter()
-                .filter(|p| p.name.as_str().starts_with("jsr:"))
-                .map(|p| p.name.as_str().to_string())
-                .collect()
-        })
-        .unwrap_or_default();
-
-    pins.sort();
-    pins.dedup();
+    };
 
     if pins.is_empty() && jsr_pins.is_empty() {
         return Ok(AuditReport::clean(0));
@@ -160,11 +369,7 @@ pub async fn run_audit(project_root: &Path, registry_url: &str) -> MgResult<Audi
         });
     }
 
-    let mut body = serde_json::Map::new();
-    for (name, version) in &pins {
-        let version_entry = serde_json::json!([version.clone()]);
-        body.insert(name.clone(), version_entry);
-    }
+    let body = advisory_bulk_request_body(&pins);
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))

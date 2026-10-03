@@ -20,20 +20,22 @@ echo "Creating fake artifacts for version $VERSION..."
 
 # Create fake artifacts with known content — macOS arm64 joined the
 # required set (item 12, 2026-09-12): the formula installs a REAL
-# arm64 artifact, so the updater contract requires it.
+# arm64 artifacts are in the required set, so the updater contract requires them.
 # Tạo artifact giả nội dung đã biết — macOS arm64 vào bộ bắt buộc
 # (item 12): formula cài artifact arm64 THẬT nên hợp đồng updater
-# yêu cầu nó.
+# yêu cầu nó; Linux ARM64 cũng là target phát hành chính thức.
 echo "fake magicore linux" > "$ARTIFACTS_DIR/magicore-${VERSION}-linux-x64.tar.gz"
+echo "fake magicore linux arm64" > "$ARTIFACTS_DIR/magicore-${VERSION}-linux-arm64.tar.gz"
 echo "fake magicore macos x64" > "$ARTIFACTS_DIR/magicore-${VERSION}-macos-x64.tar.gz"
 echo "fake magicore macos arm64" > "$ARTIFACTS_DIR/magicore-${VERSION}-macos-arm64.tar.gz"
 echo "fake magicore windows" > "$ARTIFACTS_DIR/magicore-${VERSION}-windows-x64.zip"
 echo "fake magicore-web linux" > "$ARTIFACTS_DIR/magicore-web-${VERSION}-linux-x64.tar.gz"
+echo "fake magicore-web linux arm64" > "$ARTIFACTS_DIR/magicore-web-${VERSION}-linux-arm64.tar.gz"
 echo "fake magicore-web macos x64" > "$ARTIFACTS_DIR/magicore-web-${VERSION}-macos-x64.tar.gz"
 echo "fake magicore-web macos arm64" > "$ARTIFACTS_DIR/magicore-web-${VERSION}-macos-arm64.tar.gz"
 echo "fake magicore-web windows" > "$ARTIFACTS_DIR/magicore-web-${VERSION}-windows-x64.zip"
 
-echo "✓ Created 8 fake artifacts"
+echo "✓ Created 10 local fixture artifacts (not release evidence)"
 
 # Compute expected hashes
 if command -v shasum >/dev/null 2>&1; then
@@ -46,8 +48,10 @@ else
 fi
 
 HASH_LINUX=$($HASH_CMD "$ARTIFACTS_DIR/magicore-${VERSION}-linux-x64.tar.gz" | awk '{print $1}')
+HASH_LINUX_ARM64=$($HASH_CMD "$ARTIFACTS_DIR/magicore-${VERSION}-linux-arm64.tar.gz" | awk '{print $1}')
 HASH_MACOS=$($HASH_CMD "$ARTIFACTS_DIR/magicore-${VERSION}-macos-x64.tar.gz" | awk '{print $1}')
 HASH_MACOS_ARM64=$($HASH_CMD "$ARTIFACTS_DIR/magicore-${VERSION}-macos-arm64.tar.gz" | awk '{print $1}')
+HASH_WEB_LINUX_ARM64=$($HASH_CMD "$ARTIFACTS_DIR/magicore-web-${VERSION}-linux-arm64.tar.gz" | awk '{print $1}')
 HASH_WINDOWS=$($HASH_CMD "$ARTIFACTS_DIR/magicore-${VERSION}-windows-x64.zip" | awk '{print $1}')
 
 echo "✓ Computed hashes"
@@ -82,6 +86,20 @@ if ! grep -q "$HASH_LINUX" "$MANIFEST_DIR/packaging/homebrew/magicore.rb"; then
   exit 1
 fi
 echo "✓ Test 3 PASS: Linux hash correct"
+
+# Linux ARM64 Homebrew entries must bind to the real named archive and its computed hash.
+# Các mục Homebrew Linux ARM64 phải trỏ đúng archive và hash đã tính.
+if ! grep -q "$HASH_LINUX_ARM64" "$MANIFEST_DIR/packaging/homebrew/magicore.rb" \
+  || ! grep -q "magicore-${VERSION}-linux-arm64.tar.gz" "$MANIFEST_DIR/packaging/homebrew/magicore.rb"; then
+  echo "Test 3b FAIL: Linux ARM64 artifact/hash missing from magicore.rb"
+  exit 1
+fi
+if ! grep -q "$HASH_WEB_LINUX_ARM64" "$MANIFEST_DIR/packaging/homebrew/magicore-web.rb" \
+  || ! grep -q "magicore-web-${VERSION}-linux-arm64.tar.gz" "$MANIFEST_DIR/packaging/homebrew/magicore-web.rb"; then
+  echo "Test 3c FAIL: Linux ARM64 artifact/hash missing from magicore-web.rb"
+  exit 1
+fi
+echo "✓ Tests 3b/3c PASS: Linux ARM64 formulas bind to generated artifact hashes"
 
 # Test 4: Check Homebrew formula uses new artifact naming
 if ! grep -q "magicore-${VERSION}-macos-x64.tar.gz" "$MANIFEST_DIR/packaging/homebrew/magicore.rb"; then

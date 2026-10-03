@@ -358,6 +358,20 @@ class NewToolDetection(unittest.TestCase):
         self.assertEqual(findings[0]["op_class"], "build")
         self.assertEqual(findings[0]["status"], "violation")
 
+    def test_mgc_exec_run_inherited_literal_is_detected(self):
+        findings = scan_snippet(
+            "cli/src/commands/build.rs",
+            'fn build_runtime() -> Result<()> {\n'
+            '    mgc_exec::prelude::run_inherited("node", &args, &opts)?;\n'
+            '    Ok(())\n'
+            '}\n',
+        )
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["tool"], "node")
+        self.assertEqual(findings[0]["evidence_kind"], "spawn_or_wrapper_call")
+        self.assertEqual(findings[0]["op_class"], "build")
+        self.assertEqual(findings[0]["status"], "violation")
+
     def test_production_test_command_cannot_delegate_to_package_manager(self):
         findings = scan_snippet(
             "cli/src/commands/core/dev/cicd.rs",
@@ -370,7 +384,7 @@ class NewToolDetection(unittest.TestCase):
         self.assertEqual(findings[0]["op_class"], "test")
         self.assertEqual(findings[0]["status"], "violation")
 
-    def test_windows_path_lookup_is_reviewed_as_platform_process_boundary(self):
+    def test_windows_path_lookup_process_spawn_is_not_exempt(self):
         findings = scan_snippet(
             "core/crates/mgc-exec/src/run.rs",
             'fn resolve_windows_shim(cmd: &str) {\n'
@@ -378,10 +392,8 @@ class NewToolDetection(unittest.TestCase):
             '}\n',
         )
         self.assertEqual(len(findings), 1)
-        self.assertEqual(findings[0]["op_class"], "platform-process-boundary")
-        self.assertEqual(findings[0]["status"], "review-required")
+        self.assertEqual(findings[0]["status"], "violation")
         self.assertTrue(findings[0]["blocking"])
-        self.assertIn("Windows PATH resolution", findings[0]["classification_reason"])
 
     def test_process_tree_os_tools_are_reviewed_but_still_blocking(self):
         cases = (
@@ -1037,6 +1049,224 @@ class ConstArrayExclusion(unittest.TestCase):
 class RepoLedgerContract(unittest.TestCase):
     """Production toolchain delegation stays a visible blocking finding."""
 
+    def test_mgc_dist_routes_cargo_and_rustc_through_scoped_executor(self):
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        rel_path = "tools/mgc-dist/src/main.rs"
+        abs_path = os.path.join(repo_root, rel_path)
+        with open(abs_path, "r", encoding="utf-8") as handle:
+            source = handle.read()
+        self.assertNotIn("std::process::Command", source)
+        self.assertIn('mgc_exec::run::run_inherited("cargo"', source)
+        self.assertIn('mgc_exec::run::run("rustc"', source)
+        self.assertIn('"--locked"', source)
+        self.assertIn('"--offline"', source)
+        findings = gate.scan_file(rel_path, abs_path)
+        tool_findings = [item for item in findings if item["tool"] in {"cargo", "rustc"}]
+        self.assertEqual({item["tool"] for item in tool_findings}, {"cargo", "rustc"})
+        self.assertTrue(
+            all(
+                item["status"] == "allowed"
+                and item["op_class"] == "audited-executor-route"
+                and item["classification_reason"]
+                for item in tool_findings
+            ),
+            f"mgc-dist routes must stay visible with an explicit executor classification: {tool_findings}",
+        )
+
+    def test_locked_build_and_device_control_executor_routes_are_exactly_scoped(self):
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        cases = (
+            (
+                "cli/src/commands/build.rs",
+                "build_lib",
+                "node",
+                (
+                    "ExecutionScope::BuildRunner",
+                    'run_inherited("node"',
+                    'node_bin_args(root, "tsc"',
+                ),
+            ),
+            (
+                "cli/src/commands/build.rs",
+                "build_cloud",
+                "node",
+                (
+                    "ExecutionScope::BuildRunner",
+                    'run_inherited("node"',
+                    'node_bin_args(root, "cdk"',
+                ),
+            ),
+            (
+                "cli/src/commands/build/web_engine.rs",
+                "build_rust_with_env",
+                "cargo",
+                ("ExecutionScope::BuildRunner", '"--locked"', '"--offline"'),
+            ),
+            (
+                "cli/src/commands/core/dev/app.rs",
+                "run_xcrun",
+                "xcrun",
+                ("ExecutionScope::DeviceControl", 'run("xcrun"'),
+            ),
+            (
+                "cli/src/commands/core/dev/app.rs",
+                "run_android_device_command",
+                "adb",
+                ("ExecutionScope::DeviceControl", 'run("adb"'),
+            ),
+        )
+        for rel_path, function, tool, required_tokens in cases:
+            with self.subTest(function=function, tool=tool):
+                abs_path = os.path.join(repo_root, rel_path)
+                with open(abs_path, "r", encoding="utf-8") as handle:
+                    source = handle.read()
+                start = source.index(f"fn {function}(")
+                end = source.index("\n}", start) + 2
+                function_body = source[start:end]
+                self.assertTrue(
+                    all(token in function_body for token in required_tokens),
+                    f"{rel_path}:{function} must enforce its executor boundary",
+                )
+                findings = gate.scan_file(rel_path, abs_path)
+                route = (rel_path, function, tool)
+                route_findings = [
+                    item for item in findings
+                    if (item["function"], item["tool"]) == (function, tool)
+                ]
+                self.assertIn(route, gate.AUDITED_EXECUTOR_ROUTES)
+                self.assertEqual(len(route_findings), 1)
+                self.assertEqual(route_findings[0]["status"], "allowed")
+                self.assertEqual(route_findings[0]["op_class"], "audited-executor-route")
+                self.assertEqual(
+                    route_findings[0]["classification_reason"],
+                    gate.AUDITED_EXECUTOR_ROUTES[route],
+                )
+
+    def test_web_lifecycle_executor_is_scoped_to_policy_approved_install(self):
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        rel_path = "adapters/web/src/lifecycle.rs"
+        abs_path = os.path.join(repo_root, rel_path)
+        with open(abs_path, "r", encoding="utf-8") as handle:
+            lifecycle = handle.read()
+        route = (rel_path, "run_script", "<dynamic:invocation>")
+        findings = gate.scan_file(rel_path, abs_path)
+        route_findings = [
+            item for item in findings
+            if (item["function"], item["tool"]) == ("run_script", "<dynamic:invocation>")
+        ]
+        self.assertIn(route, gate.AUDITED_EXECUTOR_ROUTES)
+        self.assertEqual(len(route_findings), 1)
+        self.assertEqual(route_findings[0]["status"], "allowed")
+        self.assertEqual(route_findings[0]["op_class"], "audited-executor-route")
+        self.assertIn("parse_script_invocation(script)", lifecycle)
+        self.assertIn("ExecutionScope::Install", lifecycle)
+        self.assertIn("#[cfg(test)]\n    pub(crate) fn run_scripts(", lifecycle)
+
+        install_path = os.path.join(repo_root, "adapters/web/src/install/mod.rs")
+        with open(install_path, "r", encoding="utf-8") as handle:
+            install = handle.read()
+        policy_position = install.index("match decide_lifecycle_scripts(")
+        runner_position = install.index("LifecycleRunner::run_scripts_with_snapshot(")
+        self.assertLess(install.index("load_trust_policies(&layout)"), policy_position)
+        self.assertLess(policy_position, runner_position)
+
+        production_callers = []
+        for root, _, filenames in os.walk(os.path.join(repo_root, "adapters/web/src")):
+            for filename in filenames:
+                if not filename.endswith(".rs") or "/test/" in (root + "/"):
+                    continue
+                path = os.path.join(root, filename)
+                with open(path, "r", encoding="utf-8") as handle:
+                    if "LifecycleRunner::run_scripts_with_snapshot(" in handle.read():
+                        production_callers.append(os.path.relpath(path, repo_root).replace(os.sep, "/"))
+        self.assertEqual(production_callers, ["adapters/web/src/install/mod.rs"])
+
+    def test_publish_lifecycle_executor_is_scoped_to_explicit_opt_in(self):
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        rel_path = "cli/src/commands/publish.rs"
+        abs_path = os.path.join(repo_root, rel_path)
+        with open(abs_path, "r", encoding="utf-8") as handle:
+            source = handle.read()
+
+        route = (rel_path, "run_lifecycle", "<dynamic:invocation>")
+        route_findings = [
+            item for item in gate.scan_file(rel_path, abs_path)
+            if (item["function"], item["tool"]) == ("run_lifecycle", "<dynamic:invocation>")
+        ]
+        self.assertIn(route, gate.AUDITED_EXECUTOR_ROUTES)
+        self.assertEqual(len(route_findings), 1)
+        self.assertEqual(route_findings[0]["status"], "allowed")
+        self.assertEqual(route_findings[0]["op_class"], "audited-executor-route")
+
+        function_start = source.index("fn run_lifecycle(")
+        function_end = source.index("\n}\n", function_start) + 2
+        runner = source[function_start:function_end]
+        self.assertIn("reject_forbidden_pm_script(cmd)", runner)
+        self.assertIn("parse_script_invocation(cmd)", runner)
+        self.assertIn("ExecutionScope::Install", runner)
+        self.assertIn("cwd: Some(project_root.to_path_buf())", runner)
+
+        publish_start = source.index("async fn publish_project(")
+        publish_end = source.index("\n}\n", publish_start) + 2
+        publish = source[publish_start:publish_end]
+        gate_position = publish.index("publish_lifecycle_decision(")
+        for hook in ("prepublishOnly", "prepublish", "prepare"):
+            hook_position = publish.index(f'run_lifecycle(&pkg_json, "{hook}"')
+            self.assertLess(gate_position, hook_position)
+
+    def test_publish_git_checks_are_closed_and_project_scoped(self):
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        rel_path = "cli/src/commands/publish.rs"
+        abs_path = os.path.join(repo_root, rel_path)
+        with open(abs_path, "r", encoding="utf-8") as handle:
+            source = handle.read()
+
+        route = (rel_path, "run_git_capture", "git")
+        findings = [
+            item for item in gate.scan_file(rel_path, abs_path)
+            if (item["function"], item["tool"]) == ("run_git_capture", "git")
+        ]
+        self.assertIn(route, gate.AUDITED_EXECUTOR_ROUTES)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["status"], "allowed")
+        self.assertEqual(findings[0]["op_class"], "audited-executor-route")
+
+        publish_start = source.index("async fn publish_project(")
+        publish_end = source.index("\n}\n", publish_start) + 2
+        publish = source[publish_start:publish_end]
+        git_checks_start = source.index("fn git_checks(")
+        git_checks_end = source.index("\n}\n", git_checks_start) + 2
+        git_checks = source[git_checks_start:git_checks_end]
+        self.assertIn(
+            "git_checks(args.publish_branch.as_deref(), project_root)",
+            publish,
+        )
+        self.assertIn("GitReadQuery::ValidateBranch", git_checks)
+        self.assertIn("publish_branch.is_some()", git_checks)
+        self.assertIn("GitReadQuery::CommitsBehind(branch.clone())", git_checks)
+
+        query_start = source.index("enum GitReadQuery")
+        query_end = source.index("impl GitReadQuery", query_start)
+        queries = source[query_start:query_end]
+        for variant in (
+            "WorkingTreeStatus",
+            "CurrentBranch",
+            "ValidateBranch",
+            "UpstreamRef",
+            "CommitsBehind",
+        ):
+            self.assertIn(variant, queries)
+        argv_start = query_end
+        argv_end = source.index("\n}\n", argv_start) + 2
+        self.assertIn("--end-of-options", source[argv_start:argv_end])
+
+        runner_start = source.index("fn run_git_capture(")
+        runner_end = source.index("\n}\n", runner_start) + 2
+        runner = source[runner_start:runner_end]
+        self.assertIn("git_exec_options(project_root)", runner)
+        self.assertIn('run("git", &args, &opts)', runner)
+        self.assertNotIn('Command::new("git")', source)
+
     def test_workflow_blindspot_distinguishes_pinned_refs_from_unreviewed_commands(self):
         workflow = next(
             item for item in gate.UNSCANNED_PROCESS_SURFACES
@@ -1146,10 +1376,21 @@ class RepoLedgerContract(unittest.TestCase):
                             ("fs_avail", "df"),
                         }
                     )
+                    or (
+                        (
+                            item["file"],
+                            item["function"],
+                            item["tool"],
+                        ) in gate.AUDITED_EXECUTOR_ROUTES
+                        and item["classification_reason"]
+                        == gate.AUDITED_EXECUTOR_ROUTES[
+                            (item["file"], item["function"], item["tool"])
+                        ]
+                    )
                 )
                 for item in allowed
             ),
-            "only test/bench harnesses and exact non-mutating doctor probes may be allowed",
+            "only harnesses, exact doctor probes, and exact audited executor routes may be allowed",
         )
         self.assertTrue(
             any(
@@ -1159,13 +1400,22 @@ class RepoLedgerContract(unittest.TestCase):
             ),
             "the Java/Android build delegation must not be hidden by the ledger",
         )
-        self.assertTrue(
+        self.assertFalse(
             any(
                 item["file"] == "core/crates/mgc-exec/src/run.rs"
                 and item["tool"] == "where.exe"
                 for item in findings
             ),
-            "the shared Windows process-resolution boundary must be inventoried",
+            "Windows PATH resolution must stay in-process instead of spawning where.exe",
+        )
+        self.assertTrue(
+            any(
+                item["file"] == "core/crates/mgc-exec/src/run.rs"
+                and item["tool"] == "taskkill"
+                and item["status"] == "review-required"
+                for item in findings
+            ),
+            "Windows process-tree termination must remain a blocking reviewed boundary",
         )
         self.assertTrue(
             any(
@@ -1174,6 +1424,15 @@ class RepoLedgerContract(unittest.TestCase):
                 for item in findings
             ),
             "the release packaging build invocation must be inventoried",
+        )
+        self.assertTrue(
+            any(
+                item["file"] == "tools/mgc-dist/src/main.rs"
+                and item["tool"] == "rustc"
+                and item["function"] == "detect_host_target"
+                for item in findings
+            ),
+            "the read-only host-target query must be inventoried",
         )
 
 

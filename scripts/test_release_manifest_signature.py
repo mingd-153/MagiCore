@@ -37,10 +37,12 @@ class ReleaseManifestSignatureVerification(unittest.TestCase):
         self.archives = []
         required = [
             ("magicore", "linux", "x64", "tar.gz"),
+            ("magicore", "linux", "arm64", "tar.gz"),
             ("magicore", "macos", "x64", "tar.gz"),
             ("magicore", "macos", "arm64", "tar.gz"),
             ("magicore", "windows", "x64", "zip"),
             ("magicore-web", "linux", "x64", "tar.gz"),
+            ("magicore-web", "linux", "arm64", "tar.gz"),
             ("magicore-web", "macos", "x64", "tar.gz"),
             ("magicore-web", "macos", "arm64", "tar.gz"),
             ("magicore-web", "windows", "x64", "zip"),
@@ -89,7 +91,7 @@ class ReleaseManifestSignatureVerification(unittest.TestCase):
         code, output, _error = self.run_verifier(*self.archives, seed=self.seed)
         self.assertEqual(code, 0)
         self.assertIn("manifest signature VALID", output)
-        self.assertEqual(output.count("archive binding VALID"), 8)
+        self.assertEqual(output.count("archive binding VALID"), 10)
 
     def test_missing_required_archive_binding_fails(self):
         code, _output, error = self.run_verifier(*self.archives[:-1], seed=self.seed)
@@ -102,6 +104,16 @@ class ReleaseManifestSignatureVerification(unittest.TestCase):
         manifest["artifacts"].pop()
         malformed = json.dumps(manifest, sort_keys=True, indent=2).encode() + b"\n"
         with self.assertRaisesRegex(verifier.VerificationError, "missing required release variants"):
+            verifier._parse_manifest(malformed, "v1.2.0")
+
+    def test_manifest_missing_linux_arm64_fails(self):
+        manifest = json.loads(self.manifest_bytes)
+        manifest["artifacts"] = [
+            item for item in manifest["artifacts"]
+            if (item["package"], item["os"], item["arch"]) != ("magicore", "linux", "arm64")
+        ]
+        malformed = json.dumps(manifest, sort_keys=True, indent=2).encode() + b"\n"
+        with self.assertRaisesRegex(verifier.VerificationError, "magicore-1.2.0-linux-arm64.tar.gz"):
             verifier._parse_manifest(malformed, "v1.2.0")
 
     def test_missing_signing_key_fails_closed(self):

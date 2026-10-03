@@ -555,11 +555,12 @@ impl Scaffolder {
         // staging nguyên tử mang tên temp random.
         let name = Self::config_display_name(config);
         let framework = Self::framework(config);
+        let context = CoreTemplateContext::try_new(config, &name, &framework)?;
 
         if config.core != "web" {
             let layer = Self::core_template_layer(&config.core, &framework);
             if Self::layer_has_contract(&layer) {
-                return Self::materialize_core_template(target, &layer, config, &name, &framework);
+                return Self::materialize_core_template(target, &layer, &context);
             }
         }
 
@@ -569,7 +570,12 @@ impl Scaffolder {
             "ai" => super::processors::ai::AiProcessor::files(target, &name, &framework),
             "clo" => super::processors::clo::CloProcessor::files(target, &name, &framework),
             "cicd" => super::processors::cicd::CicdProcessor::files(target, &name, &framework),
-            "iot" => super::processors::iot::IotProcessor::files(target, &name, &framework),
+            "iot" => super::processors::iot::IotProcessor::files(
+                target,
+                &name,
+                &framework,
+                &context.board,
+            ),
             "app" => {
                 if framework == "multi" {
                     super::processors::app::AppProcessor::files_multi(target, &name)
@@ -977,16 +983,13 @@ impl Scaffolder {
     fn materialize_core_template(
         target: &Path,
         layer: &TemplateRoot,
-        config: &ScaffoldConfig,
-        name: &str,
-        framework: &str,
+        context: &CoreTemplateContext,
     ) -> Result<()> {
         let Some(manifest) = TemplateManifest::load(layer)? else {
             return Err(crate::error::template_layer_missing_manifest(
                 &layer.logical_rel(),
             ));
         };
-        let context = CoreTemplateContext::new(config, name, framework);
         let active_features: HashSet<&str> = config_feature_set(&context.features);
         let active_files = manifest
             .files
@@ -996,7 +999,7 @@ impl Scaffolder {
 
         let mut seen_targets = HashSet::new();
         for file in &active_files {
-            let target_path = render_core_target_path(&file.target, &context);
+            let target_path = render_core_target_path(&file.target, context);
             if !seen_targets.insert(target_path.clone()) {
                 return Err(crate::error::duplicate_template_target(
                     &file.target,
@@ -1013,7 +1016,7 @@ impl Scaffolder {
                     &layer.logical_rel(),
                 ));
             }
-            let target_path = render_core_target_path(&file.target, &context);
+            let target_path = render_core_target_path(&file.target, context);
             let bytes = layer.read(&source_rel)?;
             match std::str::from_utf8(&bytes) {
                 Ok(contents) => {
@@ -1393,12 +1396,37 @@ struct CoreTemplateContext {
 }
 
 impl CoreTemplateContext {
-    fn new(config: &ScaffoldConfig, name: &str, framework: &str) -> Self {
+    /// Build template context and reject IoT boards outside the selected framework.
+    /// Dựng context template và từ chối board IoT không thuộc framework đã chọn.
+    fn try_new(config: &ScaffoldConfig, name: &str, framework: &str) -> Result<Self> {
         let project_name = Scaffolder::display_name(Path::new(name));
         let project_slug = slugify(&project_name);
         let board = config.features.first().cloned().unwrap_or_default();
-        let target = iot_target_for_board(&board);
-        Self {
+        let target = if config.core == "iot" {
+            #[cfg(feature = "iot")]
+            {
+                let supported = mgc_iot_adapter::boards_for_framework(framework);
+                mgc_iot_adapter::board_target_for_framework(framework, &board).ok_or_else(|| {
+                    let choices = supported
+                        .iter()
+                        .map(|entry| entry.id.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    if board.is_empty() {
+                        crate::error::no_board_specified(&choices)
+                    } else {
+                        crate::error::unsupported_board(&board, &choices)
+                    }
+                })?
+            }
+            #[cfg(not(feature = "iot"))]
+            {
+                anyhow::bail!("the iot core is not included in this MagiCore build")
+            }
+        } else {
+            legacy_template_target(&board)
+        };
+        Ok(Self {
             project_name,
             project_slug: project_slug.clone(),
             project_package: project_slug.replace('-', "_"),
@@ -1407,7 +1435,7 @@ impl CoreTemplateContext {
             features: quoted_list(&config.features),
             board,
             target,
-        }
+        })
     }
 
     fn value(&self, key: &str) -> Option<&str> {
@@ -1647,13 +1675,13 @@ fn slugify(name: &str) -> String {
     }
 }
 
-/// ponytail: board registry tĩnh P1 — add board vào đây; P2 chuyển assets/boards/*.json
-fn iot_target_for_board(board: &str) -> String {
+/// Preserve the target context emitted to existing non-IoT template layers.
+/// Giữ nguyên target context đã cấp cho các template layer không thuộc IoT.
+fn legacy_template_target(board: &str) -> String {
     match board {
         "esp32" => "xtensa-esp32-none-elf".to_string(),
         "esp32s3" => "xtensa-esp32s3-none-elf".to_string(),
-        "nrf52dk_nrf52832" => "thumbv7em-none-eabihf".to_string(),
-        "stm32f4_disc" => "thumbv7em-none-eabihf".to_string(),
+        "nrf52dk_nrf52832" | "stm32f4_disc" => "thumbv7em-none-eabihf".to_string(),
         _ => "riscv32imac-unknown-none-elf".to_string(),
     }
 }

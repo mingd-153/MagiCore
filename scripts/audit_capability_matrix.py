@@ -27,6 +27,7 @@ import os
 import re
 import subprocess
 import sys
+from pathlib import Path
 
 # Evidence source: run the binary E2E suite and classify per test.
 # Each test maps to (core, language, scanner, evidence_kind).
@@ -136,6 +137,34 @@ SUITE_TIMEOUT_DEFAULT_S = 3600
 _SUMMARY_RE = re.compile(r"test result: (ok|FAILED)\. (\d+) passed; (\d+) failed")
 
 
+def source_revision_state(repo_root=None):
+    """Return a commit only when Git proves the tested tree is clean.
+    Chỉ trả commit khi Git xác nhận cây source được test đang sạch.
+    """
+    root = Path(repo_root) if repo_root is not None else Path(__file__).resolve().parent.parent
+    try:
+        head = subprocess.run(
+            ["git", "rev-parse", "--verify", "HEAD"],
+            cwd=str(root), capture_output=True, text=True, check=False,
+        )
+        if head.returncode != 0 or not re.fullmatch(r"[0-9a-f]{40,64}", head.stdout.strip()):
+            return {"commit": None, "base_commit": None, "working_tree_clean": False}
+        status = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=all"],
+            cwd=str(root), capture_output=True, text=True, check=False,
+        )
+    except OSError:
+        return {"commit": None, "base_commit": None, "working_tree_clean": False}
+
+    clean = status.returncode == 0 and not status.stdout.strip()
+    base_commit = head.stdout.strip()
+    return {
+        "commit": base_commit if clean else None,
+        "base_commit": base_commit,
+        "working_tree_clean": clean,
+    }
+
+
 def _fail_collection(message: str, detail: str = "") -> None:
     """Abort matrix generation — a broken evidence run must never emit
     a matrix that looks like evidence (fail-closed collection).
@@ -227,6 +256,7 @@ def run_e2e() -> dict[str, bool]:
 
 
 def main() -> int:
+    source_before = source_revision_state()
     if not os.environ.get("MGC_AUDIT_MATRIX_SKIP_E2E"):
         results = run_e2e()
     else:
@@ -237,7 +267,18 @@ def main() -> int:
         # output không bao giờ qua được release gate.
         results = {}
 
-    commit = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+    source_after = source_revision_state()
+    same_clean_commit = (
+        source_before["working_tree_clean"]
+        and source_after["working_tree_clean"]
+        and source_before["base_commit"] == source_after["base_commit"]
+    )
+    base_commit = source_after["base_commit"] or source_before["base_commit"]
+    commit = base_commit if same_clean_commit else None
+    print(
+        "source evidence: "
+        + (f"clean commit {commit}" if commit else f"UNVERIFIED dirty/unknown tree (base {base_commit or 'unknown'})")
+    )
     now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     matrix: list[dict] = []
@@ -294,6 +335,8 @@ def main() -> int:
         "schema_version": 1,
         "generated_at": now,
         "commit": commit,
+        "base_commit": base_commit,
+        "working_tree_clean": same_clean_commit,
         # The reviewable scope contract, echoed for the gates to enforce.
         # Hợp đồng scope để gate thực thi — độc lập với kết quả test.
         "expected_lanes": [

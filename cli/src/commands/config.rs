@@ -359,6 +359,54 @@ fn list(local_only: bool) -> Result<()> {
     Ok(())
 }
 
+/// Return local configuration with secrets redacted and without printing it.
+/// Trả cấu hình local đã che bí mật mà không in ra stdout.
+pub fn list_local_redacted() -> Result<String> {
+    let mut output = String::new();
+    if let Some(toml_path) = find_mgc_toml() {
+        let content = mgc_adapter_base::project_file::read_regular_text(&toml_path, "mgc.toml")?;
+        if !content.trim().is_empty() {
+            output.push_str("# [mgc.toml] ");
+            output.push_str(&toml_path.display().to_string());
+            output.push('\n');
+            for line in redact_toml_config(&content)?.lines() {
+                output.push_str("  ");
+                output.push_str(line);
+                output.push('\n');
+            }
+        }
+    }
+
+    let project_npmrc = std::env::current_dir()?.join(".npmrc");
+    if let Some(content) = read_optional_config_text(&project_npmrc, ".npmrc")? {
+        output.push_str("# [.npmrc local] ");
+        output.push_str(&project_npmrc.display().to_string());
+        output.push('\n');
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+                continue;
+            }
+            if let Some((key, value)) = line.split_once('=') {
+                output.push_str("  ");
+                output.push_str(key.trim());
+                output.push_str(" = ");
+                output.push_str(if is_sensitive(key) {
+                    "***"
+                } else {
+                    value.trim()
+                });
+                output.push('\n');
+            }
+        }
+    }
+
+    if output.is_empty() {
+        output.push_str("no configuration found (.npmrc / mgc.toml)");
+    }
+    Ok(output)
+}
+
 fn print_npmrc_file(path: &Path) -> Result<()> {
     let Some(content) = read_optional_config_text(path, ".npmrc")? else {
         return Ok(());
@@ -519,6 +567,17 @@ fn is_sensitive(key: &str) -> bool {
         || normalized.ends_with("_auth")
         || normalized.contains("authorization")
         || (normalized.ends_with("_key") && !normalized.ends_with("_public_key"))
+        // Short password spellings (`pass`, `passwd`, `pwd`) — matched as
+        // whole words or suffixes only, so `bypass_proxy` stays visible.
+        // (Dạng viết tắt password — chỉ khớp từ đầy đủ/hậu tố.)
+        || normalized == "pass"
+        || normalized.ends_with("_pass")
+        || normalized.contains("passwd")
+        || normalized == "pwd"
+        || normalized.ends_with("_pwd")
+        // A bare `key` alone is a secret name; longer words containing it
+        // (`monkey`, `keyboard`) are not.
+        || normalized == "key"
 }
 
 #[allow(dead_code)]

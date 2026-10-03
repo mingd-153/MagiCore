@@ -19,7 +19,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to verify (e.g., v1.1.0-rc.6)"
+        description: "Release tag to verify (e.g., v1.1.0-rc.9)"
         required: true
         type: string
 
@@ -40,12 +40,29 @@ env:
 
 jobs:
   verify-archive-download:
-    name: verify archive download (${{ matrix.os }})
+    name: verify archive download (${{ matrix.os }}-${{ matrix.arch }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            os_name: linux
+            arch: x64
+          # Linux ARM64 archive must be fetched and executed on a native runner.
+          # Archive Linux ARM64 phải được tải và chạy trên runner bản địa.
+          - os: ubuntu-24.04-arm
+            os_name: linux
+            arch: arm64
+          - os: macos-15-intel
+            os_name: macos
+            arch: x64
+          - os: macos-latest
+            os_name: macos
+            arch: arm64
+          - os: windows-latest
+            os_name: windows
+            arch: x64
     steps:
       - name: Download archive + checksum from the public release
         shell: bash
@@ -54,14 +71,13 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${{ inputs.tag }}"
+          VERSION="${TAG#v}"
+          OS_NAME="${{ matrix.os_name }}"
+          ARCH="${{ matrix.arch }}"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then EXT="zip"; else EXT="tar.gz"; fi
+          ARCHIVE="magicore-${VERSION}-${OS_NAME}-${ARCH}.${EXT}"
           mkdir -p dist-verify && cd dist-verify
-          if [[ "$RUNNER_OS" == "Windows" ]]; then
-            gh release download "$TAG" -R "${{ github.repository }}" -p "magicore-*-windows-x64.zip" -p "magicore-*-windows-x64.zip.sha256"
-            ARCHIVE="$(ls magicore-*-windows-x64.zip)"
-          else
-            gh release download "$TAG" -R "${{ github.repository }}" -p "magicore-*-${{ runner.os == 'Linux' && 'linux' || 'macos' }}-x64.tar.gz" -p "magicore-*-${{ runner.os == 'Linux' && 'linux' || 'macos' }}-x64.tar.gz.sha256"
-            ARCHIVE="$(ls magicore-*-x64.tar.gz)"
-          fi
+          gh release download "$TAG" -R "${{ github.repository }}" -p "$ARCHIVE" -p "$ARCHIVE.sha256"
           echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
 
       - name: Verify the published sha256

@@ -9,7 +9,7 @@ use crate::{
     tls::TlsConfig,
 };
 use anyhow::Result;
-use reqwest::{Client, RequestBuilder, Response, StatusCode};
+use reqwest::{Client, RequestBuilder, Response, StatusCode, header::HeaderMap};
 use std::time::Duration;
 
 /// HTTP client with built-in retry, rate limit, cache
@@ -156,6 +156,25 @@ impl HttpClient {
     ) -> Result<Response> {
         self.execute(self.client.patch(url).timeout(timeout).body(body))
             .await
+    }
+
+    /// Send PATCH with additional headers and a per-request timeout.
+    /// Gửi PATCH kèm header bổ sung và timeout riêng cho request.
+    pub async fn patch_with_timeout_and_headers(
+        &self,
+        url: &str,
+        body: Vec<u8>,
+        timeout: Duration,
+        headers: HeaderMap,
+    ) -> Result<Response> {
+        self.execute(
+            self.client
+                .patch(url)
+                .timeout(timeout)
+                .headers(headers)
+                .body(body),
+        )
+        .await
     }
 
     pub async fn delete(&self, url: &str) -> Result<Response> {

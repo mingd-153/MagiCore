@@ -6,6 +6,23 @@ use std::time::Instant;
 const MANIFEST: &str = env!("CARGO_MANIFEST_DIR");
 const COMMAND_TIMEOUT_SECS: u64 = 300;
 
+thread_local! {
+    /// Each integration test gets isolated caches shared by its CLI child processes.
+    /// Mỗi integration test có cache riêng, dùng chung cho các tiến trình CLI con.
+    static ISOLATED_TEST_CACHE: std::cell::OnceCell<tempfile::TempDir> = const {
+        std::cell::OnceCell::new()
+    };
+}
+
+fn isolated_test_cache_root() -> PathBuf {
+    ISOLATED_TEST_CACHE.with(|cache| {
+        cache
+            .get_or_init(|| tempfile::tempdir().expect("create isolated MGC test cache"))
+            .path()
+            .to_path_buf()
+    })
+}
+
 /// Run mgc command from workspace root.
 pub fn mgc(args: &[&str]) -> (bool, String) {
     run_mg(args, Path::new(MANIFEST))
@@ -36,6 +53,19 @@ fn run_mg(args: &[&str], cwd: &Path) -> (bool, String) {
         allowed_exit_codes: (1..=255).collect(),
         ..Default::default()
     };
+    let cache_root = isolated_test_cache_root();
+    options.env.push((
+        "MGC_TEMPLATES_DIR".into(),
+        cache_root.join("templates").to_string_lossy().into_owned(),
+    ));
+    options.env.push((
+        "MGC_SCAFFOLDS_DIR".into(),
+        cache_root.join("scaffolds").to_string_lossy().into_owned(),
+    ));
+    options.env.push((
+        "XDG_CACHE_HOME".into(),
+        cache_root.join("xdg-cache").to_string_lossy().into_owned(),
+    ));
 
     let workspace_root = Path::new(MANIFEST)
         .parent()

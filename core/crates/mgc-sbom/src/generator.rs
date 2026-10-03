@@ -220,6 +220,17 @@ impl SbomGenerator {
         Ok(json)
     }
 
+    /// Generate an SPDX 2.3 JSON document from a legacy lockfile.
+    /// Tạo tài liệu SPDX 2.3 JSON từ lockfile legacy.
+    pub fn generate_spdx_json(
+        &self,
+        lockfile: &Lockfile,
+        document_name: &str,
+    ) -> SbomResult<String> {
+        let bom = self.generate(lockfile)?;
+        crate::spdx::serialize(&bom, document_name)
+    }
+
     pub fn generate_json_v4(
         &self,
         lockfile: &LockfileV4,
@@ -238,6 +249,19 @@ impl SbomGenerator {
     ) -> SbomResult<(String, mgc_lockfile::policy::V4VerifyReport)> {
         let (bom, report) = self.generate_v4_with_report(lockfile, policy, trust_keys)?;
         Ok((serde_json::to_string_pretty(&bom)?, report))
+    }
+
+    /// Generate an SPDX 2.3 JSON document from a verified v4 lockfile.
+    /// Tạo tài liệu SPDX 2.3 JSON từ lockfile v4 đã xác minh.
+    pub fn generate_spdx_json_v4_with_report(
+        &self,
+        lockfile: &LockfileV4,
+        policy: LockPolicyMode,
+        trust_keys: &[String],
+        document_name: &str,
+    ) -> SbomResult<(String, mgc_lockfile::policy::V4VerifyReport)> {
+        let (bom, report) = self.generate_v4_with_report(lockfile, policy, trust_keys)?;
+        Ok((crate::spdx::serialize(&bom, document_name)?, report))
     }
 }
 

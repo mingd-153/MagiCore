@@ -16,7 +16,9 @@ pub mod cache;
 pub mod install;
 pub mod native;
 
-pub use adapter::{LibAdapter, adapter_for, adapter_for_language, adapter_for_with_chain};
+pub use adapter::{
+    LibAdapter, adapter_for, adapter_for_ai_python, adapter_for_language, adapter_for_with_chain,
+};
 pub use language::{LibLanguage, dependency_manifest_format, detect_language};
 pub use sbom::generate_sbom;
 pub use tooling::check_pip_allowed;

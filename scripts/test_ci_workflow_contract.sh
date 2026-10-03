@@ -7,6 +7,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ALL_CORE="$ROOT/.github/workflows/delegated-compatibility-matrix.yml"
 RELEASE="$ROOT/.github/workflows/release.yml"
 SECURITY="$ROOT/.github/workflows/security.yml"
+VERIFY_DISTRIBUTION="$ROOT/.github/workflows/verify-release-distribution.yml"
 LOCAL_RUNNER="$ROOT/scripts/run_all_core_tests.sh"
 
 fail() {
@@ -33,6 +34,9 @@ grep -q '7b1c307e0dcbda6122208f10795a713336a9b35a' "$ROOT/.github/workflows/ci.y
 grep -q '6bed0761d98439e5a578e2877258200ad565ba87' "$ROOT/.github/workflows/ci.yml" || fail "CI Rust toolchain pin must resolve to stable"
 grep -q '6bed0761d98439e5a578e2877258200ad565ba87' "$ALL_CORE" || fail "delegated-compatibility Rust toolchain pin must resolve to stable"
 grep -q 'python3 scripts/test_audit_dependency_delegation.py' "$ROOT/.github/workflows/ci.yml" || fail "CI must run dependency ownership audit negative controls"
+grep -q 'python3 scripts/test_audit_capability_matrix.py' "$ROOT/.github/workflows/ci.yml" || fail "CI must test audit-matrix source provenance"
+grep -q 'working_tree_clean.*is not True' "$RELEASE" || fail "release audit gate must reject dirty-tree matrices"
+grep -q 'working_tree_clean.*is not True' "$ROOT/.github/workflows/nightly-audit-matrix.yml" || fail "nightly audit gate must reject dirty-tree matrices"
 grep -q 'scripts/test_dep_gate_consistency.py' "$ROOT/.github/workflows/lifecycle-matrix.yml" || fail "lifecycle CI must test binary-to-matrix operation ownership"
 grep -q 'CI cannot reach github.com' "$ROOT/scripts/verify_github_action_pin.sh" || fail "CI must fail closed when upstream action pins cannot be verified"
 grep -q 'CI cannot verify upstream action pins without git' "$ROOT/scripts/verify_github_action_pin.sh" || fail "CI must fail closed when git is unavailable for action-pin verification"
@@ -72,6 +76,49 @@ grep -q 'every signed archive must be downloaded and verified' "$ROOT/scripts/ve
 grep -q 'missing required release variants' "$ROOT/scripts/verify-release-manifest-signature.py" \
   || fail "signed distribution verifier must enforce required cross-platform variants"
 
+# Verify each published architecture, including Apple Silicon; select exactly
+# one all-core archive so the web-only match cannot make ARCHIVE ambiguous.
+# Kiểm từng kiến trúc phát hành, gồm Apple Silicon; chọn đúng archive all-core.
+archive_verification="$(sed -n '/^  verify-archive-download:/,/^  verify-homebrew:/p' "$VERIFY_DISTRIBUTION")"
+grep -q 'arch: arm64' <<<"$archive_verification" \
+  || fail "public distribution verification must exercise the published macOS arm64 archive"
+grep -A3 '^          - os: ubuntu-24.04-arm$' <<<"$archive_verification" | grep -q 'arch: arm64' \
+  || fail "public distribution verification must exercise the published Linux arm64 archive on a native runner"
+grep -q 'arch: x64' <<<"$archive_verification" \
+  || fail "public distribution verification must retain x64 archive coverage"
+macos_intel_target="$(grep -A2 '^          - os: macos-15-intel$' <<<"$archive_verification")"
+grep -q 'arch: x64' <<<"$macos_intel_target" \
+  || fail "the Intel macOS runner must verify the x64 archive"
+macos_arm_target="$(grep -A2 '^          - os: macos-latest$' <<<"$archive_verification")"
+grep -q 'arch: arm64' <<<"$macos_arm_target" \
+  || fail "the Apple Silicon macOS runner must verify the arm64 archive"
+grep -q 'EXT="zip"' <<<"$archive_verification" \
+  || fail "Windows verification must select the zip archive format"
+grep -q 'EXT="tar.gz"' <<<"$archive_verification" \
+  || fail "Unix verification must select the tar.gz archive format"
+grep -q 'ARCHIVE="magicore-${VERSION}-${OS_NAME}-${ARCH}.${EXT}"' <<<"$archive_verification" \
+  || fail "verification must select exactly one all-core archive for its OS and architecture"
+if grep -Eq 'ARCHIVE=.*ls magicore-[*]' <<<"$archive_verification"; then
+  fail "distribution verification must not select ambiguous all-core and web-only archive matches"
+fi
+
+# The Linux ARM64 target must build and smoke-test on the native ARM runner.
+# Target Linux ARM64 phải được build và smoke test trên runner ARM bản địa.
+release_build_matrix="$(sed -n '/^  build-release:/,/^  test-release-artifacts:/p' "$RELEASE")"
+linux_arm_build="$(grep -A6 '^          - os: ubuntu-24.04-arm$' <<<"$release_build_matrix" | head -n 7)"
+grep -q 'target: aarch64-unknown-linux-gnu' <<<"$linux_arm_build" \
+  || fail "release build matrix must target native Linux ARM64"
+grep -q 'arch: arm64' <<<"$linux_arm_build" \
+  || fail "Linux ARM64 release archive must carry the arm64 contract identity"
+grep -q 'use_cross: false' <<<"$linux_arm_build" \
+  || fail "Linux ARM64 release target must build natively on its hosted runner"
+release_smoke_matrix="$(sed -n '/^  test-release-artifacts:/,/^  pre-publish-verification:/p' "$RELEASE")"
+[[ "$(grep -c '^          - os: ubuntu-24.04-arm$' <<<"$release_smoke_matrix")" -eq 2 ]] \
+  || fail "all-core and web Linux ARM64 artifacts must both have smoke-test rows"
+linux_arm_smoke_blocks="$(grep -A3 '^          - os: ubuntu-24.04-arm$' <<<"$release_smoke_matrix")"
+[[ "$(grep -c 'arch: arm64' <<<"$linux_arm_smoke_blocks")" -eq 2 ]] \
+  || fail "Linux ARM64 smoke-test rows must use the matching architecture identity"
+
 # Verify GitHub Actions SHA pins (real commit refs)
 checkout_sha='3d3c42e5aac5ba805825da76410c181273ba90b1' # v7.0.1 real
 setup_node_sha='820762786026740c76f36085b0efc47a31fe5020' # v7.0.0 real
@@ -110,6 +157,16 @@ go_version_count="$(grep -c 'go-version: "1.27.1"' "$ALL_CORE")"
 [[ "$go_version_count" -eq 4 ]] || fail "delegated-compatibility matrix must pin Go 1.27.1 for all four core jobs"
 grep -q "actions/setup-go@${setup_go_sha}" "$RELEASE" || fail "release builds must provision pinned Go for esbuild-rs"
 grep -q 'go-version: "1.27.1"' "$RELEASE" || fail "release builds must pin Go 1.27.1"
+go_version_values="$(rg --no-filename -o 'go-version: "[^"]+"' .github/workflows -g '*.yml' -g '*.yaml' | sort -u)"
+[[ "$go_version_values" == 'go-version: "1.27.1"' ]] || fail "all workflow Go toolchains must use the canonical Go 1.27.1 pin; found: ${go_version_values//$'\n'/, }"
+go_archive_values="$(rg --no-filename -o 'go[0-9]+\.[0-9]+\.[0-9]+\.linux-amd64\.tar\.gz' "$RELEASE" | sort -u)"
+[[ "$go_archive_values" == 'go1.27.1.linux-amd64.tar.gz' ]] || fail "release scanner archive must match canonical Go 1.27.1; found: ${go_archive_values//$'\n'/, }"
+grep -q 'GO_SHA256="63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445"' "$RELEASE" \
+  || fail "release scanner must pin the official Go 1.27.1 Linux AMD64 archive checksum"
+go_sha_check_line="$(grep -n -m1 'sha256sum --check --strict -' "$RELEASE" | cut -d: -f1 || true)"
+go_extract_line="$(grep -n -m1 'sudo tar -C /usr/local -xzf /tmp/go.tgz' "$RELEASE" | cut -d: -f1 || true)"
+[[ -n "$go_sha_check_line" && -n "$go_extract_line" && "$go_sha_check_line" -lt "$go_extract_line" ]] \
+  || fail "release scanner archive must pass SHA-256 verification before extraction"
 
 if grep -Eq 'uses: [^ ]+@(v[0-9]+|main|master|stable|latest)([[:space:]]|$)' "$ALL_CORE"; then
   fail "delegated-compatibility workflow contains floating action references"
@@ -176,7 +233,7 @@ contract_line="$(grep -n 'name: Set artifact names' "$RELEASE" | head -1 | cut -
 ref_count="$(grep -c 'GITHUB_REF_NAME' "$RELEASE" || true)"
 [[ "$ref_count" -eq 1 ]] || fail "resolved release version must be reused downstream"
 
-grep -q '8 SBOMs' "$RELEASE" || fail "release summary must require all eight SBOMs (4 combos x all/web since macOS arm64 item 12)"
+grep -q '10 SBOMs' "$RELEASE" || fail "release summary must require all ten SBOMs (5 platform pairs x all/web)"
 grep -q 'Windows doesn.t generate SBOM' "$RELEASE" && fail "Windows SBOM must not be silently excluded"
 
 grep -q 'cargo-audit --version 0.22.2' "$SECURITY" || fail "cargo-audit pin is stale"

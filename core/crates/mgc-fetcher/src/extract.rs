@@ -172,7 +172,7 @@ pub fn extract_tarball_to_cas_and_link<R: Read>(
             //  đúng hex thuần. Accessor as_hex() — field private P0-1.)
             imported
                 .lock()
-                .expect("lock poisoned")
+                .map_err(|_| anyhow::anyhow!("imported-set lock poisoned"))?
                 .insert(hash.as_hex().to_string());
         }
 
@@ -191,7 +191,12 @@ pub fn extract_tarball_to_cas_and_link<R: Read>(
 
     if let Some((db, project_root, generation)) = claim {
         let mut conn = std::collections::HashSet::new();
-        std::mem::swap(&mut conn, &mut imported.lock().expect("lock poisoned"));
+        std::mem::swap(
+            &mut conn,
+            &mut *imported.lock().map_err(|_| {
+                anyhow::anyhow!("imported-set lock poisoned — refusing partial refcount claims")
+            })?,
+        );
         let mut hashes: Vec<String> = conn.into_iter().collect();
         hashes.sort_unstable();
         let hash_refs: Vec<&str> = hashes.iter().map(String::as_str).collect();

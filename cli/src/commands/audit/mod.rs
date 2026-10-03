@@ -29,6 +29,7 @@ pub mod game;
 pub mod hardware;
 pub mod iot;
 pub mod lib;
+pub mod signatures;
 pub mod web;
 
 /// Machine output format for `mgc audit --format` (P1-B).

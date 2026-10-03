@@ -99,13 +99,8 @@ pub fn adapter_for(root: &Path) -> Option<AiAdapter> {
     // non-TS — lỗi ở đây là bug logic, fail to rather than bỏ im lặng.)
     let python_lane = if uses_native_python_lane(root) {
         Some(
-            mgc_lib_adapter::adapter_for_language(
-                mgc_lib_adapter::LibLanguage::Python,
-                root,
-                None,
-                None,
-            )
-            .expect("lib python engine construction is infallible"),
+            mgc_lib_adapter::adapter_for_ai_python(root)
+                .expect("lib python engine construction is infallible"),
         )
     } else {
         None
@@ -308,6 +303,13 @@ impl PackageAdapter for AiAdapter {
             return py.arm_age_gate_for(project_root);
         }
         Ok(())
+    }
+
+    fn supports_age_gate_for(&self, project_root: &Path) -> MgResult<bool> {
+        match &self.python_lane {
+            Some(py) => py.supports_age_gate_for(project_root),
+            None => Ok(false),
+        }
     }
 }
 // Native registry-lifecycle capabilities are forwarded to the embedded

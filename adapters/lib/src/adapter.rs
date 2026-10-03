@@ -46,6 +46,10 @@ pub(crate) enum JavaManifestKind {
 
 pub struct LibAdapter {
     language: LibLanguage,
+    /// Security policy scope; the AI core embeds this adapter only for its
+    /// native Python lane and must retain AI overrides from mgc.toml.
+    /// Phạm vi policy bảo mật; engine Python nhúng của AI phải giữ override AI.
+    security_core: &'static str,
     /// Java-only: which build manifest the project carries (detected at
     /// construction, when the project root is known).
     /// (Chỉ cho Java: project mang build manifest nào (detect lúc dựng, khi
@@ -194,6 +198,7 @@ impl LibAdapter {
         };
         Ok(Self {
             language,
+            security_core: "lib",
             java_kind,
             project_root: root.to_path_buf(),
             dotnet_tfm: read_dotnet_target_framework(root)?,
@@ -211,6 +216,60 @@ impl LibAdapter {
             LibLanguage::Java => "java",
             LibLanguage::DotNet => "dotnet",
         }
+    }
+
+    fn security_age_gate_policy_for(&self, project_root: &Path) -> MgResult<Option<(u64, bool)>> {
+        let path = project_root.join("mgc.toml");
+        let Some(text) = mgc_config::project::read_regular_project_text(&path, "project config")
+            .map_err(|error| {
+                mgc_types::MgError::Other(format!("cannot read {}: {error}", path.display()))
+            })?
+        else {
+            return Ok(None);
+        };
+        let document: toml::Value = text.parse().map_err(|error| {
+            mgc_types::MgError::Other(format!("invalid TOML in {}: {error}", path.display()))
+        })?;
+        let Some(security_value) = document.get("security") else {
+            return Ok(None);
+        };
+        let security: mgc_config::SecurityConfig =
+            security_value.clone().try_into().map_err(|error| {
+                mgc_types::MgError::Other(format!(
+                    "invalid [security] table in {}: {error}",
+                    path.display()
+                ))
+            })?;
+        Ok(security
+            .min_age_for_ecosystem(self.security_core)
+            .map(|cutoff_hours| (cutoff_hours, security.allow_missing_time.unwrap_or(false))))
+    }
+
+    fn pypi_protocol_for(&self, project_root: &Path) -> MgResult<PypiProtocol> {
+        let protocol = PypiProtocol::from_env();
+        Ok(match self.security_age_gate_policy_for(project_root)? {
+            Some((cutoff_hours, allow_missing_time)) => {
+                protocol.with_age_gate(cutoff_hours, allow_missing_time)
+            }
+            None => protocol,
+        })
+    }
+
+    fn ensure_age_gate_supported(&self, project_root: &Path) -> MgResult<()> {
+        let Some((cutoff_hours, _)) = self.security_age_gate_policy_for(project_root)? else {
+            return Ok(());
+        };
+        if cutoff_hours == 0 || self.language == LibLanguage::Python || self.web.is_some() {
+            return Ok(());
+        }
+        Err(mgc_types::MgError::Unsupported {
+            core: "lib",
+            capability: "minimum release age",
+            guidance: format!(
+                "[security] sets a {cutoff_hours}h minimum release age, but the {} registry lane has no trusted publication timestamps; remove the cutoff or use a timestamp-aware lane",
+                self.language()
+            ),
+        })
     }
 }
 
@@ -374,10 +433,16 @@ impl LibAdapter {
     /// (Resolve native một dependency — không bao giờ spawn toolchain.)
     async fn resolve_first_add(
         &self,
+        project_root: &Path,
         name: &PackageName,
         range: Option<&VersionRange>,
         opts: &AddOptions,
     ) -> MgResult<Option<PreparedAdd>> {
+        if let Some(web) = &self.web {
+            web.arm_age_gate_for(project_root)?;
+        } else {
+            self.ensure_age_gate_supported(project_root)?;
+        }
         let Some(kind) = self.resolve_first_lane()? else {
             return Ok(None);
         };
@@ -398,7 +463,7 @@ impl LibAdapter {
             &str,
         ) = match kind {
             ResolveFirst::Python => (
-                Box::new(PypiProtocol::from_env()),
+                Box::new(self.pypi_protocol_for(project_root)?),
                 EcosystemTag::Python,
                 "pypi://pypi.org",
             ),
@@ -465,7 +530,12 @@ impl LibAdapter {
             }
             _ => wanted,
         };
-        *self.pending_lock.lock().expect("lib pending lock poisoned") = resolution.lock_packages;
+        *self.pending_lock.lock().map_err(|_| {
+            mgc_types::MgError::Other(
+                "lib pending lock poisoned — refusing rather than operating on uncertain state"
+                    .to_string(),
+            )
+        })? = resolution.lock_packages;
         Ok(Some(PreparedAdd {
             id: PackageId::new(name.clone(), resolved.id.version().clone()),
             range: pinned,
@@ -510,9 +580,20 @@ impl PackageAdapter for LibAdapter {
 
     fn arm_age_gate_for(&self, project_root: &std::path::Path) -> MgResult<()> {
         if let Some(web) = &self.web {
-            web.arm_age_gate_for(project_root)?;
+            web.arm_age_gate_for_core(project_root, self.security_core)?;
+        } else {
+            self.ensure_age_gate_supported(project_root)?;
+        }
+        if self.language == LibLanguage::Python {
+            // Validate this operation's project config before resolving.
+            // Xác thực config của project cho operation này trước khi resolve.
+            self.pypi_protocol_for(project_root)?;
         }
         Ok(())
+    }
+
+    fn supports_age_gate_for(&self, _project_root: &std::path::Path) -> MgResult<bool> {
+        Ok(self.language == LibLanguage::Python || self.web.is_some())
     }
 
     fn manifest_owned(&self) -> bool {
@@ -540,7 +621,10 @@ impl PackageAdapter for LibAdapter {
         // honestly instead of fake-adding.
         // (Resolve-trước mọi range qua lane native dùng chung — không
         // spawn toolchain; fail trung thực thay vì add giả.)
-        if let Some(prepared) = self.resolve_first_add(name, range, &opts).await? {
+        if let Some(prepared) = self
+            .resolve_first_add(project_root, name, range, &opts)
+            .await?
+        {
             return Ok(prepared);
         }
         Err(mgc_types::capabilities::unsupported_capability(
@@ -688,8 +772,10 @@ impl DependencyResolver for LibAdapter {
         self.require_python_native("resolve")?;
         self.require_unique_dotnet_project("resolve")?;
         if let Some(web) = &self.web {
+            web.arm_age_gate_for_core(&self.project_root, self.security_core)?;
             return web.resolve(manifest).await;
         }
+        self.ensure_age_gate_supported(&self.project_root)?;
         match self.language {
             // Native crates.io engine (Phase 2): fetch sparse index → select
             // → recurse → build graph + v3 lock entries (mgc-native, no
@@ -706,7 +792,12 @@ impl DependencyResolver for LibAdapter {
                     manifest,
                 )
                 .await?;
-                *self.pending_lock.lock().expect("lib pending lock poisoned") =
+                *self.pending_lock.lock().map_err(|_| {
+                    mgc_types::MgError::Other(
+                        "lib pending lock poisoned — refusing rather than operating on uncertain state"
+                            .to_string(),
+                    )
+                })? =
                     resolution.lock_packages;
                 Ok(resolution.graph)
             }
@@ -715,7 +806,7 @@ impl DependencyResolver for LibAdapter {
             // Engine PyPI native (Phase 2): JSON API → chọn PEP 440 →
             // wheel/sdist → đệ quy qua requires_dist (mgc-native).
             LibLanguage::Python => {
-                let protocol = PypiProtocol::from_env();
+                let protocol = self.pypi_protocol_for(&self.project_root)?;
                 let resolution = resolve_with_protocol(
                     &protocol,
                     EcosystemTag::Python,
@@ -723,7 +814,12 @@ impl DependencyResolver for LibAdapter {
                     manifest,
                 )
                 .await?;
-                *self.pending_lock.lock().expect("lib pending lock poisoned") =
+                *self.pending_lock.lock().map_err(|_| {
+                    mgc_types::MgError::Other(
+                        "lib pending lock poisoned — refusing rather than operating on uncertain state"
+                            .to_string(),
+                    )
+                })? =
                     resolution.lock_packages;
                 Ok(resolution.graph)
             }
@@ -744,7 +840,12 @@ impl DependencyResolver for LibAdapter {
                     manifest,
                 )
                 .await?;
-                *self.pending_lock.lock().expect("lib pending lock poisoned") =
+                *self.pending_lock.lock().map_err(|_| {
+                    mgc_types::MgError::Other(
+                        "lib pending lock poisoned — refusing rather than operating on uncertain state"
+                            .to_string(),
+                    )
+                })? =
                     resolution.lock_packages;
                 Ok(resolution.graph)
             }
@@ -766,7 +867,12 @@ impl DependencyResolver for LibAdapter {
                         manifest,
                     )
                     .await?;
-                    *self.pending_lock.lock().expect("lib pending lock poisoned") =
+                    *self.pending_lock.lock().map_err(|_| {
+                    mgc_types::MgError::Other(
+                        "lib pending lock poisoned — refusing rather than operating on uncertain state"
+                            .to_string(),
+                    )
+                })? =
                         resolution.lock_packages;
                     Ok(resolution.graph)
                 }
@@ -807,12 +913,27 @@ impl DependencyResolver for LibAdapter {
                     manifest,
                 )
                 .await?;
-                *self.pending_lock.lock().expect("lib pending lock poisoned") =
+                *self.pending_lock.lock().map_err(|_| {
+                    mgc_types::MgError::Other(
+                        "lib pending lock poisoned — refusing rather than operating on uncertain state"
+                            .to_string(),
+                    )
+                })? =
                     resolution.lock_packages;
                 Ok(resolution.graph)
             }
             LibLanguage::Ts => unreachable!("ts handled by web delegate"),
         }
+    }
+
+    /// Re-resolve through the embedded web lane without its lock short-circuit.
+    /// (Resolve lại qua web engine nhúng và bỏ qua short-circuit từ lock.)
+    async fn resolve_fresh(&self, manifest: &Manifest) -> MgResult<ResolvedGraph> {
+        if let Some(web) = &self.web {
+            web.arm_age_gate_for_core(&self.project_root, self.security_core)?;
+            return web.resolve_fresh(manifest).await;
+        }
+        self.resolve(manifest).await
     }
 }
 
@@ -894,8 +1015,12 @@ impl ContentStoreProvider for LibAdapter {
         }
         // Use new install pipeline (install/mod.rs)
         // Dùng install pipeline mới (install/mod.rs)
-        let mut lock_packages =
-            std::mem::take(&mut *self.pending_lock.lock().expect("lib pending lock poisoned"));
+        let mut lock_packages = std::mem::take(&mut *self.pending_lock.lock().map_err(|_| {
+            mgc_types::MgError::Other(
+                "lib pending lock poisoned — refusing rather than operating on uncertain state"
+                    .to_string(),
+            )
+        })?);
         if !graph.packages.is_empty() {
             // Delta operations (add after an existing lock) stage markers
             // only for their newly resolved subgraph. Fill the rest from
@@ -1049,3 +1174,15 @@ pub fn adapter_for_language(
 ) -> Result<LibAdapter> {
     LibAdapter::for_language(language, root, registry_url, token)
 }
+
+/// Construct the embedded Python engine with the AI core's security scope.
+/// Dựng Python engine nhúng theo phạm vi bảo mật của core AI.
+pub fn adapter_for_ai_python(root: &Path) -> Result<LibAdapter> {
+    let mut adapter = LibAdapter::for_language(LibLanguage::Python, root, None, None)?;
+    adapter.security_core = "ai";
+    Ok(adapter)
+}
+
+#[cfg(test)]
+#[path = "test/adapter_policy_test.rs"]
+mod adapter_policy_tests;

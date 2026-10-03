@@ -17,6 +17,78 @@ pub fn lock_v4_existing_signature_invalid() -> Error {
     anyhow!("refusing to re-sign a v4 lockfile whose existing digest or signature is invalid")
 }
 
+pub fn trusted_registry_admin_required() -> Error {
+    anyhow!("trusted publisher management requires --admin-token or MAGICORE_REGISTRY_ADMIN_TOKEN")
+}
+
+pub fn trusted_binding_failed(status: u16) -> Error {
+    anyhow!("trusted publisher binding request failed with HTTP {status}")
+}
+
+pub fn trusted_registry_url_invalid() -> Error {
+    anyhow!("trusted publishing requires a valid registry URL without credentials or fragment")
+}
+
+pub fn trusted_registry_requires_https() -> Error {
+    anyhow!("trusted publishing requires HTTPS except for loopback registry URLs")
+}
+
+pub fn trusted_audience_required() -> Error {
+    anyhow!("trusted publishing audience cannot be empty")
+}
+
+pub fn trusted_token_exchange_failed(status: u16) -> Error {
+    anyhow!("trusted publishing token exchange failed with HTTP {status}")
+}
+
+pub fn trusted_oci_upload_start_failed(status: u16) -> Error {
+    anyhow!("OCI blob upload start returned HTTP {status} instead of 202")
+}
+
+pub fn trusted_oci_upload_chunk_failed(status: u16) -> Error {
+    anyhow!("OCI blob upload chunk returned HTTP {status} instead of 202")
+}
+
+pub fn trusted_oci_upload_complete_failed(status: u16) -> Error {
+    anyhow!("OCI blob upload completion returned HTTP {status} instead of 201")
+}
+
+pub fn trusted_oci_upload_location_missing() -> Error {
+    anyhow!("OCI registry omitted a required upload Location header")
+}
+
+pub fn trusted_oci_upload_range_invalid() -> Error {
+    anyhow!("OCI registry returned an unexpected upload Range header")
+}
+
+pub fn trusted_token_response_invalid() -> Error {
+    anyhow!("registry returned an invalid trusted publishing token response")
+}
+
+pub fn audit_signatures_flags_conflict() -> Error {
+    anyhow!("audit signatures cannot be combined with vulnerability audit flags")
+}
+
+pub fn trusted_signatures_request_failed(status: u16) -> Error {
+    anyhow!("trusted signatures request failed with HTTP {status}")
+}
+
+pub fn trusted_signatures_response_too_large() -> Error {
+    anyhow!("trusted signatures response exceeds the configured size limit")
+}
+
+pub fn trusted_signatures_response_invalid() -> Error {
+    anyhow!("registry returned an invalid trusted signatures response")
+}
+
+pub fn trusted_signatures_missing_or_mismatched() -> Error {
+    anyhow!("registry returned no provenance entries or a package mismatch")
+}
+
+pub fn trusted_signatures_invalid() -> Error {
+    anyhow!("trusted provenance signature or transparency chain verification failed")
+}
+
 /// `mgc remove-ai <pkg> [pkg...]` — name packages to remove
 pub fn remove_ai_usage() -> Error {
     anyhow!("mgc remove-ai <pkg> [pkg...] — name the packages to remove")
@@ -197,6 +269,21 @@ pub fn unknown_hardware_package(pkg: &str) -> Error {
     anyhow!("unknown hardware package '{pkg}' (optimizer | bench)")
 }
 
+/// Hardware template directory is absent — nothing to remove.
+/// (Thư mục template hardware không có — không có gì để gỡ.)
+pub fn hardware_template_not_materialized(pkg: &str, root: &std::path::Path) -> Error {
+    anyhow!(
+        "hardware template '{pkg}' is not materialized in '{}' — nothing to remove",
+        root.display()
+    )
+}
+
+/// Hardware template directory could not be removed.
+/// (Không gỡ được thư mục template hardware.)
+pub fn hardware_template_remove_failed(pkg: &str, reason: &dyn std::fmt::Display) -> Error {
+    anyhow!("cannot remove hardware template '{pkg}': {reason}")
+}
+
 /// `mgc trust pending` could not open the machine-local policy database.
 /// `mgc trust pending` không mở được database policy cục bộ.
 pub fn trust_policy_database_open_failed(path: &std::path::Path) -> Error {
@@ -240,6 +327,37 @@ pub fn trust_policy_lock_failed(root: &std::path::Path, reason: &dyn std::fmt::D
 /// Cần package identifier để approve hoặc deny trust.
 pub fn trust_policy_package_empty() -> Error {
     anyhow!("package name cannot be empty")
+}
+
+/// `mgc trust anchor` found no core marker to attest.
+/// (Không có core marker để chứng thực.)
+pub fn trust_anchor_no_marker(root: &std::path::Path) -> Error {
+    anyhow!(
+        "no core marker in '{}' — run `mgc init` first, then `mgc trust anchor`",
+        root.display()
+    )
+}
+
+/// `mgc trust anchor` cannot access the home directory for key storage.
+/// (Không truy cập được home để lưu key.)
+pub fn trust_anchor_no_home(reason: &dyn std::fmt::Display) -> Error {
+    anyhow!("cannot access global identities dir: {reason}")
+}
+
+/// `mgc trust anchor` failed to attest the project core.
+/// (Chứng thực core thất bại.)
+pub fn trust_anchor_failed(reason: &dyn std::fmt::Display) -> Error {
+    anyhow!("core attestation failed: {reason}")
+}
+
+/// `--rotate` generates a fresh key by definition; naming a key with it
+/// is contradictory — use plain `mgc trust anchor --key-id` to switch.
+/// (`--rotate` sinh key mới theo định nghĩa; chỉ định key cùng lúc là
+/// mâu thuẫn.)
+pub fn trust_anchor_rotate_needs_generated_key() -> Error {
+    anyhow!(
+        "--rotate generates a fresh key and cannot be combined with --key-id (use --key-id alone to switch keys)"
+    )
 }
 
 /// A trust-policy storage path is not a regular project-owned path.
@@ -474,6 +592,14 @@ pub fn audit_strict_web_only(name: &str) -> Error {
     )
 }
 
+/// `--audit-strict` was passed to a command that never consults strictness.
+/// Accepting it would silently ignore the flag — refuse with the supported set.
+pub fn audit_strict_unsupported_command(name: &str) -> Error {
+    anyhow!(
+        "--audit-strict has no effect on '{name}' (strict audit applies to: audit, verify, install, add and their per-core variants)"
+    )
+}
+
 pub fn audit_strict_no_web_adapter() -> Error {
     anyhow!(
         "--audit-strict requires the web core registry adapter, which is not included in this build"
@@ -652,6 +778,12 @@ pub fn cicd_verify_empty_chain() -> Error {
 pub fn deploy_not_implemented(cloud: &str) -> Error {
     anyhow!(
         "'mgc deploy' for '{cloud}' has no MagiCore-native provider engine yet; no external provider CLI was started"
+    )
+}
+
+pub fn cicd_deploy_target_not_implemented(provider: &str, stack: &str, region: &str) -> Error {
+    anyhow!(
+        "'mgc deploy' for {provider} target '{stack}' in region '{region}' has no MagiCore-native provider engine yet; no external provider CLI was started"
     )
 }
 
@@ -874,6 +1006,20 @@ pub fn unsupported_script(script: &str, e: &dyn std::fmt::Display) -> Error {
     anyhow!("Unsupported script '{script}': {e}")
 }
 
+/// Publish lifecycle hooks require explicit, one-command approval.
+/// (Hook publish cần được cho phép tường minh cho lần chạy này.)
+pub fn publish_lifecycle_opt_in_required() -> Error {
+    anyhow!(
+        "package defines publish lifecycle hooks; review them and rerun with --allow-scripts, or use --ignore-scripts to skip them"
+    )
+}
+
+/// Malformed publish lifecycle metadata must never look like an empty hook list.
+/// (Metadata lifecycle sai không được giả như danh sách hook rỗng.)
+pub fn publish_lifecycle_policy_invalid() -> Error {
+    anyhow!("package.json publish lifecycle scripts must be an object of string commands")
+}
+
 // ===== dlx.rs =====
 
 pub fn dlx_no_binary(bin: &str, pkg: &str) -> Error {
@@ -919,7 +1065,13 @@ pub fn registry_fetch_failed(package: &str, e: &dyn std::fmt::Display) -> Error 
 
 pub fn outdated_no_web_adapter() -> Error {
     anyhow!(
-        "outdated currently requires the web core registry adapter, which is not included in this build"
+        "outdated for the web core requires the web registry adapter, which is not included in this build"
+    )
+}
+
+pub fn outdated_lock_unusable(core: &str) -> Error {
+    anyhow!(
+        "`mgc outdated` for core `{core}` requires a valid mgc.lock matching the current manifest; run `mgc install` to create or refresh it"
     )
 }
 
@@ -1593,11 +1745,23 @@ pub fn migrate_no_lockfile(root: &std::path::Path) -> Error {
     anyhow!("no mgc.lock in '{}' — nothing to migrate", root.display())
 }
 
-/// V4 cannot be written until every dependency lifecycle reader and writer
-/// consumes it without projecting away package identity.
-pub fn migrate_v4_runtime_unavailable() -> Error {
+/// `mgc migrate lock` refused: the v1/v2/v3 → v4 migration would drop
+/// data (edges, peers, sources, or installer SRI). The existing mgc.lock
+/// was left unchanged — re-resolve the lossy lanes first, then migrate.
+/// (Migrate từ chối vì hao hụt dữ liệu — giữ nguyên lock cũ.)
+pub fn migrate_v4_lossy(warnings: &[String]) -> Error {
     anyhow!(
-        "schema v4 migration is disabled: install, mutation, and audit runtime paths do not yet consume v4 without loss; the existing mgc.lock was left unchanged"
+        "schema v4 migration refused (lossy — existing mgc.lock left unchanged): {}",
+        warnings.join("; ")
+    )
+}
+
+/// `mgc migrate lock` emitted v4 text that does not round-trip into the
+/// identical document — a serializer drift that must never hit disk.
+/// (Text v4 ghi ra không round-trip y hệt — không được ghi đĩa.)
+pub fn migrate_v4_roundtrip_mismatch() -> Error {
+    anyhow!(
+        "migrated v4 document does not round-trip identically — refusing to write (serializer drift)"
     )
 }
 

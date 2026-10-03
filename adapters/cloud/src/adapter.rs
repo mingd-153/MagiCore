@@ -32,6 +32,7 @@ use std::path::Path;
 
 pub struct CloudAdapter {
     cloud_type: CloudType,
+    project_root: std::path::PathBuf,
     web: Option<mgc_web_adapter::WebAdapter>,
 }
 
@@ -82,7 +83,11 @@ pub fn adapter_for(root: &Path) -> anyhow::Result<Option<CloudAdapter>> {
     } else {
         None
     };
-    Ok(Some(CloudAdapter { cloud_type, web }))
+    Ok(Some(CloudAdapter {
+        cloud_type,
+        project_root: root.to_path_buf(),
+        web,
+    }))
 }
 
 impl CoreIdent for CloudAdapter {
@@ -194,6 +199,7 @@ impl LockfileProvider for CloudAdapter {
 impl DependencyResolver for CloudAdapter {
     async fn resolve(&self, manifest: &Manifest) -> MgResult<ResolvedGraph> {
         if let Some(web) = &self.web {
+            web.arm_age_gate_for_core(&self.project_root, "clo")?;
             return web.resolve(manifest).await;
         }
         // Terraform/CDK modules are not resolved through a registry graph.
@@ -311,7 +317,8 @@ impl PackageAdapter for CloudAdapter {
                 "only CDK/Pulumi projects with a JavaScript manifest have an embedded MagiCore package engine",
             ));
         };
-        web.prepare_add(project_root, name, range, opts).await
+        web.prepare_add_for_core(project_root, name, range, opts, "clo")
+            .await
     }
 
     /// P0/F6: forward to the embedded web engine (TS delegate resolves
@@ -319,9 +326,13 @@ impl PackageAdapter for CloudAdapter {
     /// (Chuyển cho web engine nhúng.)
     fn arm_age_gate_for(&self, project_root: &std::path::Path) -> MgResult<()> {
         if let Some(web) = &self.web {
-            web.arm_age_gate_for(project_root)?;
+            web.arm_age_gate_for_core(project_root, "clo")?;
         }
         Ok(())
+    }
+
+    fn supports_age_gate_for(&self, _project_root: &std::path::Path) -> MgResult<bool> {
+        Ok(self.web.is_some())
     }
 
     fn set_dedupe_pref(&self, enabled: bool) {

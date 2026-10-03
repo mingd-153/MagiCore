@@ -212,11 +212,6 @@ NON_EXECUTABLE_SQL_PREFIXES = {
 PLATFORM_PROCESS_BOUNDARY_REVIEWS = {
     (
         "core/crates/mgc-exec/src/run.rs",
-        "resolve_windows_shim",
-        "where.exe",
-    ): "Windows PATH resolution for command shims; review native API replacement",
-    (
-        "core/crates/mgc-exec/src/run.rs",
         "execute_command",
         "cmd.exe",
     ): "Windows batch-script command wrapper; review shell-boundary safety",
@@ -230,6 +225,75 @@ PLATFORM_PROCESS_BOUNDARY_REVIEWS = {
         "find_forbidden_descendant",
         "ps",
     ): "Unix process-table inspection; review native platform API replacement",
+}
+
+# These two first-party toolchain calls are explicitly constrained by
+# `mgc-exec`: Cargo is locked/offline and rustc is limited to the read-only
+# host-target query. Keep the exception exact by source, function, and tool.
+# (Hai lệnh toolchain nội bộ này bị giới hạn bởi `mgc-exec`: Cargo khóa
+# dependency/offline, rustc chỉ truy vấn host-target chỉ đọc. Ngoại lệ phải
+# khớp chính xác file, hàm và executable.)
+# The web lifecycle route is user-policy gated, parsed as one non-shell
+# invocation, and constrained to the install execution scope.
+# Route lifecycle web bị policy user chặn/mở, parse thành lệnh đơn không shell,
+# và dùng phạm vi thực thi Install.
+# Publish lifecycle execution requires a separate explicit one-command opt-in.
+# Hook publish cần opt-in tường minh riêng cho từng lần chạy.
+# Publish's Git checks accept only the closed read-only query enum and run
+# against the selected project root; dynamic refs follow --end-of-options.
+# Git check của publish chỉ nhận enum truy vấn đóng, chỉ đọc, chạy tại root
+# project được chọn; ref động nằm sau --end-of-options.
+AUDITED_EXECUTOR_ROUTES = {
+    (
+        "tools/mgc-dist/src/main.rs",
+        "build_package",
+        "cargo",
+    ): "mgc-exec BuildRunner with --locked --offline; package build route",
+    (
+        "tools/mgc-dist/src/main.rs",
+        "detect_host_target",
+        "rustc",
+    ): "mgc-exec BuildRunner restricted to rustc -vV; read-only host query",
+    (
+        "cli/src/commands/build/web_engine.rs",
+        "build_rust_with_env",
+        "cargo",
+    ): "mgc-exec BuildRunner; Cargo build requires --locked --offline",
+    (
+        "cli/src/commands/build.rs",
+        "build_lib",
+        "node",
+    ): "mgc-exec BuildRunner; node executes the project-local tsc entry",
+    (
+        "cli/src/commands/build.rs",
+        "build_cloud",
+        "node",
+    ): "mgc-exec BuildRunner; node executes the project-local CDK synth entry",
+    (
+        "cli/src/commands/core/dev/app.rs",
+        "run_xcrun",
+        "xcrun",
+    ): "mgc-exec DeviceControl; allowlisted iOS simulator/device commands",
+    (
+        "cli/src/commands/core/dev/app.rs",
+        "run_android_device_command",
+        "adb",
+    ): "mgc-exec DeviceControl; allowlisted Android device commands",
+    (
+        "adapters/web/src/lifecycle.rs",
+        "run_script",
+        "<dynamic:invocation>",
+    ): "mgc-exec Install; parsed non-shell script from trust-approved lifecycle install",
+    (
+        "cli/src/commands/publish.rs",
+        "run_lifecycle",
+        "<dynamic:invocation>",
+    ): "mgc-exec Install; non-shell lifecycle runner after explicit --allow-scripts",
+    (
+        "cli/src/commands/publish.rs",
+        "run_git_capture",
+        "git",
+    ): "mgc-exec; closed read-only Git query enum at the selected project root",
 }
 
 # Spawn-shaped contexts. Applied to the whole file text (so a tool literal
@@ -254,6 +318,7 @@ SPAWN_PATTERNS = [
     # expose `run(...)`. Match only the known process wrappers when unqualified,
     # and the explicit mgc_exec namespace for its generic `run` wrapper.
     (re.compile(r'\bmgc_exec(?:::[A-Za-z_][A-Za-z0-9_]*)*::run\s*\(\s*"([^"\n]+)"'), True),
+    (re.compile(r'\bmgc_exec(?:::[A-Za-z_][A-Za-z0-9_]*)*::run_inherited\s*\(\s*"([^"\n]+)"'), True),
     (re.compile(r'(?<![\w:])(?:run_inherited|run_capture)\s*\(\s*"([^"\n]+)"'), True),
     (re.compile(r'\bmgc_run\s*\(\s*"([^"\n]+)"'), True),
     (re.compile(r'\bCommand::new\s*\(\s*"([^"\n]+)"'), True),
@@ -270,7 +335,7 @@ SPAWN_PATTERNS = [
 # current line executes a process. Keep them in the blocking ledger so the
 # route cannot disappear from review, but label them separately from spawn
 # calls. (Descriptor là tuyến lệnh tĩnh, không phải bằng chứng process chạy.)
-DESCRIPTOR_PATTERNS = [pattern for pattern, _ in SPAWN_PATTERNS[7:]]
+DESCRIPTOR_PATTERNS = [pattern for pattern, _ in SPAWN_PATTERNS[8:]]
 
 # A variable executable is still a process boundary. Keep these separate so
 # the ledger labels it as dynamic instead of pretending the variable name is
@@ -1407,7 +1472,13 @@ def scan_file(rel_path: str, abs_path: str) -> list:
                 if classification_reason is not None:
                     op_class, status = "platform-process-boundary", "review-required"
                 else:
-                    op_class, status = _classify(rel_path, fn_name)
+                    classification_reason = AUDITED_EXECUTOR_ROUTES.get(
+                        (rel_path.replace(os.sep, "/"), fn_name, tool)
+                    )
+                    if classification_reason is not None:
+                        op_class, status = "audited-executor-route", "allowed"
+                    else:
+                        op_class, status = _classify(rel_path, fn_name)
             # A literal command descriptor proves a route can select an
             # executable, not that this source line spawns it. Keep unknown
             # production routes release-blocking until linked to a launcher,

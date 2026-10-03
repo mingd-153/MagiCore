@@ -78,9 +78,29 @@ pub async fn dispatch_common(
             page,
         } => commands::search::run(query, json, exact, page).await,
         CommonCommand::Outdated { json } => commands::outdated::run(core, json).await,
-        CommonCommand::Audit { fix, format } => {
-            commands::audit::run(core, fix, format.as_deref()).await
-        }
+        CommonCommand::Audit { cmd, fix, format } => match cmd {
+            Some(crate::commands::definitions::AuditCmd::Signatures {
+                package,
+                protocol,
+                registry,
+                token,
+                json,
+            }) => {
+                if fix || format.is_some() {
+                    return Err(crate::error::audit_signatures_flags_conflict());
+                }
+                commands::audit::signatures::run(
+                    core,
+                    &package,
+                    &protocol,
+                    &registry,
+                    token.as_deref(),
+                    json,
+                )
+                .await
+            }
+            None => commands::audit::run(core, fix, format.as_deref()).await,
+        },
         CommonCommand::SelfUpdate {
             version,
             variant,
@@ -137,12 +157,17 @@ pub async fn dispatch_common(
             .await
         }
         CommonCommand::Registry { cmd } => {
-            commands::registry::run(crate::commands::registry::RegistryArgs { cmd }).await
+            commands::registry::run(crate::commands::registry::RegistryArgs { cmd }, core).await
         }
         CommonCommand::Model { cmd } => {
             commands::model::run(crate::commands::model::ModelArgs { cmd }).await
         }
         CommonCommand::Publish {
+            protocol,
+            package,
+            version,
+            artifacts,
+            image,
             tag,
             access,
             dry_run,
@@ -150,6 +175,7 @@ pub async fn dispatch_common(
             otp,
             force,
             ignore_scripts,
+            allow_scripts,
             no_git_checks,
             publish_branch,
             batch,
@@ -159,9 +185,16 @@ pub async fn dispatch_common(
             major,
             registry,
             token,
+            trusted,
+            trusted_audience,
         } => {
             commands::publish::run(
                 crate::commands::publish::PublishArgs {
+                    protocol,
+                    package,
+                    version,
+                    artifacts,
+                    image,
                     tag,
                     access,
                     dry_run,
@@ -169,6 +202,7 @@ pub async fn dispatch_common(
                     otp,
                     force,
                     ignore_scripts,
+                    allow_scripts,
                     no_git_checks,
                     publish_branch,
                     batch,
@@ -178,7 +212,10 @@ pub async fn dispatch_common(
                     major,
                     registry,
                     token,
+                    trusted,
+                    trusted_audience,
                 },
+                core,
                 recursive,
             )
             .await

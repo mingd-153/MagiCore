@@ -11,5 +11,8 @@ pub mod install;
 pub mod scaffold;
 
 pub use adapter::{IotAdapter, adapter_for};
-pub use framework::{IotFramework, KNOWN_BOARDS, board_target, detect_framework, known_boards};
+pub use framework::{
+    BoardInfo, IotFramework, KNOWN_BOARDS, board_target, board_target_for_framework,
+    boards_for_framework, detect_framework, known_boards,
+};
 pub use sbom::generate_sbom;

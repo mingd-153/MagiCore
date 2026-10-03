@@ -82,14 +82,38 @@ pub fn detect_target_platform() -> TargetPlatform {
     }
 }
 
+/// Run an Xcode simulator/device probe through the audited executor.
+/// Detection call sites have no project root, so they log nothing
+/// project-local; allowlist + DeviceControl scope + redaction still apply.
+/// Chạy probe simulator/thiết bị Xcode qua executor có audit.
+/// Điểm detect không có project root nên không ghi log project-local;
+/// allowlist + scope DeviceControl + redact vẫn áp dụng.
+fn run_xcrun(args: &[&str], project_log_dir: Option<&Path>) -> Result<mgc_exec::run::ExecReport> {
+    let args = args
+        .iter()
+        .map(|arg| (*arg).to_string())
+        .collect::<Vec<_>>();
+    let opts = mgc_exec::prelude::ExecOptions {
+        log_path: project_log_dir.map(|dir| dir.join(".magicore").join("exec.log")),
+        timeout: Some(Duration::from_secs(15)),
+        capture_full_stdout: true,
+        execution_scope: Some(mgc_exec::allowlist::ExecutionScope::DeviceControl),
+        ..Default::default()
+    };
+    mgc_exec::prelude::run("xcrun", &args, &opts)
+        .map_err(|e| crate::error::app_tool_failed("xcrun", &e))
+}
+
 /// Kiểm tra Xcode CLI tools có sẵn (xcrun tồn tại và simctl hoạt động).
 fn xcode_available() -> bool {
-    std::process::Command::new("xcrun")
-        .args(["simctl", "list", "devices", "--json"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
+    xcode_available_in(None)
+}
+
+/// Kiểm tra Xcode với audit log project khi có root.
+/// Check Xcode with project audit log when root is known.
+fn xcode_available_in(project_root: Option<&Path>) -> bool {
+    run_xcrun(&["simctl", "list", "devices", "--json"], project_root)
+        .map(|report| report.exit_code == 0)
         .unwrap_or(false)
 }
 
@@ -98,11 +122,14 @@ fn xcode_available() -> bool {
 /// Lấy UDID của simulator iOS đang booted (ưu tiên) hoặc simulator available đầu tiên.
 /// Trả về `None` nếu không có simulator nào.
 pub fn find_ios_simulator() -> Option<String> {
-    let out = std::process::Command::new("xcrun")
-        .args(["simctl", "list", "devices", "--json"])
-        .output()
-        .ok()?;
-    let json: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
+    find_ios_simulator_in(None)
+}
+
+/// Lấy UDID simulator với audit log project khi có root.
+/// Find simulator UDID with project audit log when root is known.
+pub fn find_ios_simulator_in(project_root: Option<&Path>) -> Option<String> {
+    let report = run_xcrun(&["simctl", "list", "devices", "--json"], project_root).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&report.stdout_full).ok()?;
     let devices = json.get("devices")?.as_object()?;
 
     let mut booted_udid: Option<String> = None;
@@ -141,13 +168,14 @@ pub fn find_ios_simulator() -> Option<String> {
     booted_udid.or(any_available_udid)
 }
 
-/// Boot simulator nếu chưa chạy (non-blocking — trả về khi boot xong).
-fn boot_simulator(udid: &str) -> Result<()> {
-    let status = std::process::Command::new("xcrun")
-        .args(["simctl", "boot", udid])
-        .status()?;
+/// Boot simulator nếu chưa chạy (non-blocking — trả về khi boot xong)
+/// với audit log project khi có root. Best-effort:
+/// boot báo lỗi khi simulator đã booted nên mọi lỗi đều bỏ qua
+/// (callers cũng đã dùng `.ok()`).
+/// Boot simulator with project audit log when root is known.
+fn boot_simulator_in(udid: &str, project_root: Option<&Path>) -> Result<()> {
     // boot trả về lỗi nếu đã booted — bỏ qua
-    let _ = status;
+    let _ = run_xcrun(&["simctl", "boot", udid], project_root);
     Ok(())
 }
 
@@ -285,7 +313,7 @@ async fn dev_ios(
             std::env::consts::OS
         );
     }
-    if !xcode_available() {
+    if !xcode_available_in(Some(root)) {
         bail!(
             "Xcode command-line tools not found. Install with: xcode-select --install\n\
              Or set [app] dev_scheme in mgc.toml to use xcodebuild."
@@ -300,9 +328,10 @@ async fn dev_ios(
             };
             return Err(crate::error::objc_dev_needs_xcode(&proj));
         };
-        let simulator_udid = find_ios_simulator().unwrap_or_else(|| "iPhone 16".to_string());
+        let simulator_udid =
+            find_ios_simulator_in(Some(root)).unwrap_or_else(|| "iPhone 16".to_string());
         if !dry_run {
-            boot_simulator(&simulator_udid).ok();
+            boot_simulator_in(&simulator_udid, Some(root)).ok();
         }
         let args = vec![
             "-scheme".to_string(),
@@ -330,9 +359,10 @@ async fn dev_ios(
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "App".to_string())
         });
-        let simulator_udid = find_ios_simulator().unwrap_or_else(|| "iPhone 16".to_string());
+        let simulator_udid =
+            find_ios_simulator_in(Some(root)).unwrap_or_else(|| "iPhone 16".to_string());
         if !dry_run {
-            boot_simulator(&simulator_udid).ok();
+            boot_simulator_in(&simulator_udid, Some(root)).ok();
         }
         let args = vec![
             "-scheme".to_string(),

@@ -382,6 +382,7 @@ fn unknown_v4_source_and_package_fields_are_rejected() {
         size_bytes: Some(512),
         content_hash: "blake3:fixture".into(),
         downloaded_from: "https://pypi.org/simple".into(),
+        integrity_sri: None,
     });
     extended.packages[0].provenance = Some(Provenance {
         source_kind: "native-resolve".into(),

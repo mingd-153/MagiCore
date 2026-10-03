@@ -18,9 +18,7 @@ pub async fn run(
     // Parse format
     let sbom_format = match format.as_deref() {
         Some("cyclonedx-json") | Some("cyclonedx") | None => SbomFormat::CycloneDx,
-        Some("spdx-json") | Some("spdx") => {
-            anyhow::bail!("SPDX output is not implemented; use `--format cyclonedx-json`")
-        }
+        Some("spdx-json") | Some("spdx") => SbomFormat::Spdx,
         Some(other) => anyhow::bail!("Unsupported SBOM format: {}", other),
     };
 
@@ -58,15 +56,15 @@ pub async fn run(
         include_hashes: true,
     };
 
-    // Use component name/version from CLI args for root component metadata
-    // (generator will extract from lockfile if not passed here)
-    let _component_name = name.or_else(|| {
-        project_root
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-    });
+    let component_name = name
+        .or_else(|| {
+            project_root
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+        })
+        .unwrap_or_else(|| "project".to_string());
 
-    let _component_version = version.or_else(|| {
+    let component_version = version.or_else(|| {
         // Try to read from package.json or mgc.toml
         // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
         if let Ok(content) = std::fs::read_to_string(project_root.join("package.json"))
@@ -79,10 +77,16 @@ pub async fn run(
         }
         None
     });
+    let document_name = component_version
+        .map(|version| format!("{component_name}@{version}"))
+        .unwrap_or(component_name);
 
     let generator = SbomGenerator::new(options);
     let sbom_content = match lock_document {
-        LockDocument::Legacy(lockfile) => generator.generate_json(&lockfile),
+        LockDocument::Legacy(lockfile) => match sbom_format {
+            SbomFormat::CycloneDx => generator.generate_json(&lockfile),
+            SbomFormat::Spdx => generator.generate_spdx_json(&lockfile, &document_name),
+        },
         LockDocument::V4(lockfile) => {
             let project_config = mgc_config::project::ProjectConfig::load(project_root)?;
             let trust_keys = project_config
@@ -90,8 +94,19 @@ pub async fn run(
                 .map(|trust| trust.keys)
                 .unwrap_or_default();
             let policy = mgc_lockfile::policy::resolve_policy(None, Some(project_root));
-            let (sbom, report) =
-                generator.generate_json_v4_with_report(&lockfile, policy, &trust_keys)?;
+            let (sbom, report) = match sbom_format {
+                SbomFormat::CycloneDx => generator.generate_json_v4_with_report(
+                    &lockfile,
+                    policy,
+                    &trust_keys,
+                )?,
+                SbomFormat::Spdx => generator.generate_spdx_json_v4_with_report(
+                    &lockfile,
+                    policy,
+                    &trust_keys,
+                    &document_name,
+                )?,
+            };
             if policy == mgc_lockfile::policy::LockPolicyMode::Warn {
                 if !report.signed {
                     eprintln!("WARN: v4 lockfile is unsigned; SBOM reflects untrusted lock contents");

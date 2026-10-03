@@ -116,7 +116,7 @@ pub async fn prefetch_tarballs(
                 .map_err(|e| MgError::Other(format!("download semaphore closed: {e}")))?;
 
             let content_length = {
-                let client = native::npm_registry::batch_http_client();
+                let client = native::npm_registry::batch_http_client()?;
                 client
                     .head(&url)
                     .send()

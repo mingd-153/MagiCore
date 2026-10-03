@@ -171,6 +171,12 @@ fn legacy_sbom_refs_do_not_disclose_credentials_from_resolved_urls() {
     assert!(!json.contains("build-user"));
     assert!(!json.contains("token-value"));
     assert!(!json.contains("packages.internal.invalid"));
+    let spdx = SbomGenerator::default()
+        .generate_spdx_json(&lockfile, "private-project")
+        .unwrap();
+    assert!(!spdx.contains("build-user"));
+    assert!(!spdx.contains("token-value"));
+    assert!(!spdx.contains("packages.internal.invalid"));
 }
 
 #[test]
@@ -209,6 +215,17 @@ fn v4_sbom_refs_do_not_disclose_credentials_from_source_ids_or_swift_urls() {
         serde_json::from_str::<serde_json::Value>(&json).unwrap()["components"][0]["purl"],
         "pkg:swift/git.example.invalid/org/library@1.0.0"
     );
+    let (spdx, _) = SbomGenerator::default()
+        .generate_spdx_json_v4_with_report(
+            &lock,
+            mgc_lockfile::policy::LockPolicyMode::Warn,
+            &[],
+            "private-swift-project",
+        )
+        .unwrap();
+    assert!(!spdx.contains("build-user"));
+    assert!(!spdx.contains("token-value"));
+    assert!(!spdx.contains("registry.example.invalid"));
 }
 
 #[test]
@@ -395,6 +412,71 @@ fn test_sbom_generate_json() {
     assert!(json.contains("\"bomFormat\": \"CycloneDX\""));
     assert!(json.contains("\"name\": \"react\""));
     assert!(json.contains("\"version\": \"18.0.0\""));
+}
+
+#[test]
+fn spdx_23_json_preserves_package_identity_hashes_and_dependency_edges() {
+    use mgc_lockfile::{EcosystemTag, Lockfile, Package};
+
+    let mut lockfile = Lockfile::new();
+    lockfile.packages = vec![
+        Package {
+            name: "lodash".into(),
+            version: "4.17.21".into(),
+            ecosystem: EcosystemTag::Web,
+            integrity: format!("sha256:{}", "a".repeat(64)),
+            ..Default::default()
+        },
+        Package {
+            name: "axios".into(),
+            version: "1.0.0".into(),
+            ecosystem: EcosystemTag::Web,
+            dependencies: vec!["lodash@4.17.21".into()],
+            ..Default::default()
+        },
+    ];
+
+    let json = SbomGenerator::default()
+        .generate_spdx_json(&lockfile, "sample-project@1.2.3")
+        .unwrap();
+    let document: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(document["spdxVersion"], "SPDX-2.3");
+    assert_eq!(document["dataLicense"], "CC0-1.0");
+    assert_eq!(document["SPDXID"], "SPDXRef-DOCUMENT");
+    assert_eq!(document["name"], "sample-project@1.2.3");
+    assert_eq!(document["packages"].as_array().unwrap().len(), 2);
+    assert_eq!(document["documentDescribes"].as_array().unwrap().len(), 2);
+
+    let packages = document["packages"].as_array().unwrap();
+    let lodash = packages
+        .iter()
+        .find(|package| package["name"] == "lodash")
+        .unwrap();
+    let axios = packages
+        .iter()
+        .find(|package| package["name"] == "axios")
+        .unwrap();
+    assert_eq!(lodash["downloadLocation"], "NOASSERTION");
+    assert_eq!(lodash["filesAnalyzed"], false);
+    assert_eq!(lodash["licenseDeclared"], "NOASSERTION");
+    assert_eq!(
+        lodash["externalRefs"][0]["referenceCategory"],
+        "PACKAGE-MANAGER"
+    );
+    assert_eq!(lodash["externalRefs"][0]["referenceType"], "purl");
+    assert_eq!(
+        lodash["externalRefs"][0]["referenceLocator"],
+        "pkg:npm/lodash@4.17.21"
+    );
+    assert_eq!(lodash["checksums"][0]["algorithm"], "SHA256");
+    assert_eq!(lodash["checksums"][0]["checksumValue"], "a".repeat(64));
+
+    let relationships = document["relationships"].as_array().unwrap();
+    assert!(relationships.iter().any(|relationship| {
+        relationship["spdxElementId"] == axios["SPDXID"]
+            && relationship["relationshipType"] == "DEPENDS_ON"
+            && relationship["relatedSpdxElement"] == lodash["SPDXID"]
+    }));
 }
 
 #[test]

@@ -21,12 +21,14 @@ impl IotProcessor {
         )
     }
 
-    pub fn files(target: &Path, name: &str, framework: &str) -> Result<()> {
+    pub fn files(target: &Path, name: &str, framework: &str, board: &str) -> Result<()> {
         match framework {
             "platformio" | "firmware" => {
                 write_file(
                     &target.join("platformio.ini"),
-                    "[env:esp32dev]\nplatform = espressif32\nboard = esp32dev\nframework = arduino\n",
+                    &format!(
+                        "[env:{board}]\nplatform = espressif32\nboard = {board}\nframework = arduino\n"
+                    ),
                 )?;
                 write_file(
                     &target.join("src").join("main.cpp"),
@@ -39,14 +41,20 @@ impl IotProcessor {
             )?,
             "esp32-rust" => {
                 // esp-hal on crates.io (verified resolvable: esp-hal 1.2.2
-                // + esp32c3 fetches cleanly). Building needs the Espressif
-                // toolchain (not provisioned here) — scaffold + fetch only.
-                // (esp-hal từ crates.io — build cần toolchain Espressif.)
+                // exposes matching esp32/esp32c3/esp32s3 features. Building
+                // needs the Espressif toolchain (not provisioned here).
+                // (esp-hal 1.2.2 có feature khớp ba board; build cần toolchain Espressif.)
+                let feature = match board {
+                    "esp32" => "esp32",
+                    "esp32c3" => "esp32c3",
+                    "esp32s3" => "esp32s3",
+                    _ => anyhow::bail!("No verified esp-hal feature for board '{board}'"),
+                };
                 write_file(
                     &target.join("Cargo.toml"),
                     &format!(
-                        "[package]\nname = \"{}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nesp-hal = {{ version = \"1.2.2\", features = [\"esp32c3\"] }}\n",
-                        slugify(name)
+                        "[package]\nname = \"{}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nesp-hal = {{ version = \"1.2.2\", features = [\"{feature}\"] }}\n",
+                        slugify(name),
                     ),
                 )?;
                 write_file(

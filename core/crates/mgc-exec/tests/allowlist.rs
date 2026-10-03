@@ -44,6 +44,27 @@ fn android_debug_bridge_is_allowed_only_for_device_control_scope() {
 }
 
 #[test]
+fn xcrun_simctl_is_allowed_only_for_device_control_scope() {
+    use mgc_exec::allowlist::check_tool_with_scope;
+    use std::path::Path;
+
+    assert!(
+        check_tool_with_scope("xcrun", ExecutionScope::DeviceControl, Some(Path::new("."))).is_ok()
+    );
+    for scope in [
+        ExecutionScope::Install,
+        ExecutionScope::TestRunner,
+        ExecutionScope::BuildRunner,
+        ExecutionScope::DevServer,
+    ] {
+        assert!(
+            check_tool_with_scope("xcrun", scope, Some(Path::new("."))).is_err(),
+            "xcrun must not be available in {scope:?} scope"
+        );
+    }
+}
+
+#[test]
 fn rejects_forbidden_npm_family() {
     for tool in [
         "npm", "npx", "pnpm", "yarn", "bun", "deno", "bunx", "composer", "pub",

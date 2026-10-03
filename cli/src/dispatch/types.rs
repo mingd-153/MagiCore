@@ -29,6 +29,7 @@ pub enum CommonCommand {
         json: bool,
     },
     Audit {
+        cmd: Option<crate::commands::definitions::AuditCmd>,
         fix: bool,
         format: Option<String>,
     },
@@ -114,6 +115,11 @@ pub enum CommonCommand {
         package: String,
     },
     Publish {
+        protocol: String,
+        package: Option<String>,
+        version: Option<String>,
+        artifacts: Vec<std::path::PathBuf>,
+        image: Option<String>,
         tag: Option<String>,
         access: Option<String>,
         dry_run: bool,
@@ -121,6 +127,7 @@ pub enum CommonCommand {
         otp: Option<String>,
         force: bool,
         ignore_scripts: bool,
+        allow_scripts: bool,
         no_git_checks: bool,
         publish_branch: Option<String>,
         batch: bool,
@@ -130,6 +137,8 @@ pub enum CommonCommand {
         major: bool,
         registry: Option<String>,
         token: Option<String>,
+        trusted: bool,
+        trusted_audience: Option<String>,
     },
     Patch {
         cmd: crate::commands::patch::PatchCmd,
@@ -404,6 +413,10 @@ pub enum CoreCommand {
         packages: Vec<String>,
         compat_runtime: Option<String>,
     },
+    RemoveHardware {
+        packages: Vec<String>,
+        compat_runtime: Option<String>,
+    },
     ListWeb {
         compat_runtime: Option<String>,
     },
@@ -467,6 +480,11 @@ pub enum CoreCommand {
         compat_runtime: Option<String>,
     },
     UpdateLib {
+        packages: Vec<String>,
+        install: bool,
+        compat_runtime: Option<String>,
+    },
+    UpdateHardware {
         packages: Vec<String>,
         install: bool,
         compat_runtime: Option<String>,

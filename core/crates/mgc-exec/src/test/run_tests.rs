@@ -19,6 +19,60 @@ fn path_environment_key_uses_host_case_semantics() {
 }
 
 #[test]
+fn native_windows_path_lookup_prefers_pe_before_shims_across_path_entries()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let local_bin = root.path().join("local-bin");
+    let system_bin = root.path().join("system-bin");
+    std::fs::create_dir_all(&local_bin)?;
+    std::fs::create_dir_all(&system_bin)?;
+    std::fs::write(local_bin.join("tool.cmd"), "local shim")?;
+    std::fs::write(local_bin.join("tool"), "extensionless script")?;
+    std::fs::write(system_bin.join("tool.exe"), "PE executable")?;
+    let search_path = std::env::join_paths([&local_bin, &system_bin])?;
+
+    let resolved = super::find_windows_command("tool", Some(&search_path));
+
+    assert_eq!(resolved, Some(system_bin.join("tool.exe").into_os_string()));
+    Ok(())
+}
+
+#[test]
+fn native_windows_path_lookup_prefers_cmd_over_bat_and_extensionless_script()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    std::fs::write(root.path().join("tool"), "extensionless script")?;
+    std::fs::write(root.path().join("tool.bat"), "batch shim")?;
+    std::fs::write(root.path().join("tool.cmd"), "command shim")?;
+    let search_path = std::env::join_paths([root.path()])?;
+
+    let resolved = super::find_windows_command("tool", Some(&search_path));
+
+    assert_eq!(
+        resolved,
+        Some(root.path().join("tool.cmd").into_os_string())
+    );
+    Ok(())
+}
+
+#[test]
+fn native_windows_path_lookup_does_not_search_a_different_path_entry()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let unselected_bin = root.path().join("unselected-bin");
+    let selected_bin = root.path().join("selected-bin");
+    std::fs::create_dir_all(&unselected_bin)?;
+    std::fs::create_dir_all(&selected_bin)?;
+    std::fs::write(unselected_bin.join("tool.exe"), "unselected executable")?;
+    let search_path = std::env::join_paths([&selected_bin])?;
+
+    let resolved = super::find_windows_command("tool", Some(&search_path));
+
+    assert_eq!(resolved, None);
+    Ok(())
+}
+
+#[test]
 #[cfg(unix)]
 fn shadow_directory_creation_refuses_a_preexisting_symlink()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -130,6 +184,28 @@ fn cargo_compile_is_allowed_only_with_locked_offline_flags() {
             &[]
         )
         .is_ok()
+    );
+}
+
+#[test]
+fn rustc_is_limited_to_the_read_only_host_target_probe() {
+    assert!(
+        crate::allowlist::check_tool_with_scope(
+            "rustc",
+            crate::allowlist::ExecutionScope::BuildRunner,
+            None,
+        )
+        .is_ok()
+    );
+    assert!(reject_external_dependency_resolution("rustc", &["-vV".into()], &[]).is_ok());
+    assert!(reject_external_dependency_resolution("rustc", &["--version".into()], &[]).is_err());
+    assert!(
+        reject_external_dependency_resolution(
+            "rustc",
+            &["-vV".into(), "--crate-name".into(), "injected".into()],
+            &[]
+        )
+        .is_err()
     );
 }
 

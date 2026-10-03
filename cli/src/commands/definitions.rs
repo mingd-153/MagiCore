@@ -33,13 +33,15 @@ pub enum Commands {
         #[arg(long, help = "Page number (20 results per page)")]
         page: Option<u32>,
     },
-    #[command(about = "Check for outdated packages")]
+    #[command(about = "Check outdated packages using the core's native resolver")]
     Outdated {
         #[arg(long, help = "Output as JSON")]
         json: bool,
     },
     #[command(about = "Audit packages for vulnerabilities")]
     Audit {
+        #[command(subcommand)]
+        cmd: Option<AuditCmd>,
         #[arg(
             long,
             help = "Bump vulnerable packages and rewrite lockfile on success"
@@ -138,7 +140,7 @@ pub enum Commands {
     Sbom {
         #[arg(
             long,
-            help = "Output format (cyclonedx-json, cyclonedx-xml, spdx-json)"
+            help = "Output format (cyclonedx-json, spdx-json; SPDX uses version 2.3)"
         )]
         format: Option<String>,
         #[arg(long, help = "Output file path (default: stdout)")]
@@ -154,6 +156,24 @@ pub enum Commands {
     // ── Common: Publish ──────────────────────────────────────────────
     #[command(about = "Publish package to registry")]
     Publish {
+        #[arg(long, value_parser = ["npm", "pypi", "oci"], default_value = "npm")]
+        protocol: String,
+        #[arg(long, requires = "trusted", help = "package name for PyPI or OCI")]
+        package: Option<String>,
+        #[arg(long, requires = "trusted", help = "version for PyPI or tag for OCI")]
+        version: Option<String>,
+        #[arg(
+            long = "artifact",
+            requires = "trusted",
+            help = "PyPI or OCI artifact file (repeatable)"
+        )]
+        artifacts: Vec<std::path::PathBuf>,
+        #[arg(
+            long,
+            requires = "trusted",
+            help = "local Docker image reference for OCI image publish"
+        )]
+        image: Option<String>,
         #[arg(long, help = "dist-tag (default: latest)")]
         tag: Option<String>,
         #[arg(long, help = "access level: public|restricted")]
@@ -168,6 +188,12 @@ pub enum Commands {
         force: bool,
         #[arg(long, help = "skip lifecycle scripts")]
         ignore_scripts: bool,
+        #[arg(
+            long,
+            conflicts_with = "ignore_scripts",
+            help = "explicitly allow package publish lifecycle scripts"
+        )]
+        allow_scripts: bool,
         #[arg(long, help = "skip git checks")]
         no_git_checks: bool,
         #[arg(
@@ -185,10 +211,22 @@ pub enum Commands {
         minor: bool,
         #[arg(long, help = "version bump major")]
         major: bool,
-        #[arg(long, help = "override registry URL")]
+        #[arg(long, env = "MGC_REGISTRY", help = "override registry URL")]
         registry: Option<String>,
         #[arg(long, help = "override token (env MGC_NPM_TOKEN recommended)")]
         token: Option<String>,
+        #[arg(
+            long,
+            conflicts_with = "token",
+            help = "publish with a short-lived CI OIDC token"
+        )]
+        trusted: bool,
+        #[arg(
+            long,
+            requires = "trusted",
+            help = "OIDC audience (defaults to the registry origin)"
+        )]
+        trusted_audience: Option<String>,
     },
 
     // ── Common: Patch & Dedupe ───────────────────────────────────────
@@ -304,9 +342,14 @@ pub enum Commands {
         #[arg(long, help = "Skip cargo build, flash existing binary")]
         skip_build: bool,
     },
-    #[command(about = "Deploy cloud infrastructure (dry-run default)")]
+    #[command(
+        about = "Deploy cloud infrastructure (native provider engines are not yet available)"
+    )]
     Deploy {
-        #[arg(long, help = "Actually run the deploy (default is dry-run print-only)")]
+        #[arg(
+            long,
+            help = "Legacy flag; no vendor CLI is invoked without a native provider engine"
+        )]
         run: bool,
     },
     #[command(about = "Generate CI pipeline (github-actions workflows)")]
@@ -1221,6 +1264,22 @@ pub enum Commands {
         )]
         compat_runtime: Option<String>,
     },
+    #[command(
+        name = "remove-hardware",
+        alias = "rm-hardware",
+        about = "Remove materialized hardware templates (optimizer/bench)"
+    )]
+    RemoveHardware {
+        packages: Vec<String>,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Template lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
+    },
 
     // ── Per-core: list-<core> ──────────────────────────────────
     // Every list lane carries the explicit --compat-runtime opt-in
@@ -1456,6 +1515,41 @@ pub enum Commands {
             help = "Legacy flag; external package-manager execution is disabled"
         )]
         compat_runtime: Option<String>,
+    },
+    #[command(
+        name = "update-hardware",
+        alias = "up-hardware",
+        about = "Refresh materialized hardware templates (optimizer/bench)"
+    )]
+    UpdateHardware {
+        packages: Vec<String>,
+        #[arg(long, help = "Install updated packages immediately")]
+        install: bool,
+        /// Explicit toolchain-compat lane for delegated dependency
+        /// operations (warned + audit-logged; excluded from
+        /// native-support claims). Template lanes ignore it.
+        #[arg(
+            long,
+            help = "Legacy flag; external package-manager execution is disabled"
+        )]
+        compat_runtime: Option<String>,
+    },
+}
+
+#[derive(clap::Subcommand, Clone)]
+pub enum AuditCmd {
+    /// Verify registry provenance signatures and the package transparency chain.
+    /// Xác minh chữ ký provenance registry và chuỗi minh bạch của package.
+    Signatures {
+        package: String,
+        #[arg(long, value_parser = ["npm", "pypi", "oci"], default_value = "npm")]
+        protocol: String,
+        #[arg(long, env = "MGC_REGISTRY", default_value = "http://127.0.0.1:4315")]
+        registry: String,
+        #[arg(long, env = "MGC_NPM_TOKEN")]
+        token: Option<String>,
+        #[arg(long)]
+        json: bool,
     },
 }
 

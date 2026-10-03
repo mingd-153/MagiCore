@@ -1,16 +1,33 @@
 //! IoT project scaffolding.
 
-use crate::framework::IotFramework;
+use crate::framework::{IotFramework, board_target_for_framework, boards_for_framework};
 use mgc_types::MgResult;
 use std::path::Path;
 
-/// Scaffold IoT project
+/// Scaffold an IoT project only for a board registered to the selected framework.
+/// Chỉ scaffold project IoT khi board được đăng ký cho framework đã chọn.
 pub async fn scaffold_project(
     framework: IotFramework,
     project_name: &str,
     board: &str,
     target_dir: &Path,
 ) -> MgResult<()> {
+    if board_target_for_framework(framework.as_str(), board).is_none() {
+        let supported = boards_for_framework(framework.as_str())
+            .iter()
+            .map(|entry| entry.id.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(mgc_types::MgError::Unsupported {
+            core: "iot",
+            capability: "scaffold_board",
+            guidance: format!(
+                "board '{board}' is not registered for framework '{}'; supported boards: {supported}",
+                framework.as_str()
+            ),
+        });
+    }
+
     std::fs::create_dir_all(target_dir)?;
 
     match framework {

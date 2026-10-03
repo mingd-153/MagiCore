@@ -10,6 +10,7 @@ description = "Distribution builder for MagiCore packages"
 [dependencies]
 anyhow = { workspace = true }
 clap = { workspace = true }
+mgc-exec = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 toml = { workspace = true }

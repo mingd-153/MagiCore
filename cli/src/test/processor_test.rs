@@ -66,6 +66,36 @@ fn test_scaffold_writes_baseline_for_all_cores() {
 }
 
 #[test]
+fn github_actions_publish_job_uses_trusted_oidc_and_is_opt_in() {
+    let root = tempfile::tempdir().unwrap();
+    crate::scaffold::processors::cicd::CicdProcessor::files(
+        root.path(),
+        "sample",
+        "github-actions",
+    )
+    .unwrap();
+    let workflow = std::fs::read_to_string(root.path().join(".github/workflows/ci.yml")).unwrap();
+    assert!(workflow.contains("id-token: write"));
+    assert!(workflow.contains("vars.MAGICORE_TRUSTED_PUBLISH == 'true'"));
+    assert!(workflow.contains("mgc publish --trusted"));
+    assert!(workflow.contains("--protocol oci --core \"$MGC_PUBLISH_CORE\""));
+    assert!(workflow.contains("MGC_PUBLISH_PACKAGE"));
+    assert!(workflow.contains("MGC_PUBLISH_ARTIFACT"));
+    assert!(workflow.contains("git archive --format=tar.gz"));
+    for core in [
+        "web", "ai", "app", "lib", "game", "iot", "cloud", "cicd", "hardware",
+    ] {
+        assert!(workflow.contains(core), "workflow omits core {core}");
+    }
+    assert!(workflow.contains("MAGICORE_CLI_VERSION"));
+    assert!(workflow.contains("actions/checkout@11d5960a326750d5838078e36cf38b85af677262"));
+    assert!(workflow.contains("MAGICORE_CLI_SHA256"));
+    assert!(workflow.contains("sha256sum --check --strict -"));
+    assert!(workflow.contains("persist-credentials: false"));
+    assert!(!workflow.contains("raw.githubusercontent.com/mingd-153/MagiCore/"));
+}
+
+#[test]
 fn test_ai_python_agent_scaffold_is_syntactically_valid() {
     let root = tempfile::tempdir().unwrap();
     let target = root.path().join("ai-agent");
@@ -1381,18 +1411,8 @@ const FRESHNESS_BACKLOG: &[(&str, &str, &str)] = &[
     ),
     (
         "sveltekit",
-        "@sveltejs/vite-plugin-svelte",
-        "plugin 4 pairs vite 6; 7 needs build E2E",
-    ),
-    (
-        "sveltekit",
         "typescript",
-        "TS 5 line; TS 6/7 migration needs per-template tsc E2E",
-    ),
-    (
-        "sveltekit",
-        "vite",
-        "vite 6 line; 7/8 needs per-template build E2E",
+        "Svelte tooling still needs the TypeScript 6 compiler API; TypeScript 7 support is not available yet (Svelte tooling hiện cần compiler API của TypeScript 6; TypeScript 7 chưa được hỗ trợ)",
     ),
     (
         "qwik",
@@ -1480,30 +1500,148 @@ fn template_major(range: &str) -> Option<u64> {
     t.split('.').next()?.parse().ok()
 }
 
-async fn npm_latest_major(client: &reqwest::Client, name: &str) -> Option<u64> {
+fn template_major_mismatch(template_major: u64, eligible_major: u64) -> Option<String> {
+    (template_major != eligible_major)
+        .then(|| format!("template ^{template_major} vs latest eligible {eligible_major}"))
+}
+
+fn latest_eligible_major(
+    metadata: &serde_json::Value,
+    now: time::OffsetDateTime,
+) -> Result<Option<u64>, String> {
+    use time::format_description::well_known::Rfc3339;
+
+    let tagged_latest = metadata
+        .pointer("/dist-tags/latest")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "missing dist-tags.latest".to_string())?;
+    let latest = semver::Version::parse(tagged_latest)
+        .map_err(|error| format!("invalid dist-tags.latest '{tagged_latest}': {error}"))?;
+    let versions = metadata
+        .get("versions")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| "missing versions object".to_string())?;
+    let times = metadata
+        .get("time")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| "missing publication timestamps".to_string())?;
+    let quarantine_secs = (mgc_config::DEFAULT_MIN_RELEASE_AGE_HOURS as i64) * 60 * 60;
+    let cutoff = now - time::Duration::seconds(quarantine_secs);
+    let mut eligible_major = None;
+
+    for raw_version in versions.keys() {
+        let version = semver::Version::parse(raw_version)
+            .map_err(|error| format!("invalid registry version '{raw_version}': {error}"))?;
+        if !version.pre.is_empty() || version > latest {
+            continue;
+        }
+        let published_text = times
+            .get(raw_version)
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| format!("missing publication timestamp for {raw_version}"))?;
+        let published = time::OffsetDateTime::parse(published_text, &Rfc3339)
+            .map_err(|error| format!("invalid publication timestamp for {raw_version}: {error}"))?;
+        if published <= cutoff {
+            eligible_major =
+                Some(eligible_major.map_or(version.major, |major: u64| major.max(version.major)));
+        }
+    }
+    Ok(eligible_major)
+}
+
+async fn npm_latest_eligible_major(
+    client: &reqwest::Client,
+    name: &str,
+) -> Result<Option<u64>, String> {
     let url = format!("https://registry.npmjs.org/{}", name.replace('/', "%2f"));
-    let body: serde_json::Value = client
+    let metadata: serde_json::Value = client
         .get(&url)
         .send()
         .await
-        .ok()?
+        .map_err(|error| format!("cannot read npm metadata for {name}: {error}"))?
         .error_for_status()
-        .ok()?
+        .map_err(|error| format!("npm metadata request failed for {name}: {error}"))?
         .json()
         .await
-        .ok()?;
-    body.pointer("/dist-tags/latest")?
-        .as_str()?
-        .split('.')
-        .next()?
-        .parse()
-        .ok()
+        .map_err(|error| format!("cannot parse npm metadata for {name}: {error}"))?;
+    latest_eligible_major(&metadata, time::OffsetDateTime::now_utc())
+}
+
+#[cfg(test)]
+mod freshness_quarantine_tests {
+    use super::{latest_eligible_major, template_major_mismatch};
+    use time::{Duration, OffsetDateTime, format_description::well_known::Rfc3339};
+
+    const FIXED_NOW_UNIX: i64 = 1_800_000_000;
+
+    fn timestamp(now: OffsetDateTime, age_secs: i64) -> String {
+        (now - Duration::seconds(age_secs))
+            .format(&Rfc3339)
+            .expect("format test timestamp")
+    }
+
+    #[test]
+    fn fresh_major_is_not_required_before_release_quarantine_expires() {
+        let now = OffsetDateTime::from_unix_timestamp(FIXED_NOW_UNIX).unwrap();
+        let metadata = serde_json::json!({
+            "dist-tags": {"latest": "3.0.0"},
+            "versions": {"2.9.0": {}, "3.0.0": {}},
+            "time": {
+                "2.9.0": timestamp(now, 90_000),
+                "3.0.0": timestamp(now, 3_600)
+            }
+        });
+
+        assert_eq!(latest_eligible_major(&metadata, now).unwrap(), Some(2));
+    }
+
+    #[test]
+    fn mature_latest_major_becomes_the_freshness_target() {
+        let now = OffsetDateTime::from_unix_timestamp(FIXED_NOW_UNIX).unwrap();
+        let metadata = serde_json::json!({
+            "dist-tags": {"latest": "3.0.0"},
+            "versions": {"2.9.0": {}, "3.0.0": {}},
+            "time": {
+                "2.9.0": timestamp(now, 200_000),
+                "3.0.0": timestamp(now, 90_000)
+            }
+        });
+
+        assert_eq!(latest_eligible_major(&metadata, now).unwrap(), Some(3));
+    }
+
+    #[test]
+    fn missing_registry_publish_time_fails_closed() {
+        let now = OffsetDateTime::from_unix_timestamp(FIXED_NOW_UNIX).unwrap();
+        let metadata = serde_json::json!({
+            "dist-tags": {"latest": "3.0.0"},
+            "versions": {"2.9.0": {}, "3.0.0": {}},
+            "time": {"2.9.0": timestamp(now, 200_000)}
+        });
+
+        let error = latest_eligible_major(&metadata, now).unwrap_err();
+        assert!(error.contains("missing publication timestamp"));
+    }
+
+    #[test]
+    fn template_major_must_match_quarantine_eligible_major() {
+        assert_eq!(template_major_mismatch(2, 2), None);
+        assert_eq!(
+            template_major_mismatch(1, 2).as_deref(),
+            Some("template ^1 vs latest eligible 2")
+        );
+        assert_eq!(
+            template_major_mismatch(3, 2).as_deref(),
+            Some("template ^3 vs latest eligible 2")
+        );
+    }
 }
 
 /// Template freshness gate (P0-bonus): every embedded npm dep either
-/// tracks the registry latest major or sits in FRESHNESS_BACKLOG with
-/// its pairing reason. Registry failures cannot produce freshness evidence.
-/// (Cổng tươi template: lỗi registry không được biến thành bằng chứng pass.)
+/// matches the latest quarantine-eligible major or sits in FRESHNESS_BACKLOG
+/// with its pairing reason. Registry failures cannot produce freshness evidence.
+/// (Cổng tươi template: phải khớp major đã qua quarantine; lỗi registry không
+/// được biến thành bằng chứng pass.)
 #[tokio::test]
 async fn test_embedded_template_dep_majors_track_latest() {
     // Bound every request and reuse metadata across templates.
@@ -1541,15 +1679,23 @@ async fn test_embedded_template_dep_majors_track_latest() {
                     let latest = match latest_majors.get(name) {
                         Some(major) => *major,
                         None => {
-                            let major = npm_latest_major(&client, name).await.unwrap_or_else(|| {
-                                panic!("template freshness UNVERIFIED: cannot read npm latest for {name}")
-                            });
+                            let major = npm_latest_eligible_major(&client, name)
+                                .await
+                                .unwrap_or_else(|error| {
+                                    panic!("template freshness UNVERIFIED: {error}")
+                                })
+                                .unwrap_or_else(|| {
+                                    panic!(
+                                        "template freshness UNVERIFIED: no stable npm release for {name} is older than the {}h quarantine",
+                                        mgc_config::DEFAULT_MIN_RELEASE_AGE_HOURS
+                                    )
+                                });
                             latest_majors.insert(name.clone(), major);
                             major
                         }
                     };
-                    if tmajor < latest {
-                        lags.push(format!("{fw}:{name} template ^{tmajor} vs latest {latest}"));
+                    if let Some(mismatch) = template_major_mismatch(tmajor, latest) {
+                        lags.push(format!("{fw}:{name} {mismatch}"));
                     }
                 }
             }
@@ -1576,11 +1722,148 @@ async fn test_embedded_template_dep_majors_track_latest() {
     }
     assert!(
         unlisted.is_empty(),
-        "template majors lagging latest without backlog entry:\n{}",
+        "template majors mismatching latest quarantine-eligible major without backlog entry:\n{}",
         unlisted
             .iter()
             .map(|u| u.as_str())
             .collect::<Vec<_>>()
             .join("\n")
     );
+}
+
+#[test]
+fn iot_template_context_rejects_unknown_board() {
+    let config = ScaffoldConfig {
+        core: "iot".to_string(),
+        sub_type: String::new(),
+        frameworks: vec!["esp32-rust".to_string()],
+        project_name: "firmware".to_string(),
+        features: vec!["unknown-board".to_string()],
+        template_dir: PathBuf::new(),
+    };
+
+    let error = CoreTemplateContext::try_new(&config, "firmware", "esp32-rust")
+        .expect_err("unregistered board must not receive a fallback target");
+    assert!(error.to_string().contains("Unsupported board"));
+}
+
+#[test]
+fn iot_template_context_rejects_board_from_another_framework() {
+    let config = ScaffoldConfig {
+        core: "iot".to_string(),
+        sub_type: String::new(),
+        frameworks: vec!["esp32-rust".to_string()],
+        project_name: "firmware".to_string(),
+        features: vec!["nrf52dk_nrf52832".to_string()],
+        template_dir: PathBuf::new(),
+    };
+
+    let error = CoreTemplateContext::try_new(&config, "firmware", "esp32-rust")
+        .expect_err("a board outside the selected framework must be rejected");
+    assert!(error.to_string().contains("Unsupported board"));
+}
+
+#[test]
+fn iot_template_context_uses_registered_board_target() {
+    let config = ScaffoldConfig {
+        core: "iot".to_string(),
+        sub_type: String::new(),
+        frameworks: vec!["esp32-rust".to_string()],
+        project_name: "firmware".to_string(),
+        features: vec!["esp32c3".to_string()],
+        template_dir: PathBuf::new(),
+    };
+
+    let context = CoreTemplateContext::try_new(&config, "firmware", "esp32-rust")
+        .expect("registered board should resolve");
+    assert_eq!(
+        context.value("target"),
+        Some("riscv32imac-unknown-none-elf")
+    );
+}
+
+#[test]
+fn non_iot_template_context_retains_legacy_target_value() {
+    let config = ScaffoldConfig {
+        core: "ai".to_string(),
+        sub_type: String::new(),
+        frameworks: vec!["python-agent".to_string()],
+        project_name: "agent".to_string(),
+        features: vec!["custom-feature".to_string()],
+        template_dir: PathBuf::new(),
+    };
+
+    let context = CoreTemplateContext::try_new(&config, "agent", "python-agent")
+        .expect("non-IoT template context remains available");
+    assert_eq!(
+        context.value("target"),
+        Some("riscv32imac-unknown-none-elf")
+    );
+}
+
+#[test]
+fn scaffold_rejects_unknown_iot_board_without_leaving_staging_or_claims() {
+    let root = tempfile::tempdir().unwrap();
+    let target = root.path().join("unknown-board-firmware");
+    let config = ScaffoldConfig {
+        core: "iot".to_string(),
+        sub_type: String::new(),
+        frameworks: vec!["esp32-rust".to_string()],
+        project_name: target.to_string_lossy().to_string(),
+        features: vec!["unknown-board".to_string()],
+        template_dir: PathBuf::new(),
+    };
+
+    assert!(Scaffolder::scaffold(&config).is_err());
+    assert!(!target.exists(), "invalid board must not publish a project");
+    let leftovers = std::fs::read_dir(root.path())
+        .unwrap()
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.file_name().to_string_lossy().to_string())
+        .filter(|name| name != ".DS_Store")
+        .collect::<Vec<_>>();
+    assert!(
+        leftovers.is_empty(),
+        "staging or claim leaked: {leftovers:?}"
+    );
+}
+
+#[test]
+fn iot_fallback_scaffold_uses_selected_platformio_board() {
+    let root = tempfile::tempdir().unwrap();
+    let project_dir = root.path().join("nodemcu-firmware");
+    let config = ScaffoldConfig {
+        core: "iot".to_string(),
+        sub_type: String::new(),
+        frameworks: vec!["platformio".to_string()],
+        project_name: project_dir.to_string_lossy().to_string(),
+        features: vec!["nodemcu-32s".to_string()],
+        template_dir: PathBuf::new(),
+    };
+
+    Scaffolder::scaffold(&config).unwrap();
+    let platformio = std::fs::read_to_string(project_dir.join("platformio.ini")).unwrap();
+    assert!(platformio.contains("[env:nodemcu-32s]"));
+    assert!(platformio.contains("board = nodemcu-32s"));
+    assert!(!platformio.contains("esp32dev"));
+}
+
+#[test]
+fn iot_fallback_scaffold_uses_selected_esp_hal_feature() {
+    let root = tempfile::tempdir().unwrap();
+    for board in ["esp32", "esp32c3", "esp32s3"] {
+        let project_dir = root.path().join(format!("firmware-{board}"));
+        let config = ScaffoldConfig {
+            core: "iot".to_string(),
+            sub_type: String::new(),
+            frameworks: vec!["esp32-rust".to_string()],
+            project_name: project_dir.to_string_lossy().to_string(),
+            features: vec![board.to_string()],
+            template_dir: PathBuf::new(),
+        };
+
+        Scaffolder::scaffold(&config).unwrap();
+        let manifest = std::fs::read_to_string(project_dir.join("Cargo.toml")).unwrap();
+        assert!(manifest.contains(&format!("features = [\"{board}\"]")));
+    }
 }

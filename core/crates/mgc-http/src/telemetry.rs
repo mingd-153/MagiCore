@@ -50,7 +50,12 @@ impl Telemetry {
         if !enabled() {
             return;
         }
-        let mut q = self.queue.lock().expect("lock poisoned");
+        // Poisoned queue: telemetry is best-effort diagnostics — keep
+        // recording into the recovered guard instead of panicking.
+        let mut q = self
+            .queue
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if q.len() >= QUEUE_CAP {
             q.pop_front(); // ponytail: queue bounded, drop cũ nhất
         }
@@ -62,7 +67,11 @@ impl Telemetry {
         let dir = default_log_dir();
         std::fs::create_dir_all(&dir)?;
         let path = dir.join("events.jsonl");
-        let q = self.queue.lock().expect("lock poisoned");
+        let q = self.queue.lock().map_err(|_| {
+            std::io::Error::other(
+                "telemetry queue lock poisoned — refusing to flush uncertain events",
+            )
+        })?;
         let mut file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)

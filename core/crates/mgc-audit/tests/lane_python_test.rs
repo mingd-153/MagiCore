@@ -359,3 +359,23 @@ fn malformed_mgc_lock_is_not_treated_as_an_empty_python_graph() {
     std::fs::write(dir.path().join("mgc.lock"), "this is not a valid lockfile").unwrap();
     assert!(mgc_audit::scanners::python_pins_from_mgc_lock(dir.path()).is_err());
 }
+
+/// v4 replay: python instances come straight from the v4 document —
+/// same pin shape as the legacy path, non-python instances excluded.
+/// (Replay v4: pin python từ tài liệu v4 — cùng shape với đường cũ.)
+#[test]
+fn v4_mgc_lock_python_pins_extract_without_spawning() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("mgc.lock"),
+        "version = \"4\"\n\n[metadata]\ngenerated_at = \"2026-10-01T00:00:00Z\"\ngenerator = \"mgc/test\"\nlockfile_hash = \"\"\n\n[[package]]\n[package.key]\necosystem = \"python\"\nname = \"six\"\nversion = \"1.17.0\"\nsource_id = \"pypi\"\n\n[[package]]\n[package.key]\necosystem = \"web\"\nname = \"left-pad\"\nversion = \"1.3.0\"\nsource_id = \"npm\"\n",
+    )
+    .unwrap();
+    let pins = mgc_audit::scanners::python_pins_from_mgc_lock(dir.path())
+        .unwrap()
+        .unwrap();
+    assert_eq!(pins.len(), 1, "one python pin, got {pins:?}");
+    assert_eq!(pins[0].name, "six");
+    assert_eq!(pins[0].version, "1.17.0");
+    assert_eq!(pins[0].ecosystem, "PyPI");
+}

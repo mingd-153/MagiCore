@@ -20,6 +20,7 @@ pub mod root_pin;
 pub mod schema;
 pub mod serialization;
 pub mod v4;
+pub mod v4_graph;
 pub mod verifier;
 pub mod writer;
 
@@ -152,4 +153,12 @@ pub enum LockfileError {
 
     #[error("Crypto error: {0}")]
     CryptoError(#[from] mgc_crypto::CryptoError),
+
+    /// A well-formed v4 document that cannot drive an install without
+    /// projecting away identity (duplicate instances, missing SRI/URL,
+    /// dangling edges) — callers must fail closed, never flatten.
+    /// (Tài liệu v4 đúng shape nhưng không thể lái install mà không ép
+    /// identity — caller phải fail-closed, không flatten.)
+    #[error("v4 lockfile cannot drive install losslessly: {0}")]
+    UnusableForInstall(String),
 }

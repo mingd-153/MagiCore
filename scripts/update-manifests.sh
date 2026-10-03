@@ -15,13 +15,13 @@ Updates package manager manifests with:
   - Remove unsupported architectures
 
 Options:
-  --version <version>  Release version (e.g. 1.1.0-rc.3)
+  --version <version>  Release version (e.g. 1.1.0-rc.9)
   --artifacts <dir>    Directory containing release artifacts
   --verify-only        Only verify, do not update
   -h, --help           Show this help
 
 Example:
-  ./scripts/update-manifests.sh --version 1.1.0-rc.3 --artifacts release-assets
+  ./scripts/update-manifests.sh --version 1.1.0-rc.9 --artifacts release-assets
 USAGE
 }
 
@@ -104,26 +104,27 @@ artifact_hash() {
   sha256_file "$file"
 }
 
-# Artifact names for RC-3: x86_64 + macOS arm64 (item 12, 2026-09-12:
-# the arm64 artifact exists — the formula installs it instead of
-# odie-ing; most current Macs are Apple Silicon).
-# Tên artifact RC-3: x86_64 + macOS arm64 (item 12: artifact arm64 đã
-# có — formula cài nó thay vì odie; đa số Mac hiện tại là Apple Silicon).
+# Artifact names cover Linux/macOS x64+arm64 and Windows x64.
+# Tên artifact bao phủ Linux/macOS x64+arm64 và Windows x64.
 magicore_linux_x64="magicore-${version}-linux-x64.tar.gz"
+magicore_linux_arm64="magicore-${version}-linux-arm64.tar.gz"
 magicore_macos_x64="magicore-${version}-macos-x64.tar.gz"
 magicore_macos_arm64="magicore-${version}-macos-arm64.tar.gz"
 magicore_windows_x64="magicore-${version}-windows-x64.zip"
 magicore_web_linux_x64="magicore-web-${version}-linux-x64.tar.gz"
+magicore_web_linux_arm64="magicore-web-${version}-linux-arm64.tar.gz"
 magicore_web_macos_x64="magicore-web-${version}-macos-x64.tar.gz"
 magicore_web_macos_arm64="magicore-web-${version}-macos-arm64.tar.gz"
 magicore_web_windows_x64="magicore-web-${version}-windows-x64.zip"
 
 echo "Computing hashes for version $version..."
 hash_linux_x64=$(artifact_hash "$magicore_linux_x64")
+hash_linux_arm64=$(artifact_hash "$magicore_linux_arm64")
 hash_macos_x64=$(artifact_hash "$magicore_macos_x64")
 hash_macos_arm64=$(artifact_hash "$magicore_macos_arm64")
 hash_windows_x64=$(artifact_hash "$magicore_windows_x64")
 hash_web_linux_x64=$(artifact_hash "$magicore_web_linux_x64")
+hash_web_linux_arm64=$(artifact_hash "$magicore_web_linux_arm64")
 hash_web_macos_x64=$(artifact_hash "$magicore_web_macos_x64")
 hash_web_macos_arm64=$(artifact_hash "$magicore_web_macos_arm64")
 hash_web_windows_x64=$(artifact_hash "$magicore_web_windows_x64")
@@ -183,7 +184,8 @@ class Magicore < Formula
 
   on_linux do
     if Hardware::CPU.arm?
-      odie "ARM64 Linux not yet supported. Build from source with: cargo install mgc"
+      url "https://github.com/mingd-153/MagiCore/releases/download/v${version}/${magicore_linux_arm64}"
+      sha256 "$hash_linux_arm64"
     else
       url "https://github.com/mingd-153/MagiCore/releases/download/v${version}/${magicore_linux_x64}"
       sha256 "$hash_linux_x64"
@@ -223,7 +225,8 @@ class MagicoreWeb < Formula
 
   on_linux do
     if Hardware::CPU.arm?
-      odie "ARM64 not yet supported"
+      url "https://github.com/mingd-153/MagiCore/releases/download/v${version}/${magicore_web_linux_arm64}"
+      sha256 "$hash_web_linux_arm64"
     else
       url "https://github.com/mingd-153/MagiCore/releases/download/v${version}/${magicore_web_linux_x64}"
       sha256 "$hash_web_linux_x64"
@@ -301,6 +304,6 @@ echo "✓ Updated magicore-web.json"
 
 echo ""
 echo "All manifests updated for version $version"
-echo "   - Homebrew: macOS arm64 + x64, Linux x64"
+echo "   - Homebrew: macOS + Linux arm64 and x64"
 echo "   - Scoop: x64 only"
 echo "   - All hashes verified"

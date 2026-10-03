@@ -157,8 +157,12 @@ impl ContentStoreProvider for AppAdapter {
         // consumed here — same-instance flow).
         // (Dùng install pipeline mới (entry lock từ resolve native được
         // tiêu thụ ở đây — flow cùng instance).)
-        let lock_packages =
-            std::mem::take(&mut *self.pending_lock.lock().expect("app pending lock poisoned"));
+        let lock_packages = std::mem::take(&mut *self.pending_lock.lock().map_err(|_| {
+            MgError::Other(
+                "app pending lock poisoned — refusing rather than operating on uncertain state"
+                    .to_string(),
+            )
+        })?);
         crate::install::run_install(
             self.language,
             graph,
@@ -314,7 +318,12 @@ impl PackageAdapter for AppAdapter {
         } else {
             wanted
         };
-        *self.pending_lock.lock().expect("app pending lock poisoned") = resolution.lock_packages;
+        *self.pending_lock.lock().map_err(|_| {
+            MgError::Other(
+                "app pending lock poisoned — refusing rather than operating on uncertain state"
+                    .to_string(),
+            )
+        })? = resolution.lock_packages;
         Ok(PreparedAdd {
             id: PackageId::new(name.clone(), resolved.id.version().clone()),
             range: pinned,
@@ -383,8 +392,12 @@ impl DependencyResolver for AppAdapter {
                     &expanded,
                 )
                 .await?;
-                *self.pending_lock.lock().expect("app pending lock poisoned") =
-                    resolution.lock_packages;
+                *self.pending_lock.lock().map_err(|_| {
+                    MgError::Other(
+                        "app pending lock poisoned — refusing rather than operating on uncertain state"
+                            .to_string(),
+                    )
+                })? = resolution.lock_packages;
                 Ok(resolution.graph)
             }
             // Swift registry archives are handled natively; Git-source
@@ -397,8 +410,12 @@ impl DependencyResolver for AppAdapter {
                 let resolution =
                     resolve_with_protocol(&protocol, EcosystemTag::Swift, &registry, manifest)
                         .await?;
-                *self.pending_lock.lock().expect("app pending lock poisoned") =
-                    resolution.lock_packages;
+                *self.pending_lock.lock().map_err(|_| {
+                    MgError::Other(
+                        "app pending lock poisoned — refusing rather than operating on uncertain state"
+                            .to_string(),
+                    )
+                })? = resolution.lock_packages;
                 Ok(resolution.graph)
             }
             // RN has internal per-tier experiments, but none is exposed as

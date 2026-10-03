@@ -179,10 +179,9 @@ async fn install_into_root(
                 info("WARN: Lockfile tampered — invalidating cache");
                 let cache = PackageCache::new()?;
                 // Invalidate all packages in lockfile
-                let lockfile = mgc_lockfile::load_lockfile(&lockfile_path)?;
-                for pkg in &lockfile.packages {
-                    let pkg_id = format!("{}@{}", pkg.name, pkg.version);
-                    let _ = cache.invalidate_package(&pkg_id); // Ignore errors (may not exist)
+                let pkg_ids = crate::commands::core::shared::locked_package_ids(project_root)?;
+                for pkg_id in &pkg_ids {
+                    let _ = cache.invalidate_package(pkg_id); // Ignore errors (may not exist)
                 }
                 anyhow::bail!(
                     "Lockfile tampered: {}\n  \
@@ -599,28 +598,39 @@ async fn install_resolve_and_materialize(
         std::thread::sleep(std::time::Duration::from_millis(ms));
     }
     let started_at = std::time::Instant::now();
-    let (graph, used_lockfile) =
-        if let Some(graph) = load_locked_graph(project_root, adapter.name(), manifest)? {
-            info("Using mgc.lock for install state.");
-            (graph, true)
-        } else {
-            // Frozen mode fails LOUDLY on mismatch (mirrors core/shared.rs):
-            // silently re-resolving would bless a tampered lock and rewrite
-            // it. Missing lock vs mismatched lock get distinct errors.
-            if frozen {
-                if project_root.join("mgc.lock").is_file() {
-                    return Err(crate::error::frozen_lock_mismatch("install"));
-                }
-                return Err(crate::error::frozen_lock_missing("install"));
+    let locked_graph = load_locked_graph(project_root, adapter.name(), manifest)?;
+    let force_fresh_resolve = crate::commands::core::shared::refresh_locked_graph_for_age_gate(
+        adapter,
+        project_root,
+        locked_graph.is_some(),
+        frozen,
+    )?;
+    let locked_graph = if force_fresh_resolve {
+        None
+    } else {
+        locked_graph
+    };
+    let (graph, used_lockfile) = if let Some(graph) = locked_graph {
+        info("Using mgc.lock for install state.");
+        (graph, true)
+    } else {
+        // Frozen mode fails LOUDLY on mismatch (mirrors core/shared.rs):
+        // silently re-resolving would bless a tampered lock and rewrite
+        // it. Missing lock vs mismatched lock get distinct errors.
+        if frozen {
+            if project_root.join("mgc.lock").is_file() {
+                return Err(crate::error::frozen_lock_mismatch("install"));
             }
-            let dep_count = manifest.all_dependencies().count();
-            let spinner = create_spinner(&format!("  Resolving {dep_count} dependencies..."));
-            // P0/F6: arm the age gate from THIS operation's project.
-            adapter.arm_age_gate_for(project_root)?;
-            let graph = adapter.resolve(manifest).await?;
-            spinner.finish_and_clear();
-            (graph, false)
-        };
+            return Err(crate::error::frozen_lock_missing("install"));
+        }
+        let dep_count = manifest.all_dependencies().count();
+        let spinner = create_spinner(&format!("  Resolving {dep_count} dependencies..."));
+        // P0/F6: arm the age gate from THIS operation's project.
+        adapter.arm_age_gate_for(project_root)?;
+        let graph = adapter.resolve(manifest).await?;
+        spinner.finish_and_clear();
+        (graph, false)
+    };
 
     let resolve_bar = create_progress_bar(graph.len() as u64, "Resolving...");
     if used_lockfile {
@@ -782,9 +792,41 @@ fn collect_installable_projects(root: PathBuf, out: &mut Vec<PathBuf>) -> Result
 
 fn load_locked_graph(
     project_root: &std::path::Path,
-    _adapter_name: &str,
+    adapter_name: &str,
     manifest: &Manifest,
 ) -> Result<Option<ResolvedGraph>> {
+    // v4 documents take the lossless v4 path (shared helper); legacy
+    // documents keep the legacy path below unchanged.
+    // (Tài liệu v4 đi đường v4 lossless; legacy giữ nguyên.)
+    let lock_path = project_root.join("mgc.lock");
+    match std::fs::symlink_metadata(&lock_path) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            return Err(anyhow::anyhow!(
+                "lockfile '{}' must be a regular non-symlink file",
+                lock_path.display()
+            ));
+        }
+        Ok(_) => {
+            let bytes = mgc_lockfile::parser::read_lockfile_bytes(&lock_path)
+                .map_err(|error| anyhow::anyhow!("{error}"))?;
+            let text = String::from_utf8(bytes)
+                .map_err(|error| anyhow::anyhow!("mgc.lock is not valid UTF-8: {error}"))?;
+            // Only version "4" takes the v4 path; every other version —
+            // including unreadable ones — falls through to the legacy
+            // reader below, which owns their exact historical errors.
+            if mgc_lockfile::detect_lockfile_version(&text).is_ok_and(|version| version == 4) {
+                let owner_core =
+                    crate::commands::core::shared::lock_owner_core(project_root, adapter_name)?;
+                return crate::commands::core::shared::load_locked_graph_v4(
+                    &text,
+                    manifest,
+                    &owner_core,
+                );
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(anyhow::anyhow!("{error}")),
+    }
     let Some(lock) = read_checked_lockfile(project_root)? else {
         // P0-3 (2026-09-10 audit): rival lockfile mà thiếu mgc.lock →
         // FAIL-CLOSED kèm remediation `mgc import`, không còn warning

@@ -140,10 +140,18 @@ pub const ALLOWED_TOOLS: &[&str] = &[
     "dart",
     "gradle",
     "mvn",
-    "composer",
+    // NOTE: `composer` is deliberately ABSENT here — it is a PHP package
+    // manager and lives in FORBIDDEN_TOOLS below. (An older revision
+    // listed it in both tables; the forbidden check runs first so it was
+    // never actually allowed, but the duplicate lied about the policy.)
+    // (`composer` cố ý VẮNG ở đây — nó là package manager PHP, nằm ở
+    // FORBIDDEN bên dưới.)
     "node",
     "swift",
     "cargo",
+    // `rustc -vV` is a read-only host-target probe; other direct calls are rejected below.
+    // `rustc -vV` chỉ đọc host target; các lời gọi trực tiếp khác bị chặn bên dưới.
+    "rustc",
     "espflash",
     "west",
     "pio",
@@ -165,6 +173,15 @@ pub const ALLOWED_TOOLS: &[&str] = &[
     "unity",
     "upm",
     "xcodebuild",
+    // xcrun simctl is the iOS counterpart of adb: simulator/device
+    // control only (P0 delegation finding — direct Command::new("xcrun")
+    // in cli/src/commands/core/dev/app.rs bypassed the executor).
+    // Restricted to DeviceControl scope like adb.
+    // xcrun simctl là đối tác iOS của adb: chỉ điều khiển
+    // simulator/thiết bị (P0 finding — Command::new("xcrun") trực tiếp
+    // trong dev/app.rs đã bypass executor). Giới hạn scope
+    // DeviceControl như adb.
+    "xcrun",
     "echo", // Test tool: prove validator runs before allowlist check
     // Security scanners (audit framework, Tech Lead P1 2026-09-09):
     // official ecosystem scanners — read-only advisory lookups, no
@@ -250,6 +267,12 @@ pub fn check_tool_with_scope_compat(
     // ADB có thể tác động thiết bị thật; bắt buộc dùng scope điều khiển riêng.
     if normalized == "adb" && scope != ExecutionScope::DeviceControl {
         bail!("tool 'adb' is only allowed in DeviceControl scope");
+    }
+
+    // xcrun drives simulators/devices; same narrow scope as adb.
+    // xcrun điều khiển simulator/thiết bị; scope hẹp như adb.
+    if normalized == "xcrun" && scope != ExecutionScope::DeviceControl {
+        bail!("tool 'xcrun' is only allowed in DeviceControl scope");
     }
 
     // Non-PM tools: check against general allowlist

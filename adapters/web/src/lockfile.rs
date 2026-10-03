@@ -169,14 +169,11 @@ pub fn maybe_warn_missing_lockfile_checksum(project_root: &Path, lockfile: &Lock
     }
 }
 
-pub fn write_web_lockfile_with_state(
-    project_root: &Path,
-    graph: &ResolvedGraph,
-    registry_url: &str,
-) -> MgResult<()> {
-    let lock_path = project_root.join("mgc.lock");
-    let owner_core = web_lock_owner_core(project_root)?;
-    let mut lockfile = read_web_lockfile_document(project_root)?.unwrap_or_else(|| Lockfile {
+/// Fresh v3 lock skeleton (extracted from the write path so the
+/// diverged-v4 branch shares the exact missing-lock default).
+/// (Khung lock v3 mới — nhánh v4 lệch dùng chung default với lock thiếu.)
+fn fresh_v3_lockfile() -> Lockfile {
+    Lockfile {
         // Deliberate v3 bump (Phase 1): newly written web locks target the
         // canonical v3 schema.
         // Nâng lên v3 có chủ đích (Phase 1): lock web mới ghi nhắm schema
@@ -200,7 +197,113 @@ pub fn write_web_lockfile_with_state(
         packages: Vec::new(),
         workspace: None,
         optimizer_profile: None,
-    });
+    }
+}
+
+/// v4 document on disk, if the lockfile parses as version 4 — `None`
+/// for missing/legacy/unreadable-version locks (legacy reader owns them).
+/// (Tài liệu v4 trên đĩa — `None` cho lock thiếu/legacy.)
+/// Verify v4 digest and signature math before an adapter consumes or
+/// preserves the document. Trust policy remains Warn, matching install.
+/// Xác minh digest và chữ ký v4 trước khi adapter dùng hoặc giữ tài liệu;
+/// chính sách tin cậy là Warn, đồng nhất với install.
+pub(crate) fn verify_v4_document_integrity(
+    doc: &mgc_lockfile::canonical::LockfileV4,
+) -> MgResult<mgc_lockfile::policy::V4VerifyReport> {
+    let report = mgc_lockfile::policy::verify_v4_math(doc)
+        .map_err(|error| MgError::Other(format!("Failed to verify v4 lockfile: {error}")))?;
+    mgc_lockfile::policy::enforce_policy(&report, mgc_lockfile::policy::LockPolicyMode::Warn, &[])
+        .map_err(|error| MgError::Other(format!("Failed to verify v4 lockfile: {error}")))?;
+    Ok(report)
+}
+
+fn read_v4_document_if_present(
+    project_root: &Path,
+) -> MgResult<Option<mgc_lockfile::canonical::LockfileV4>> {
+    let lock_path = project_root.join("mgc.lock");
+    let bytes = match mgc_lockfile::read_lockfile_bytes(&lock_path) {
+        Ok(bytes) => bytes,
+        Err(mgc_lockfile::LockfileError::IoError(error))
+            if error.kind() == std::io::ErrorKind::NotFound =>
+        {
+            return Ok(None);
+        }
+        Err(error) => {
+            return Err(MgError::Other(format!("Failed to read lockfile: {error}")));
+        }
+    };
+    let content = String::from_utf8(bytes)
+        .map_err(|error| MgError::Other(format!("Lockfile is not valid UTF-8: {error}")))?;
+    if !mgc_lockfile::detect_lockfile_version(&content).is_ok_and(|version| version == 4) {
+        return Ok(None);
+    }
+    let doc = mgc_lockfile::canonical::parse_v4_document(&content)
+        .map_err(|error| MgError::Other(format!("Failed to parse lockfile: {error}")))?;
+    verify_v4_document_integrity(&doc)?;
+    Ok(Some(doc))
+}
+
+/// Material-field equality between a replayed v4 graph and the installed
+/// graph (id/integrity/URL/deps/peer sets). Flags the writer drops
+/// (`direct`, `dev`) are excluded — v3 cannot persist them, so they can
+/// never prove divergence. Order-insensitive: adjacency is a set.
+/// (Bằng nhau trên trường material mà writer giữ; bỏ qua flag writer
+/// không lưu; không phụ thuộc thứ tự.)
+fn resolved_graphs_match_material(first: &ResolvedGraph, second: &ResolvedGraph) -> bool {
+    use std::collections::HashSet;
+    if first.packages.len() != second.packages.len() {
+        return false;
+    }
+    let key_of = |package: &ResolvedPackage| {
+        let mut deps: Vec<String> = package.deps.iter().map(|id| id.to_string()).collect();
+        deps.sort();
+        let mut peers: Vec<String> = package.peer_deps.iter().map(|id| id.to_string()).collect();
+        peers.sort();
+        (
+            package.id.to_string(),
+            package.integrity.clone(),
+            package.tarball_url.clone(),
+            deps,
+            peers,
+        )
+    };
+    let first_set: HashSet<_> = first.packages.iter().map(key_of).collect();
+    let second_set: HashSet<_> = second.packages.iter().map(key_of).collect();
+    first_set == second_set
+}
+
+pub fn write_web_lockfile_with_state(
+    project_root: &Path,
+    graph: &ResolvedGraph,
+    registry_url: &str,
+) -> MgResult<()> {
+    let lock_path = project_root.join("mgc.lock");
+    let owner_core = web_lock_owner_core(project_root)?;
+    // v4 on disk: a replayed graph must round-trip byte-identically
+    // instead of being rewritten (rebuilding v4 from ResolvedGraph would
+    // drop variant/source identity — forbidden flattening). A diverged
+    // graph falls back to a fresh v3 write with a LOUD downgrade warning
+    // (same shape as the missing-lock default below, never silent).
+    // (Lock v4 trên đĩa: graph replay phải giữ nguyên byte; graph lệch
+    // thì ghi mới v3 kèm cảnh báo DOWNGRADE rõ ràng, không bao giờ lặng.)
+    let v4_on_disk = read_v4_document_if_present(project_root)?;
+    if let Some(doc) = &v4_on_disk {
+        let replayed = mgc_lockfile::v4_graph::graph_from_v4_lockfile(doc, &owner_core)
+            .map_err(|error| MgError::Other(error.to_string()))?;
+        if resolved_graphs_match_material(&replayed, graph) {
+            return Ok(());
+        }
+        eprintln!(
+            "WARNING: installed graph diverged from the v4 mgc.lock — rewriting as v3 (variant/source identity of the old v4 pins is not preserved; re-run `mgc migrate lock --to v4` for a lossless v4)"
+        );
+    }
+    // A diverged v4 must NOT go through the legacy reader (it cannot
+    // parse v4); it takes the same fresh-v3 default as a missing lock.
+    // (v4 lệch không qua reader legacy — đi default v3 mới như lock thiếu.)
+    let mut lockfile = match v4_on_disk {
+        Some(_) => fresh_v3_lockfile(),
+        None => read_web_lockfile_document(project_root)?.unwrap_or_else(fresh_v3_lockfile),
+    };
 
     let mut scoped_lock = lockfile.clone();
     scope_web_lock_packages(&mut scoped_lock, &owner_core);
@@ -295,7 +398,7 @@ pub fn write_web_lockfile_with_state(
 /// core's package entries. Missing metadata retains the historical Web
 /// default; malformed metadata fails closed.
 /// (Lấy core caller từ chữ ký project để engine web nhúng không ghi đè core khác.)
-fn web_lock_owner_core(project_root: &Path) -> MgResult<String> {
+pub(crate) fn web_lock_owner_core(project_root: &Path) -> MgResult<String> {
     let marker = mgc_config::project::ProjectConfig::read_core_marker(project_root)
         .map_err(|error| MgError::Other(format!("cannot determine lock owner core: {error}")))?;
     let owner = match marker {

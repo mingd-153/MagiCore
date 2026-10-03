@@ -20,10 +20,41 @@ use mgc_ui::info;
 /// Default registry (hardcode warning — OK: default const, overrideable via config/env)
 const DEFAULT_REGISTRY: &str = "https://registry.npmjs.org/";
 const DEFAULT_PUBLISH_LIFECYCLE_TIMEOUT_SECS: u64 = 300;
+const MAX_TRUSTED_EXCHANGE_RESPONSE_BYTES: usize = 4 * 1024;
+const OCI_UPLOAD_CHUNK_BYTES: usize = 1024 * 1024;
+const TRUSTED_TOKEN_REFRESH_MARGIN_SECS: u64 = 60;
+const TRUSTED_TOKEN_EXPIRY_SKEW_SECS: u64 = 5;
+const TRUSTED_DOCKER_MAX_PUSH_SECS: u64 = 1800;
+const TRUSTED_NPM_REQUEST_TIMEOUT_SECS: u64 = 600;
+const TRUSTED_PYPI_REQUEST_TIMEOUT_SECS: u64 = 300;
+const TRUSTED_OCI_REQUEST_MAX_TIMEOUT_SECS: u64 = 1800;
 const PUBLISH_LIFECYCLE_TIMEOUT_ENV: &str = "MGC_PUBLISH_LIFECYCLE_TIMEOUT_SECS";
+const PUBLISH_LIFECYCLE_HOOKS: &[&str] = &["prepublishOnly", "prepublish", "prepare"];
 
 #[derive(Args, Debug, Clone)]
 pub struct PublishArgs {
+    #[arg(long, value_parser = ["npm", "pypi", "oci"], default_value = "npm")]
+    pub protocol: String,
+    #[arg(long, requires = "trusted", help = "package name for PyPI or OCI")]
+    pub package: Option<String>,
+    #[arg(
+        long,
+        requires = "trusted",
+        help = "version for PyPI or OCI tag for OCI"
+    )]
+    pub version: Option<String>,
+    #[arg(
+        long = "artifact",
+        requires = "trusted",
+        help = "PyPI or OCI artifact file (repeatable)"
+    )]
+    pub artifacts: Vec<PathBuf>,
+    #[arg(
+        long,
+        requires = "trusted",
+        help = "local Docker image reference for OCI image publish"
+    )]
+    pub image: Option<String>,
     #[arg(long, help = "dist-tag (default: latest)")]
     pub tag: Option<String>,
     #[arg(long, help = "access level: public|restricted")]
@@ -38,6 +69,8 @@ pub struct PublishArgs {
     pub force: bool,
     #[arg(long, help = "skip lifecycle scripts")]
     pub ignore_scripts: bool,
+    #[arg(long, help = "explicitly allow package publish lifecycle scripts")]
+    pub allow_scripts: bool,
     #[arg(long, help = "skip git checks")]
     pub no_git_checks: bool,
     #[arg(
@@ -59,8 +92,23 @@ pub struct PublishArgs {
     pub registry: Option<String>,
     #[arg(long, help = "override token (env MGC_NPM_TOKEN recommended)")]
     pub token: Option<String>,
+    #[arg(
+        long,
+        conflicts_with = "token",
+        help = "publish with a short-lived CI OIDC token"
+    )]
+    pub trusted: bool,
+    #[arg(
+        long,
+        requires = "trusted",
+        help = "OIDC audience (defaults to the registry origin)"
+    )]
+    pub trusted_audience: Option<String>,
 }
-pub async fn run(args: PublishArgs, recursive: bool) -> Result<()> {
+pub async fn run(args: PublishArgs, core: Option<&str>, recursive: bool) -> Result<()> {
+    if args.protocol != "npm" {
+        return publish_trusted_non_npm(&args, core).await;
+    }
     let cwd = std::env::current_dir()?;
 
     if recursive {
@@ -178,7 +226,7 @@ fn visit_ws(
 async fn publish_project(args: &PublishArgs, project_root: &Path) -> Result<()> {
     // 1. Git checks
     if !args.no_git_checks {
-        git_checks(args)?;
+        git_checks(args.publish_branch.as_deref(), project_root)?;
     }
 
     // 2. Load project config
@@ -229,10 +277,10 @@ async fn publish_project(args: &PublishArgs, project_root: &Path) -> Result<()> 
     pkg_json["version"] = serde_json::Value::String(new_version.clone());
 
     // 5. Lifecycle scripts
-    if !args.ignore_scripts {
-        run_lifecycle(&pkg_json, "prepublishOnly")?;
-        run_lifecycle(&pkg_json, "prepublish")?;
-        run_lifecycle(&pkg_json, "prepare")?;
+    if publish_lifecycle_decision(&pkg_json, args.ignore_scripts, args.allow_scripts)? {
+        run_lifecycle(&pkg_json, "prepublishOnly", project_root)?;
+        run_lifecycle(&pkg_json, "prepublish", project_root)?;
+        run_lifecycle(&pkg_json, "prepare", project_root)?;
     }
 
     // 6. Manifest sanitize (exportable)
@@ -266,10 +314,29 @@ async fn publish_project(args: &PublishArgs, project_root: &Path) -> Result<()> 
     // 10. Auth resolution
     let npmrc = NpmRc::load(project_root)?;
     let config_reg = project.registries.iter().find(|r| r.url == registry_url);
-    let auth = resolve_auth(&npmrc, &registry_url, config_reg, args.token.as_deref())?;
+    let mut trusted_session = None;
+    let auth = if args.trusted && !args.dry_run {
+        let session = trusted_publish_session(
+            &registry_url,
+            &publish_name,
+            "npm",
+            args.trusted_audience.as_deref(),
+        )
+        .await?;
+        let auth = mgc_publish::auth::Auth {
+            token: Some(session.token.clone()),
+            ..Default::default()
+        };
+        trusted_session = Some(session);
+        auth
+    } else if args.trusted {
+        mgc_publish::auth::Auth::default()
+    } else {
+        resolve_auth(&npmrc, &registry_url, config_reg, args.token.as_deref())?
+    };
 
     // 11. Pre-flight whoami (npmjs only)
-    if registry_url.contains("registry.npmjs.org") && !args.dry_run {
+    if registry_url.contains("registry.npmjs.org") && !args.dry_run && !args.trusted {
         verify_token(&registry_url, &auth).await?;
     }
 
@@ -281,6 +348,7 @@ async fn publish_project(args: &PublishArgs, project_root: &Path) -> Result<()> 
             &publish_name,
             &new_version,
             &tarball_path,
+            trusted_session.as_mut(),
         )
         .await?;
         publish_put(
@@ -292,12 +360,13 @@ async fn publish_project(args: &PublishArgs, project_root: &Path) -> Result<()> 
             &dep_fields_map,
             &pack_result,
             args,
+            trusted_session.as_mut(),
         )
         .await?;
     }
 
     // 13. Dist-tags
-    if !args.dry_run && args.tag.as_deref() != Some("latest") {
+    if !args.dry_run && !args.trusted && args.tag.as_deref() != Some("latest") {
         set_dist_tag(
             &registry_url,
             &auth,
@@ -355,51 +424,1074 @@ async fn publish_project(args: &PublishArgs, project_root: &Path) -> Result<()> 
     Ok(())
 }
 
-/// Git checks — tree clean, on publish branch, remote not lagging
-fn git_checks(args: &PublishArgs) -> Result<()> {
+#[derive(Clone)]
+struct TrustedPublishSession {
+    token: String,
+    expires_at: tokio::time::Instant,
+    registry: String,
+    package: String,
+    protocol: String,
+    audience: Option<String>,
+}
+
+impl TrustedPublishSession {
+    fn token(&self) -> &str {
+        &self.token
+    }
+
+    fn remaining(&self) -> Duration {
+        self.expires_at
+            .saturating_duration_since(tokio::time::Instant::now())
+    }
+
+    async fn refresh_if_needed(&mut self) -> Result<()> {
+        self.refresh_for(Duration::from_secs(TRUSTED_TOKEN_REFRESH_MARGIN_SECS))
+            .await
+    }
+
+    async fn refresh_for(&mut self, minimum_lifetime: Duration) -> Result<()> {
+        let now = tokio::time::Instant::now();
+        if !trusted_token_expires_within(now, self.expires_at, minimum_lifetime) {
+            return Ok(());
+        }
+        let refreshed = trusted_publish_session(
+            &self.registry,
+            &self.package,
+            &self.protocol,
+            self.audience.as_deref(),
+        )
+        .await
+        .map_err(|error| {
+            anyhow!("could not refresh the trusted token before expiry; verify that this CI environment can mint a fresh OIDC token: {error}")
+        })?;
+        if trusted_token_expires_within(
+            tokio::time::Instant::now(),
+            refreshed.expires_at,
+            minimum_lifetime,
+        ) {
+            bail!(
+                "refreshed trusted token lifetime is shorter than the next upload request timeout"
+            );
+        }
+        *self = refreshed;
+        Ok(())
+    }
+}
+
+fn trusted_token_expires_within(
+    now: tokio::time::Instant,
+    expires_at: tokio::time::Instant,
+    minimum_lifetime: Duration,
+) -> bool {
+    expires_at <= now + minimum_lifetime
+}
+
+fn trusted_token_deadline(
+    exchange_started: tokio::time::Instant,
+    expires_in: Duration,
+) -> tokio::time::Instant {
+    exchange_started + expires_in
+}
+
+fn docker_push_timeout(remaining: Duration) -> Result<Duration> {
+    let usable = remaining
+        .checked_sub(Duration::from_secs(TRUSTED_TOKEN_EXPIRY_SKEW_SECS))
+        .filter(|duration| !duration.is_zero())
+        .ok_or_else(|| anyhow!("trusted publish token expires too soon to start a Docker push"))?;
+    Ok(usable.min(Duration::from_secs(TRUSTED_DOCKER_MAX_PUSH_SECS)))
+}
+
+fn oci_request_timeout(remaining: Duration) -> Result<Duration> {
+    let usable = remaining
+        .checked_sub(Duration::from_secs(TRUSTED_TOKEN_EXPIRY_SKEW_SECS))
+        .filter(|duration| !duration.is_zero())
+        .ok_or_else(|| anyhow!("trusted publish token expires too soon for an OCI request"))?;
+    Ok(usable.min(Duration::from_secs(TRUSTED_OCI_REQUEST_MAX_TIMEOUT_SECS)))
+}
+
+fn trusted_npm_request_timeout(remaining: Duration) -> Result<Duration> {
+    let usable = remaining
+        .checked_sub(Duration::from_secs(TRUSTED_TOKEN_EXPIRY_SKEW_SECS))
+        .filter(|duration| !duration.is_zero())
+        .ok_or_else(|| anyhow!("trusted publish token expires too soon for an npm request"))?;
+    Ok(usable.min(Duration::from_secs(TRUSTED_NPM_REQUEST_TIMEOUT_SECS)))
+}
+
+/// Refreshes trusted npm credentials and bounds one registry request by token expiry.
+/// Làm mới token npm trusted và giới hạn thời gian request theo hạn token.
+async fn apply_npm_request_auth(
+    request: reqwest::RequestBuilder,
+    auth: &mgc_publish::auth::Auth,
+    trusted_session: Option<&mut TrustedPublishSession>,
+) -> Result<reqwest::RequestBuilder> {
+    if let Some(session) = trusted_session {
+        session
+            .refresh_for(Duration::from_secs(
+                TRUSTED_NPM_REQUEST_TIMEOUT_SECS + TRUSTED_TOKEN_EXPIRY_SKEW_SECS,
+            ))
+            .await?;
+        let timeout = trusted_npm_request_timeout(session.remaining())?;
+        Ok(request.timeout(timeout).bearer_auth(session.token()))
+    } else if let Some(header) = auth.header_value() {
+        Ok(request.header("Authorization", header))
+    } else {
+        Ok(request)
+    }
+}
+
+async fn trusted_publish_session(
+    registry: &str,
+    package: &str,
+    protocol: &str,
+    explicit_audience: Option<&str>,
+) -> Result<TrustedPublishSession> {
+    let registry_url =
+        url::Url::parse(registry).map_err(|_| crate::error::trusted_registry_url_invalid())?;
+    if !registry_url.username().is_empty()
+        || registry_url.password().is_some()
+        || registry_url.fragment().is_some()
+        || registry_url.query().is_some()
+    {
+        return Err(crate::error::trusted_registry_url_invalid());
+    }
+    let local_http = registry_url.scheme() == "http"
+        && registry_url.host_str().is_some_and(|host| {
+            host == "localhost"
+                || host
+                    .parse::<std::net::IpAddr>()
+                    .is_ok_and(|address| address.is_loopback())
+        });
+    if registry_url.scheme() != "https" && !local_http {
+        return Err(crate::error::trusted_registry_requires_https());
+    }
+
+    let audience = explicit_audience
+        .map(str::to_owned)
+        .or_else(|| std::env::var("MGC_OIDC_AUDIENCE").ok())
+        .unwrap_or_else(|| registry_url.origin().ascii_serialization());
+    if audience.trim().is_empty() {
+        return Err(crate::error::trusted_audience_required());
+    }
+    let oidc_token = mgc_oidc::fetch::fetch_token(&audience).await?;
+    let sigstore_oidc_token = mgc_oidc::fetch::fetch_sigstore_token().await?;
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(15))
+        .build()?;
+    // Start conservatively before the request; server issuance and response transit consume TTL.
+    // Bắt đầu tính trước khi gửi request; thời gian server cấp token và truyền response đều dùng TTL.
+    let exchange_started = tokio::time::Instant::now();
+    let response = client
+        .post(format!(
+            "{}/-/v1/trusted-publish/token",
+            registry.trim_end_matches('/')
+        ))
+        .json(&serde_json::json!({
+            "protocol": protocol,
+            "package": package,
+            "oidc_token": oidc_token,
+            "sigstore_oidc_token": sigstore_oidc_token,
+        }))
+        .send()
+        .await?;
+    if !response.status().is_success() {
+        return Err(crate::error::trusted_token_exchange_failed(
+            response.status().as_u16(),
+        ));
+    }
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_TRUSTED_EXCHANGE_RESPONSE_BYTES as u64)
+    {
+        return Err(crate::error::trusted_token_response_invalid());
+    }
+    use futures_util::StreamExt as _;
+    let mut stream = response.bytes_stream();
+    let mut response_body = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|_| crate::error::trusted_token_response_invalid())?;
+        if chunk.len() > MAX_TRUSTED_EXCHANGE_RESPONSE_BYTES.saturating_sub(response_body.len()) {
+            return Err(crate::error::trusted_token_response_invalid());
+        }
+        response_body.extend_from_slice(&chunk);
+    }
+    let exchanged: serde_json::Value = serde_json::from_slice(&response_body)?;
+    let token = exchanged
+        .get("token")
+        .and_then(serde_json::Value::as_str)
+        .filter(|token| !token.is_empty() && !token.bytes().any(|byte| byte.is_ascii_control()))
+        .ok_or_else(crate::error::trusted_token_response_invalid)?;
+    let expires_in = exchanged
+        .get("expires_in")
+        .and_then(serde_json::Value::as_u64)
+        .filter(|seconds| (1..=900).contains(seconds))
+        .ok_or_else(crate::error::trusted_token_response_invalid)?;
+    if exchanged.get("token_type").and_then(|value| value.as_str()) != Some("Bearer") {
+        return Err(crate::error::trusted_token_response_invalid());
+    }
+    Ok(TrustedPublishSession {
+        token: token.to_owned(),
+        expires_at: trusted_token_deadline(exchange_started, Duration::from_secs(expires_in)),
+        registry: registry.to_owned(),
+        package: package.to_owned(),
+        protocol: protocol.to_owned(),
+        audience: explicit_audience.map(str::to_owned),
+    })
+}
+
+async fn publish_trusted_non_npm(args: &PublishArgs, core: Option<&str>) -> Result<()> {
+    if !args.trusted {
+        bail!("PyPI and OCI publishing currently require --trusted");
+    }
+    let registry = args
+        .registry
+        .as_deref()
+        .ok_or_else(|| anyhow!("--registry is required for trusted PyPI and OCI publishing"))?;
+    let package = args
+        .package
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| anyhow!("--package is required for trusted PyPI and OCI publishing"))?;
+    let version = args
+        .version
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| anyhow!("--version is required for trusted PyPI and OCI publishing"))?;
+
+    let effective_package = match args.protocol.as_str() {
+        "pypi" if !args.artifacts.is_empty() && args.image.is_none() => package.to_owned(),
+        "oci" if !args.artifacts.is_empty() && args.image.is_none() && core.is_some() => {
+            effective_trusted_oci_repository(core, package)?
+        }
+        "oci" if args.artifacts.is_empty() && args.image.is_some() => {
+            if !valid_oci_tag(version) || args.image.as_deref().is_some_and(str::is_empty) {
+                bail!("OCI publish requires a valid --version tag and --image reference");
+            }
+            effective_trusted_oci_repository(core, package)?
+        }
+        "pypi" => bail!("PyPI publish requires one or more --artifact values and no --image"),
+        "oci" if !args.artifacts.is_empty() && args.image.is_none() => {
+            bail!("OCI artifact publish requires --core <core>")
+        }
+        "oci" => bail!("OCI publish requires --image or --core with one or more --artifact values"),
+        _ => bail!("unsupported trusted publish protocol: {}", args.protocol),
+    };
+
+    if args.dry_run {
+        for artifact in &args.artifacts {
+            if !fs::metadata(artifact)?.is_file() {
+                bail!("artifact is not a regular file: {}", artifact.display());
+            }
+        }
+        let output = serde_json::json!({
+            "protocol": args.protocol,
+            "package": effective_package,
+            "core": core,
+            "version": version,
+            "dry_run": true,
+        });
+        if args.json {
+            println!("{}", serde_json::to_string_pretty(&output)?);
+        } else {
+            println!(
+                "Validated trusted {} publish for {}@{} (dry run).",
+                args.protocol, effective_package, version
+            );
+        }
+        return Ok(());
+    }
+
+    let mut auth = trusted_publish_session(
+        registry,
+        &effective_package,
+        &args.protocol,
+        args.trusted_audience.as_deref(),
+    )
+    .await?;
+    match args.protocol.as_str() {
+        "pypi" => {
+            auth.refresh_if_needed().await?;
+            publish_trusted_pypi(
+                registry,
+                &effective_package,
+                version,
+                &args.artifacts,
+                &mut auth,
+            )
+            .await
+        }
+        "oci" => {
+            if let Some(image) = args.image.as_deref() {
+                publish_trusted_oci(registry, &effective_package, version, image, &mut auth).await
+            } else {
+                publish_trusted_oci_artifacts(
+                    registry,
+                    &effective_package,
+                    core.ok_or_else(|| anyhow!("OCI artifact publish requires --core <core>"))?,
+                    version,
+                    &args.artifacts,
+                    &mut auth,
+                )
+                .await
+            }
+        }
+        _ => bail!("unsupported trusted publish protocol: {}", args.protocol),
+    }
+}
+
+/// Resolve and validate the OCI repository, preserving legacy unscoped image names.
+/// Chuẩn hóa và xác thực OCI repository, giữ nguyên tên image legacy không có core.
+fn effective_trusted_oci_repository(core: Option<&str>, package: &str) -> Result<String> {
+    let repository = match core {
+        Some(core) => mgc_registry_server::trusted::core_scoped_oci_repository(core, package)
+            .map_err(|_| anyhow!("invalid core-scoped OCI repository"))?,
+        None => package.to_owned(),
+    };
+    mgc_registry_server::trusted::scoped_package("oci", &repository)
+        .map_err(|_| anyhow!("invalid OCI repository"))?;
+    Ok(repository)
+}
+
+/// Build an OCI 1.1 artifact manifest whose descriptors bind the files to one core.
+/// Tạo manifest OCI 1.1 gắn descriptor của các file với đúng một core.
+fn trusted_oci_artifact_manifest(
+    core: &str,
+    repository: &str,
+    version: &str,
+    layers: &[(String, String, u64)],
+) -> Result<Vec<u8>> {
+    use sha2::Digest as _;
+
+    let core_id = mgc_types::Ecosystem::from_str(core)
+        .ok_or_else(|| anyhow!("unknown MagiCore core: {core}"))?
+        .as_str();
+    let prefix = format!("{core_id}/");
+    let package = repository
+        .strip_prefix(&prefix)
+        .filter(|package| !package.is_empty())
+        .ok_or_else(|| anyhow!("OCI repository does not match the selected core"))?;
+    let expected_repository =
+        mgc_registry_server::trusted::core_scoped_oci_repository(core_id, package)
+            .map_err(|_| anyhow!("invalid core-scoped OCI repository"))?;
+    if expected_repository != repository || !valid_oci_tag(version) || layers.is_empty() {
+        bail!("invalid OCI artifact manifest metadata");
+    }
+
+    let layer_descriptors = layers
+        .iter()
+        .map(|(filename, digest, size)| {
+            let Some(hash) = digest.strip_prefix("sha256:") else {
+                bail!("OCI artifact layer has an invalid SHA-256 digest");
+            };
+            if hash.len() != 64
+                || !hash
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                || filename.is_empty()
+                || filename.len() > 255
+                || filename
+                    .bytes()
+                    .any(|byte| byte.is_ascii_control() || matches!(byte, b'/' | b'\\'))
+            {
+                bail!("OCI artifact layer metadata is invalid");
+            }
+            Ok(serde_json::json!({
+                "mediaType": "application/vnd.magicore.artifact.layer.v1",
+                "digest": digest,
+                "size": size,
+                "annotations": {
+                    "org.opencontainers.image.title": filename,
+                },
+            }))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let config_digest = format!("sha256:{}", hex::encode(sha2::Sha256::digest(b"{}")));
+    let manifest = serde_json::json!({
+        "schemaVersion": 2,
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "artifactType": "application/vnd.magicore.artifact.v1",
+        "config": {
+            "mediaType": "application/vnd.oci.empty.v1+json",
+            "digest": config_digest,
+            "size": 2,
+        },
+        "layers": layer_descriptors,
+        "annotations": {
+            "io.magicore.core": core_id,
+            "io.magicore.package": repository,
+            "io.magicore.version": version,
+        },
+    });
+    Ok(serde_json::to_vec(&manifest)?)
+}
+
+async fn begin_oci_blob_upload(
+    client: &reqwest::Client,
+    registry: &url::Url,
+    repository: &str,
+    token: &str,
+    timeout: Duration,
+) -> Result<url::Url> {
+    let start_url = registry.join(&format!("/v2/{repository}/blobs/uploads/"))?;
+    let response = client
+        .post(start_url)
+        .bearer_auth(token)
+        .timeout(timeout)
+        .header(reqwest::header::CONTENT_LENGTH, "0")
+        .send()
+        .await?;
+    if response.status() != reqwest::StatusCode::ACCEPTED {
+        return Err(crate::error::trusted_oci_upload_start_failed(
+            response.status().as_u16(),
+        ));
+    }
+    let location = response
+        .headers()
+        .get(reqwest::header::LOCATION)
+        .and_then(|value| value.to_str().ok())
+        .ok_or_else(crate::error::trusted_oci_upload_location_missing)?;
+    safe_oci_upload_location(registry, repository, location)
+}
+
+/// Accept upload URLs only from the configured registry and repository.
+/// Chỉ chấp nhận URL upload cùng registry và đúng repository đã cấu hình.
+fn safe_oci_upload_location(
+    registry: &url::Url,
+    repository: &str,
+    location: &str,
+) -> Result<url::Url> {
+    let upload_url = registry.join(location)?;
+    let expected_prefix = format!("/v2/{repository}/blobs/uploads/");
+    let session = upload_url
+        .path()
+        .strip_prefix(&expected_prefix)
+        .filter(|session| {
+            !session.is_empty()
+                && session.bytes().all(|byte| {
+                    byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~')
+                })
+                && !matches!(*session, "." | "..")
+        });
+    if upload_url.origin() != registry.origin()
+        || !upload_url.username().is_empty()
+        || upload_url.password().is_some()
+        || upload_url.fragment().is_some()
+        || session.is_none()
+    {
+        bail!("OCI registry returned an unsafe upload Location");
+    }
+    Ok(upload_url)
+}
+
+/// Bearer token and deadline that must apply to one OCI upload request.
+/// Token Bearer và thời hạn bắt buộc áp dụng cho một request tải OCI.
+struct OciRequestAuth<'a> {
+    token: &'a str,
+    timeout: Duration,
+}
+
+async fn upload_oci_chunk(
+    client: &reqwest::Client,
+    registry: &url::Url,
+    repository: &str,
+    upload_url: &mut url::Url,
+    offset: u64,
+    chunk: &[u8],
+    request_auth: OciRequestAuth<'_>,
+) -> Result<()> {
+    if chunk.is_empty() {
+        return Ok(());
+    }
+    let end = offset
+        .checked_add(chunk.len() as u64)
+        .and_then(|next| next.checked_sub(1))
+        .ok_or_else(|| anyhow!("OCI blob size overflow"))?;
+    let response = client
+        .patch(upload_url.clone())
+        .bearer_auth(request_auth.token)
+        .timeout(request_auth.timeout)
+        .header("Content-Range", format!("{offset}-{end}"))
+        .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
+        .body(chunk.to_vec())
+        .send()
+        .await?;
+    if response.status() != reqwest::StatusCode::ACCEPTED {
+        return Err(crate::error::trusted_oci_upload_chunk_failed(
+            response.status().as_u16(),
+        ));
+    }
+    let location = response
+        .headers()
+        .get(reqwest::header::LOCATION)
+        .and_then(|value| value.to_str().ok())
+        .ok_or_else(crate::error::trusted_oci_upload_location_missing)?;
+    *upload_url = safe_oci_upload_location(registry, repository, location)?;
+    let expected_range = format!("0-{end}");
+    if response
+        .headers()
+        .get(reqwest::header::RANGE)
+        .and_then(|value| value.to_str().ok())
+        != Some(expected_range.as_str())
+    {
+        return Err(crate::error::trusted_oci_upload_range_invalid());
+    }
+    Ok(())
+}
+
+async fn finish_oci_blob_upload(
+    client: &reqwest::Client,
+    upload_url: &url::Url,
+    digest: &str,
+    token: &str,
+    timeout: Duration,
+) -> Result<()> {
+    let mut finish_url = upload_url.clone();
+    finish_url.query_pairs_mut().append_pair("digest", digest);
+    let response = client
+        .put(finish_url)
+        .bearer_auth(token)
+        .timeout(timeout)
+        .body(Vec::new())
+        .send()
+        .await?;
+    if response.status() != reqwest::StatusCode::CREATED {
+        return Err(crate::error::trusted_oci_upload_complete_failed(
+            response.status().as_u16(),
+        ));
+    }
+    Ok(())
+}
+
+async fn upload_oci_blob_bytes(
+    client: &reqwest::Client,
+    registry: &url::Url,
+    repository: &str,
+    bytes: &[u8],
+    session: &mut TrustedPublishSession,
+) -> Result<(String, u64)> {
+    use sha2::Digest as _;
+
+    session.refresh_if_needed().await?;
+    let mut upload_url = begin_oci_blob_upload(
+        client,
+        registry,
+        repository,
+        session.token(),
+        oci_request_timeout(session.remaining())?,
+    )
+    .await?;
+    for (index, chunk) in bytes.chunks(OCI_UPLOAD_CHUNK_BYTES).enumerate() {
+        let offset = (index * OCI_UPLOAD_CHUNK_BYTES) as u64;
+        session.refresh_if_needed().await?;
+        upload_oci_chunk(
+            client,
+            registry,
+            repository,
+            &mut upload_url,
+            offset,
+            chunk,
+            OciRequestAuth {
+                token: session.token(),
+                timeout: oci_request_timeout(session.remaining())?,
+            },
+        )
+        .await?;
+    }
+    let digest = format!("sha256:{}", hex::encode(sha2::Sha256::digest(bytes)));
+    session.refresh_if_needed().await?;
+    finish_oci_blob_upload(
+        client,
+        &upload_url,
+        &digest,
+        session.token(),
+        oci_request_timeout(session.remaining())?,
+    )
+    .await?;
+    Ok((digest, bytes.len() as u64))
+}
+
+async fn upload_oci_blob_file(
+    client: &reqwest::Client,
+    registry: &url::Url,
+    repository: &str,
+    path: &Path,
+    session: &mut TrustedPublishSession,
+) -> Result<(String, u64)> {
+    use sha2::Digest as _;
+    use tokio::io::AsyncReadExt as _;
+
+    let mut file = tokio::fs::File::open(path).await?;
+    if !file.metadata().await?.is_file() {
+        bail!("OCI artifact is not a regular file: {}", path.display());
+    }
+    session.refresh_if_needed().await?;
+    let mut upload_url = begin_oci_blob_upload(
+        client,
+        registry,
+        repository,
+        session.token(),
+        oci_request_timeout(session.remaining())?,
+    )
+    .await?;
+    let mut hasher = sha2::Sha256::new();
+    let mut offset = 0u64;
+    let mut buffer = vec![0; OCI_UPLOAD_CHUNK_BYTES];
+    loop {
+        let count = file.read(&mut buffer).await?;
+        if count == 0 {
+            break;
+        }
+        let chunk = &buffer[..count];
+        session.refresh_if_needed().await?;
+        upload_oci_chunk(
+            client,
+            registry,
+            repository,
+            &mut upload_url,
+            offset,
+            chunk,
+            OciRequestAuth {
+                token: session.token(),
+                timeout: oci_request_timeout(session.remaining())?,
+            },
+        )
+        .await?;
+        hasher.update(chunk);
+        offset = offset
+            .checked_add(count as u64)
+            .ok_or_else(|| anyhow!("OCI artifact size overflow"))?;
+    }
+    let digest = format!("sha256:{}", hex::encode(hasher.finalize()));
+    session.refresh_if_needed().await?;
+    finish_oci_blob_upload(
+        client,
+        &upload_url,
+        &digest,
+        session.token(),
+        oci_request_timeout(session.remaining())?,
+    )
+    .await?;
+    Ok((digest, offset))
+}
+
+async fn publish_trusted_oci_artifacts(
+    registry: &str,
+    repository: &str,
+    core: &str,
+    version: &str,
+    artifacts: &[PathBuf],
+    session: &mut TrustedPublishSession,
+) -> Result<()> {
+    use sha2::Digest as _;
+
+    let registry_url = trusted_oci_registry_root(registry)?;
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(TRUSTED_OCI_REQUEST_MAX_TIMEOUT_SECS))
+        .build()?;
+
+    for artifact in artifacts {
+        if !fs::metadata(artifact)?.is_file() {
+            bail!("OCI artifact is not a regular file: {}", artifact.display());
+        }
+        oci_artifact_filename(artifact)?;
+    }
+
+    let (config_digest, config_size) =
+        upload_oci_blob_bytes(&client, &registry_url, repository, b"{}", session).await?;
+    if config_digest != format!("sha256:{}", hex::encode(sha2::Sha256::digest(b"{}")))
+        || config_size != 2
+    {
+        bail!("OCI empty config digest invariant failed");
+    }
+
+    let mut layers = Vec::with_capacity(artifacts.len());
+    for artifact in artifacts {
+        let filename = oci_artifact_filename(artifact)?.to_owned();
+        let (digest, size) =
+            upload_oci_blob_file(&client, &registry_url, repository, artifact, session).await?;
+        layers.push((filename, digest, size));
+    }
+
+    let manifest = trusted_oci_artifact_manifest(core, repository, version, &layers)?;
+    let manifest_url = registry_url.join(&format!("/v2/{repository}/manifests/{version}"))?;
+    session.refresh_if_needed().await?;
+    let response = client
+        .put(manifest_url)
+        .bearer_auth(session.token())
+        .timeout(oci_request_timeout(session.remaining())?)
+        .header(
+            reqwest::header::CONTENT_TYPE,
+            "application/vnd.oci.image.manifest.v1+json",
+        )
+        .body(manifest)
+        .send()
+        .await?;
+    if !response.status().is_success() {
+        bail!(
+            "OCI artifact manifest upload failed (HTTP {})",
+            response.status()
+        );
+    }
+    println!(
+        "Published {} OCI artifact layer(s) for {repository}:{version} (core {core}) with trusted provenance.",
+        artifacts.len()
+    );
+    Ok(())
+}
+
+fn trusted_oci_registry_root(registry: &str) -> Result<url::Url> {
+    let registry_url =
+        url::Url::parse(registry).map_err(|_| crate::error::trusted_registry_url_invalid())?;
+    let local_http = registry_url.scheme() == "http"
+        && registry_url.host_str().is_some_and(|host| {
+            host == "localhost"
+                || host
+                    .parse::<std::net::IpAddr>()
+                    .is_ok_and(|address| address.is_loopback())
+        });
+    if registry_url.scheme() != "https" && !local_http {
+        return Err(crate::error::trusted_registry_requires_https());
+    }
+    if !registry_url.path().trim_matches('/').is_empty()
+        || registry_url.query().is_some()
+        || registry_url.fragment().is_some()
+        || !registry_url.username().is_empty()
+        || registry_url.password().is_some()
+    {
+        return Err(crate::error::trusted_registry_url_invalid());
+    }
+    Ok(registry_url)
+}
+
+fn oci_artifact_filename(path: &Path) -> Result<&str> {
+    let filename = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| anyhow!("OCI artifact must have a UTF-8 filename"))?;
+    if filename.len() > 255
+        || filename
+            .bytes()
+            .any(|byte| byte.is_ascii_control() || matches!(byte, b'/' | b'\\'))
+    {
+        bail!("OCI artifact filename is invalid");
+    }
+    Ok(filename)
+}
+
+async fn publish_trusted_pypi(
+    registry: &str,
+    package: &str,
+    version: &str,
+    artifacts: &[PathBuf],
+    session: &mut TrustedPublishSession,
+) -> Result<()> {
+    use sha2::Digest as _;
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(TRUSTED_PYPI_REQUEST_TIMEOUT_SECS))
+        .build()?;
+    for artifact in artifacts {
+        session
+            .refresh_for(Duration::from_secs(
+                TRUSTED_PYPI_REQUEST_TIMEOUT_SECS + TRUSTED_TOKEN_EXPIRY_SKEW_SECS,
+            ))
+            .await?;
+        let filename = artifact
+            .file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| !name.is_empty())
+            .ok_or_else(|| anyhow!("PyPI artifact must have a UTF-8 filename"))?;
+        let content = fs::read(artifact)?;
+        let digest = hex::encode(sha2::Sha256::digest(&content));
+        let form = reqwest::multipart::Form::new()
+            .text(":action", "file_upload")
+            .text("name", package.to_owned())
+            .text("version", version.to_owned())
+            .text("sha256_digest", digest)
+            .part(
+                "content",
+                reqwest::multipart::Part::bytes(content).file_name(filename.to_owned()),
+            );
+        let response = client
+            .post(format!("{}/pypi/legacy/", registry.trim_end_matches('/')))
+            .bearer_auth(session.token())
+            .multipart(form)
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            return Err(crate::error::trusted_token_exchange_failed(
+                response.status().as_u16(),
+            ));
+        }
+    }
+    println!(
+        "Published {} PyPI artifact(s) for {}=={} with trusted provenance.",
+        artifacts.len(),
+        package,
+        version
+    );
+    Ok(())
+}
+
+async fn publish_trusted_oci(
+    registry: &str,
+    package: &str,
+    tag: &str,
+    image: &str,
+    session: &mut TrustedPublishSession,
+) -> Result<()> {
+    let registry_url =
+        url::Url::parse(registry).map_err(|_| crate::error::trusted_registry_url_invalid())?;
+    if !registry_url.path().trim_matches('/').is_empty()
+        || registry_url.query().is_some()
+        || registry_url.fragment().is_some()
+        || !registry_url.username().is_empty()
+        || registry_url.password().is_some()
+    {
+        return Err(crate::error::trusted_registry_url_invalid());
+    }
+    let host = registry_url
+        .host_str()
+        .ok_or_else(crate::error::trusted_registry_url_invalid)?;
+    let authority = registry_url
+        .port()
+        .map(|port| format!("{host}:{port}"))
+        .unwrap_or_else(|| host.to_owned());
+    let destination = format!("{authority}/{package}:{tag}");
+    let docker_config = tempfile::tempdir()?;
+
+    session.refresh_if_needed().await?;
+    let login_token = session.token().to_owned();
+    docker_command(
+        &[
+            "login".into(),
+            "--username".into(),
+            "mgc-oidc".into(),
+            "--password-stdin".into(),
+            authority.clone(),
+        ],
+        docker_config.path(),
+        Some(session.token()),
+        Duration::from_secs(30),
+        "Docker login exceeded 30 seconds",
+    )
+    .await?;
+    docker_command(
+        &[
+            "image".into(),
+            "tag".into(),
+            image.to_owned(),
+            destination.clone(),
+        ],
+        docker_config.path(),
+        None,
+        Duration::from_secs(30),
+        "Docker image tag operation exceeded 30 seconds",
+    )
+    .await?;
+    session.refresh_if_needed().await?;
+    if session.token() != login_token {
+        docker_command(
+            &[
+                "login".into(),
+                "--username".into(),
+                "mgc-oidc".into(),
+                "--password-stdin".into(),
+                authority,
+            ],
+            docker_config.path(),
+            Some(session.token()),
+            Duration::from_secs(30),
+            "Docker login exceeded 30 seconds",
+        )
+        .await?;
+    }
+    let pushed = docker_command(
+        &["push".into(), destination.clone()],
+        docker_config.path(),
+        None,
+        docker_push_timeout(session.remaining())?,
+        "Docker push reached the trusted token expiry safety deadline",
+    )
+    .await;
+    let _ = docker_command(
+        &["image".into(), "rm".into(), "--force".into(), destination],
+        docker_config.path(),
+        None,
+        Duration::from_secs(10),
+        "Docker cleanup exceeded 10 seconds",
+    )
+    .await;
+    pushed?;
+    println!("Pushed OCI image {package}:{tag} with trusted provenance.");
+    Ok(())
+}
+
+async fn docker_command(
+    args: &[String],
+    docker_config: &Path,
+    secret_stdin: Option<&str>,
+    timeout: Duration,
+    timeout_message: &'static str,
+) -> Result<()> {
+    use std::process::Stdio;
+    use tokio::io::AsyncWriteExt as _;
+
+    let mut command = tokio::process::Command::new("docker");
+    command
+        .args(args)
+        .env("DOCKER_CONFIG", docker_config)
+        .stdin(if secret_stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    let mut child = command
+        .spawn()
+        .map_err(|_| anyhow!("could not start Docker"))?;
+    if let Some(secret) = secret_stdin {
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| anyhow!("Docker login input is unavailable"))?;
+        stdin.write_all(secret.as_bytes()).await?;
+        stdin.write_all(b"\n").await?;
+    }
+    let status = tokio::time::timeout(timeout, child.wait())
+        .await
+        .map_err(|_| anyhow!(timeout_message))??;
+    if !status.success() {
+        bail!("Docker operation failed with status {status}");
+    }
+    Ok(())
+}
+
+fn valid_oci_tag(tag: &str) -> bool {
+    !tag.is_empty()
+        && tag.len() <= 128
+        && tag
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-'))
+        && tag.as_bytes()[0].is_ascii_alphanumeric()
+}
+
+/// Closed set of read-only Git queries used by publish integrity checks.
+/// Tập đóng các truy vấn Git chỉ đọc dùng cho kiểm tra tính toàn vẹn publish.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum GitReadQuery {
+    ValidateBranch(String),
+    WorkingTreeStatus,
+    CurrentBranch,
+    UpstreamRef(String),
+    CommitsBehind(String),
+}
+
+impl GitReadQuery {
+    fn argv(&self) -> Vec<String> {
+        match self {
+            Self::ValidateBranch(branch) => {
+                vec!["check-ref-format".into(), format!("refs/heads/{branch}")]
+            }
+            Self::WorkingTreeStatus => vec!["status".into(), "--porcelain".into()],
+            Self::CurrentBranch => vec![
+                "rev-parse".into(),
+                "--verify".into(),
+                "--abbrev-ref".into(),
+                "--end-of-options".into(),
+                "HEAD".into(),
+            ],
+            Self::UpstreamRef(branch) => vec![
+                "rev-parse".into(),
+                "--verify".into(),
+                "--abbrev-ref".into(),
+                "--symbolic-full-name".into(),
+                "--end-of-options".into(),
+                format!("{branch}@{{upstream}}"),
+            ],
+            Self::CommitsBehind(branch) => vec![
+                "rev-list".into(),
+                "--count".into(),
+                "--end-of-options".into(),
+                format!("{branch}..{branch}@{{upstream}}"),
+            ],
+        }
+    }
+}
+
+/// Check the selected project's tree and tracking branch before publishing.
+/// Kiểm tra working tree và upstream của đúng project trước khi publish.
+fn git_checks(publish_branch: Option<&str>, project_root: &Path) -> Result<()> {
     // Tree clean (except ignored)
-    let status = run_git_capture(&["status", "--porcelain"])?;
+    let status = run_git_capture(project_root, GitReadQuery::WorkingTreeStatus)?;
     if !status.trim().is_empty() {
         bail!("Git tree not clean — commit or stash changes first (or --no-git-checks)");
     }
 
     // Current branch
-    let branch = args.publish_branch.clone().unwrap_or_else(|| {
-        run_git_capture(&["rev-parse", "--abbrev-ref", "HEAD"])
-            .ok()
-            .map(|s| s.trim().to_string())
-            .unwrap_or_default()
-    });
+    let branch = match publish_branch {
+        Some(branch) => {
+            run_git_capture(
+                project_root,
+                GitReadQuery::ValidateBranch(branch.to_string()),
+            )?;
+            branch.to_string()
+        }
+        None => run_git_capture(project_root, GitReadQuery::CurrentBranch)?
+            .trim()
+            .to_string(),
+    };
+    if branch.is_empty() {
+        bail!("Could not determine the Git branch to publish");
+    }
 
     // Has upstream
-    let upstream_ref = format!("{}@{{upstream}}", branch);
-    let upstream = run_git_capture(&["rev-parse", "--abbrev-ref", &upstream_ref]);
-    if upstream.is_ok() {
-        // Check lag
-        let rev_range = format!("HEAD..{}@{{upstream}}", branch);
-        let lag = run_git_capture(&["rev-list", "--count", &rev_range])?;
-        let count = lag.trim().parse::<usize>().unwrap_or(0);
-        if count > 0 {
-            bail!(
-                "Branch {} lags {} commits behind upstream — pull first",
-                branch,
-                count
-            );
+    let upstream = run_git_capture(project_root, GitReadQuery::UpstreamRef(branch.clone()));
+    if upstream.is_err() {
+        if publish_branch.is_some() {
+            bail!("Publish branch {branch} has no resolvable upstream");
         }
+        return Ok(());
+    }
+
+    // Check lag between the selected local branch and its matching upstream.
+    // So sánh nhánh cục bộ đã chọn với upstream tương ứng để phát hiện commit bị chậm.
+    let lag = run_git_capture(project_root, GitReadQuery::CommitsBehind(branch.clone()))?;
+    let count = parse_git_behind_count(&lag)?;
+    if count > 0 {
+        bail!(
+            "Branch {} lags {} commits behind upstream — pull first",
+            branch,
+            count
+        );
     }
 
     Ok(())
 }
 
-fn run_git_capture(args: &[&str]) -> Result<String> {
-    let args = args
-        .iter()
-        .map(|arg| (*arg).to_string())
-        .collect::<Vec<_>>();
-    let opts = mgc_exec::prelude::ExecOptions {
+fn parse_git_behind_count(output: &str) -> Result<usize> {
+    output
+        .trim()
+        .parse::<usize>()
+        .map_err(|_| anyhow!("Git returned an invalid upstream commit count"))
+}
+
+fn git_exec_options(project_root: &Path) -> mgc_exec::prelude::ExecOptions {
+    mgc_exec::prelude::ExecOptions {
+        cwd: Some(project_root.to_path_buf()),
         clean_env: true,
         ..Default::default()
-    };
+    }
+}
+
+fn run_git_capture(project_root: &Path, query: GitReadQuery) -> Result<String> {
+    let args = query.argv();
+    let opts = git_exec_options(project_root);
     let report = mgc_exec::prelude::run("git", &args, &opts)?;
     Ok(report.stdout_tail)
 }
@@ -444,24 +1536,59 @@ fn select_registry(
     Ok(DEFAULT_REGISTRY.to_string())
 }
 
-/// Run lifecycle script if defined
-fn run_lifecycle(pkg_json: &serde_json::Value, script: &str) -> Result<()> {
+fn publish_lifecycle_decision(
+    pkg_json: &serde_json::Value,
+    ignore_scripts: bool,
+    allow_scripts: bool,
+) -> Result<bool> {
+    if ignore_scripts {
+        return Ok(false);
+    }
+    let Some(scripts_value) = pkg_json.get("scripts") else {
+        return Ok(false);
+    };
+    let Some(scripts) = scripts_value.as_object() else {
+        return Err(crate::error::publish_lifecycle_policy_invalid());
+    };
+
+    let mut has_publish_hook = false;
+    for hook in PUBLISH_LIFECYCLE_HOOKS {
+        if let Some(value) = scripts.get(*hook) {
+            if !value.is_string() {
+                return Err(crate::error::publish_lifecycle_policy_invalid());
+            }
+            has_publish_hook = true;
+        }
+    }
+    if !has_publish_hook {
+        return Ok(false);
+    }
+    if !allow_scripts {
+        return Err(crate::error::publish_lifecycle_opt_in_required());
+    }
+    Ok(true)
+}
+
+fn run_lifecycle(pkg_json: &serde_json::Value, script: &str, project_root: &Path) -> Result<()> {
     if let Some(cmd) = pkg_json
         .get("scripts")
         .and_then(|s| s.get(script))
         .and_then(|v| v.as_str())
     {
-        println!("> {}: {}", script, cmd);
+        println!("Running approved publish lifecycle hook: {script}");
         mgc_exec::allowlist::reject_forbidden_pm_script(cmd)?;
         let invocation = mgc_exec::allowlist::parse_script_invocation(cmd)?;
         let mut env = invocation.env;
+        env.push(("INIT_CWD".to_string(), project_root.display().to_string()));
         if let Some(path) = std::env::var_os("PATH") {
             env.push(("PATH".to_string(), path.to_string_lossy().to_string()));
         }
         let opts = mgc_exec::prelude::ExecOptions {
+            cwd: Some(project_root.to_path_buf()),
             timeout: Some(publish_lifecycle_timeout()),
             env,
             clean_env: true,
+            execution_scope: Some(mgc_exec::allowlist::ExecutionScope::Install),
             ..Default::default()
         };
         mgc_exec::prelude::run_inherited(&invocation.program, &invocation.args, &opts)?;
@@ -508,6 +1635,7 @@ async fn publish_put(
     deps: &serde_json::Map<String, serde_json::Value>,
     pack_result: &mgc_pack::tarball::PackResult,
     args: &PublishArgs,
+    mut trusted_session: Option<&mut TrustedPublishSession>,
 ) -> Result<()> {
     let client = reqwest::Client::new();
     let url = format!("{}/{}", registry_url.trim_end_matches('/'), name);
@@ -516,7 +1644,15 @@ async fn publish_put(
     let mut body = serde_json::Map::new();
     body.insert("_id".into(), serde_json::Value::String(name.into()));
     body.insert("name".into(), serde_json::Value::String(name.into()));
-    body.insert("dist-tags".into(), serde_json::json!({"latest": version}));
+    let publish_tag = if args.trusted {
+        args.tag.as_deref().unwrap_or("latest")
+    } else {
+        "latest"
+    };
+    body.insert(
+        "dist-tags".into(),
+        serde_json::json!({(publish_tag): version}),
+    );
     body.insert("maintainers".into(), serde_json::json!([]));
     body.insert(
         "time".into(),
@@ -554,11 +1690,7 @@ async fn publish_put(
     body.insert("versions".into(), serde_json::Value::Object(versions));
 
     let req = client.put(&url).json(&body);
-    let req = if let Some(h) = auth.header_value() {
-        req.header("Authorization", h)
-    } else {
-        req
-    };
+    let req = apply_npm_request_auth(req, auth, trusted_session.as_deref_mut()).await?;
     let resp = req.send().await?;
     let status = resp.status();
 
@@ -572,19 +1704,12 @@ async fn publish_put(
                 version
             );
             let del_req = client.delete(&del_url);
-            let del_req = if let Some(h) = auth.header_value() {
-                del_req.header("Authorization", h)
-            } else {
-                del_req
-            };
+            let del_req =
+                apply_npm_request_auth(del_req, auth, trusted_session.as_deref_mut()).await?;
             del_req.send().await?;
             // Retry PUT - need to rebuild request
             let body_retry = client.put(&url).json(&body);
-            let body_retry = if let Some(h) = auth.header_value() {
-                body_retry.header("Authorization", h)
-            } else {
-                body_retry
-            };
+            let body_retry = apply_npm_request_auth(body_retry, auth, trusted_session).await?;
             let retry = body_retry.send().await?;
             let retry_status = retry.status();
             if !retry_status.is_success() {
@@ -611,6 +1736,7 @@ async fn upload_tarball_client(
     name: &str,
     version: &str,
     tarball_path: &std::path::Path,
+    trusted_session: Option<&mut TrustedPublishSession>,
 ) -> Result<()> {
     let client = reqwest::Client::new();
     let unscoped = name.rsplit('/').next().unwrap_or(name);
@@ -623,11 +1749,7 @@ async fn upload_tarball_client(
     );
     let data = fs::read(tarball_path)?;
     let req = client.put(&url).body(data);
-    let req = if let Some(h) = auth.header_value() {
-        req.header("Authorization", h)
-    } else {
-        req
-    };
+    let req = apply_npm_request_auth(req, auth, trusted_session).await?;
     let resp = req.send().await?;
     let status = resp.status();
     if !status.is_success() {
@@ -667,3 +1789,7 @@ async fn set_dist_tag(
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "test/publish.rs"]
+mod tests;

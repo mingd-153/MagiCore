@@ -67,6 +67,14 @@ test_case "Linux all-core" \
     "magicore-1.1.0-linux-x64.tar.gz.sha256" \
     "magicore-1.1.0-linux-x64-sbom.json"
 
+# Linux ARM64 is a first-class release artifact, not a placeholder.
+# Linux ARM64 là artifact phát hành chính thức, không phải giá trị giữ chỗ.
+test_case "Linux ARM64 all-core" \
+    "1.1.0" "linux" "arm64" "all" \
+    "magicore-1.1.0-linux-arm64.tar.gz" \
+    "magicore-1.1.0-linux-arm64.tar.gz.sha256" \
+    "magicore-1.1.0-linux-arm64-sbom.json"
+
 test_case "macOS all-core" \
     "1.1.0" "macos" "x64" "all" \
     "magicore-1.1.0-macos-x64.tar.gz" \
@@ -85,6 +93,14 @@ test_case "Linux web-only" \
     "magicore-web-1.1.0-linux-x64.tar.gz" \
     "magicore-web-1.1.0-linux-x64.tar.gz.sha256" \
     "magicore-web-1.1.0-linux-x64-sbom.json"
+
+# Both product variants must expose the same Linux architecture matrix.
+# Hai biến thể sản phẩm phải công bố cùng ma trận kiến trúc Linux.
+test_case "Linux ARM64 web-only" \
+    "1.1.0" "linux" "arm64" "web" \
+    "magicore-web-1.1.0-linux-arm64.tar.gz" \
+    "magicore-web-1.1.0-linux-arm64.tar.gz.sha256" \
+    "magicore-web-1.1.0-linux-arm64-sbom.json"
 
 test_case "macOS web-only" \
     "1.1.0" "macos" "x64" "web" \

@@ -5,6 +5,10 @@ use crate::registry::Registry;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+/// Default minimum release age for supply-chain quarantine, in hours.
+/// Tuổi phát hành mặc định để cách ly chuỗi cung ứng, tính bằng giờ.
+pub const DEFAULT_MIN_RELEASE_AGE_HOURS: u64 = 24;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProjectExecutionConfig {
     #[serde(default = "default_execution_architecture")]
@@ -580,12 +584,12 @@ impl ProjectConfig {
     ];
 
     /// Canonicalize a core name (trim, lowercase, alias mapping).
-    fn canonical_core(name: &str) -> String {
+    pub(crate) fn canonical_core(name: &str) -> String {
         let n = name.trim().to_ascii_lowercase();
         if n == "cloud" { "clo".to_string() } else { n }
     }
 
-    fn is_known_core(name: &str) -> bool {
+    pub(crate) fn is_known_core(name: &str) -> bool {
         Self::KNOWN_CORES.contains(&name)
     }
 
@@ -595,6 +599,25 @@ impl ProjectConfig {
     /// - Err: marker exists but the core name is unknown/empty (fail-closed —
     ///   never guess a wrong core from a malformed marker).
     pub fn read_core_marker(project_root: &Path) -> Result<Option<String>, anyhow::Error> {
+        let Some(core) = Self::read_core_marker_identity(project_root)? else {
+            return Ok(None);
+        };
+        // Cryptographic anchor check runs last: plain-text agreement is
+        // necessary but not sufficient against deliberate marker edits.
+        // (Kiểm tra anchor mật mã chạy cuối: khớp plain-text là cần
+        // nhưng chưa đủ trước sửa marker có chủ đích.)
+        crate::attestation::enforce_live_attestation(project_root, &core)?;
+        Ok(Some(core))
+    }
+
+    /// Parse and cross-check project core identity without enforcing its
+    /// attestation. The attestation verifier uses this to compare the signed
+    /// core with the live marker without recursively invoking itself.
+    /// (Đọc và đối chiếu identity core mà không enforce attestation; verifier
+    /// dùng hàm này để tránh gọi đệ quy.)
+    pub(crate) fn read_core_marker_identity(
+        project_root: &Path,
+    ) -> Result<Option<String>, anyhow::Error> {
         let path = project_root.join(Self::CORE_MARKER_FILE);
         let Some(content) = read_regular_project_text(&path, "core marker")? else {
             return Ok(None);
@@ -1053,6 +1076,11 @@ pub struct SecurityConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cicd: Option<u64>,
 
+    /// Per-core minimum release age for hardware artifact lanes.
+    /// Tuổi phát hành tối thiểu riêng cho lane artifact hardware.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hardware: Option<u64>,
+
     /// Explicit per-ecosystem unsigned-artifact escape (`"*" rejected —
     /// see `unsigned_artifact_allowed`). Wired into lanes in Phase C;
     /// today the resolver denies unsigned artifacts unconditionally.
@@ -1084,11 +1112,26 @@ impl SecurityConfig {
             "lib" => self.lib.or(self.min_release_age),
             "game" => self.game.or(self.min_release_age),
             "iot" => self.iot.or(self.min_release_age),
-            "cloud" => self.cloud.or(self.min_release_age),
+            "cloud" | "clo" => self.cloud.or(self.min_release_age),
             "cicd" => self.cicd.or(self.min_release_age),
+            "hardware" => self.hardware.or(self.min_release_age),
             _ => self.min_release_age,
         }
     }
+}
+
+/// Load only the `[security]` table from mgc.toml, including minimal configs.
+/// Chỉ nạp bảng `[security]` từ mgc.toml, kể cả config tối giản.
+pub fn load_security_config(project_root: &Path) -> Result<Option<SecurityConfig>, anyhow::Error> {
+    let path = project_root.join("mgc.toml");
+    let Some(text) = read_regular_project_text(&path, "project config")? else {
+        return Ok(None);
+    };
+    let document: toml::Value = toml::from_str(&text)?;
+    let Some(value) = document.get("security") else {
+        return Ok(None);
+    };
+    Ok(Some(value.clone().try_into()?))
 }
 
 /// Lock config — `mgc.toml [lock]` (V1.2 lock v4: signature policy +

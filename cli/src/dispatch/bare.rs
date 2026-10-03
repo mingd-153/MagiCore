@@ -87,6 +87,10 @@ pub fn bare_core_command(
                 frozen,
                 offline,
             },
+            "hardware" => CoreCommand::InstallHardware {
+                packages,
+                compat_runtime,
+            },
             other => return Err(crate::error::unknown_core(other)),
         }),
         Commands::Add {
@@ -235,6 +239,10 @@ pub fn bare_core_command(
                 packages,
                 compat_runtime,
             },
+            "hardware" => CoreCommand::RemoveHardware {
+                packages,
+                compat_runtime,
+            },
             other => return Err(crate::error::unknown_core(other)),
         }),
         Commands::Update {
@@ -278,6 +286,11 @@ pub fn bare_core_command(
                 compat_runtime,
             },
             "lib" => CoreCommand::UpdateLib {
+                packages,
+                install,
+                compat_runtime,
+            },
+            "hardware" => CoreCommand::UpdateHardware {
                 packages,
                 install,
                 compat_runtime,

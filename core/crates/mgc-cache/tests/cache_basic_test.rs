@@ -165,3 +165,34 @@ fn test_cache_prune() {
     assert!(!cache.has_package("pkg2@1.0.0"));
     assert!(!cache.has_package("pkg3@1.0.0"));
 }
+
+#[test]
+fn concurrent_store_same_package_does_not_deadlock_or_panic() {
+    // Exercises the poison-aware lock paths under contention: all
+    // threads must finish with Ok (no panic, no deadlock).
+    use std::sync::{Arc, Barrier};
+    let (tmp, cache) = setup_test_cache();
+    let pkg_file = create_test_package(tmp.path(), b"racy-bytes");
+    let integrity = cache.compute_integrity(&pkg_file).unwrap();
+    let cache = Arc::new(cache);
+    let barrier = Arc::new(Barrier::new(8));
+    let handles: Vec<_> = (0..8)
+        .map(|_| {
+            let (cache, barrier) = (Arc::clone(&cache), Arc::clone(&barrier));
+            let pkg_file = pkg_file.clone();
+            let integrity = integrity.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                for _ in 0..25 {
+                    cache
+                        .store_package("race@1.0.0", &pkg_file, &integrity)
+                        .unwrap();
+                    assert!(cache.has_package("race@1.0.0"));
+                }
+            })
+        })
+        .collect();
+    for handle in handles {
+        handle.join().expect("worker thread must not panic");
+    }
+}

@@ -136,12 +136,12 @@ def collect() -> dict:
         "commit_sha": head or None,
         "describe": describe or None,
         "cargo_version": version or None,
-        # The tag pointing at HEAD — RC6 is deliberately NOT cut yet
+        # The tag pointing at HEAD — no verified tag is cut yet
         # (creation waits for a fully green verify ladder + approval), so
         # this stays null until the verified tag exists.
-        # (Tag trỏ vào HEAD — RC6 cố ý CHƯA tạo (việc tạo chờ verify
-        # ladder xanh trọn vẹn + phê duyệt), nên trường này là null tới
-        # khi tag đã verify tồn tại.)
+        # (Tag trỏ vào HEAD — chưa có tag verified nào được tạo (việc tạo
+        # chờ verify ladder xanh trọn vẹn + phê duyệt), nên trường này là
+        # null tới khi tag đã verify tồn tại.)
         "tag": tags[0] if tags else None,
         # CI runs that verified THIS commit — appended once CI is green
         # on the same SHA. An empty list is pending, never a pass.

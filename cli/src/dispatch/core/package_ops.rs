@@ -283,6 +283,13 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
         } => commands::core::remove::library::remove(packages, compat_runtime).await,
         #[cfg(not(feature = "lib"))]
         CoreCommand::RemoveLib { .. } => Err(crate::error::core_not_in_build("lib")),
+        #[cfg(feature = "hardware")]
+        CoreCommand::RemoveHardware {
+            packages,
+            compat_runtime,
+        } => commands::core::remove::hardware::remove(packages, compat_runtime).await,
+        #[cfg(not(feature = "hardware"))]
+        CoreCommand::RemoveHardware { .. } => Err(crate::error::core_not_in_build("hardware")),
         CoreCommand::ListWeb { compat_runtime } => {
             commands::core::list::web::list(compat_runtime).await
         }
@@ -395,6 +402,14 @@ pub async fn dispatch(command: CoreCommand) -> Result<()> {
         } => commands::core::update::library::update(packages, install, compat_runtime).await,
         #[cfg(not(feature = "lib"))]
         CoreCommand::UpdateLib { .. } => Err(crate::error::core_not_in_build("lib")),
+        #[cfg(feature = "hardware")]
+        CoreCommand::UpdateHardware {
+            packages,
+            install,
+            compat_runtime,
+        } => commands::core::update::hardware::update(packages, install, compat_runtime).await,
+        #[cfg(not(feature = "hardware"))]
+        CoreCommand::UpdateHardware { .. } => Err(crate::error::core_not_in_build("hardware")),
         _ => unreachable!("non-package command routed to package dispatcher"),
     }
 }

@@ -1,6 +1,7 @@
 //! Trust commands for lockfile signing and verification
 //! Lệnh trust cho ký và xác minh lockfile
 
+pub mod anchor;
 pub mod approve;
 pub mod deny;
 pub mod init;
@@ -63,6 +64,21 @@ pub enum TrustCmd {
 
     /// List installed packages with lifecycle scripts but no policy yet
     Pending,
+
+    /// Attest the project core identity (binds .mgc.core + mgc.toml to a key)
+    Anchor {
+        /// Re-attest even when the current attestation still verifies
+        #[arg(long)]
+        re_attest: bool,
+
+        /// Rotate to a freshly generated key (keeps one previous key)
+        #[arg(long)]
+        rotate: bool,
+
+        /// Key ID to use (not combinable with --rotate, which generates one)
+        #[arg(long)]
+        key_id: Option<String>,
+    },
 }
 
 /// Execute trust command — Thực thi lệnh trust
@@ -76,6 +92,11 @@ pub fn execute(cmd: TrustCmd) -> anyhow::Result<()> {
         TrustCmd::Deny { package } => deny::execute(&package),
         TrustCmd::Prune => prune::execute(),
         TrustCmd::Pending => pending::execute(),
+        TrustCmd::Anchor {
+            re_attest,
+            rotate,
+            key_id,
+        } => anchor::execute(re_attest, rotate, key_id.as_deref()),
     }
 }
 

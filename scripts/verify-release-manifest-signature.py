@@ -17,10 +17,12 @@ SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
 SIGNATURE_HEX = re.compile(r"^[0-9a-f]{128}$")
 REQUIRED_VARIANTS = (
     ("magicore", "linux", "x64"),
+    ("magicore", "linux", "arm64"),
     ("magicore", "macos", "x64"),
     ("magicore", "macos", "arm64"),
     ("magicore", "windows", "x64"),
     ("magicore-web", "linux", "x64"),
+    ("magicore-web", "linux", "arm64"),
     ("magicore-web", "macos", "x64"),
     ("magicore-web", "macos", "arm64"),
     ("magicore-web", "windows", "x64"),

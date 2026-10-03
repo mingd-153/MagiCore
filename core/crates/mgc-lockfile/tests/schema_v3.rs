@@ -72,6 +72,7 @@ fn v3_roundtrip_preserves_all_new_fields() {
         size_bytes: Some(1024),
         content_hash: "abcd1234".to_string(),
         downloaded_from: "crates://sparse.crates.io".to_string(),
+        integrity_sri: None,
     });
     pkg.provenance = Some(Provenance {
         source_kind: SOURCE_KIND_REGISTRY_IMPORT.to_string(),

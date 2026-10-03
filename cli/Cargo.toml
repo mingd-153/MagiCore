@@ -31,8 +31,13 @@ mgc-fetcher = { workspace = true }
 mgc-http = { workspace = true }
 mgc-ui = { workspace = true }
 mgc-pack = { workspace = true }
+mgc-platform = { workspace = true }
 mgc-publish = { workspace = true }
 mgc-registry-server = { workspace = true }
+sigstore-types = "0.11.0"
+sigstore-verify = "0.11.0"
+sigstore-trust-root = "0.11.0"
+mgc-oidc = { workspace = true }
 mgc-oci = { workspace = true }
 mgc-exec = { workspace = true }
 mgc-plugin = { workspace = true }

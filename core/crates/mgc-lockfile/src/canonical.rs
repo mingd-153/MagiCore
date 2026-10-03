@@ -112,6 +112,10 @@ struct V4ArtifactRef {
     size_bytes: Option<u64>,
     content_hash: String,
     downloaded_from: String,
+    /// SRI integrity (optional — absent on older v4 documents).
+    /// Integrity SRI (tùy chọn — vắng trên tài liệu v4 cũ).
+    #[serde(default)]
+    integrity_sri: Option<String>,
 }
 
 impl From<V4ArtifactRef> for ArtifactRef {
@@ -121,6 +125,7 @@ impl From<V4ArtifactRef> for ArtifactRef {
             size_bytes: value.size_bytes,
             content_hash: value.content_hash,
             downloaded_from: value.downloaded_from,
+            integrity_sri: value.integrity_sri,
         }
     }
 }
@@ -576,6 +581,13 @@ pub fn canonical_toml(payload: &LockfilePayload) -> String {
             }
             push_str_field(&mut out, "content_hash", &artifact.content_hash);
             push_str_field(&mut out, "downloaded_from", &artifact.downloaded_from);
+            // Only present when a lane supplied registry SRI — documents
+            // without it digest exactly as before (no silent digest change).
+            // Chỉ có khi lane cung cấp SRI — tài liệu thiếu field digest
+            // y hệt như trước (không đổi digest ngầm).
+            if let Some(sri) = artifact.integrity_sri.as_deref() {
+                push_str_field(&mut out, "integrity_sri", sri);
+            }
         }
         if let Some(provenance) = &package.provenance {
             out.push_str("[package.provenance]\n");

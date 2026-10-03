@@ -80,7 +80,14 @@ pub fn verify_package_file(file_path: &Path, expected_hash: Option<&str>) -> MgR
         return Ok(());
     }
 
-    let expected = expected_hash.expect("expected_hash checked non-None above");
+    let Some(expected) = expected_hash else {
+        // Guarded above, but re-check instead of unwrapping: a refactor
+        // that moves the guard must fail closed, not panic.
+        return Err(MgError::Other(format!(
+            "cannot verify package '{}': expected hash vanished after the availability check",
+            file_path.display()
+        )));
+    };
     let actual = compute_sha256_file(file_path)?;
 
     if actual.eq_ignore_ascii_case(expected) {

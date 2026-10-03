@@ -23,15 +23,15 @@ HASH_CHUNK_BYTES = 1024 * 1024
 KNOWN_OS = {"linux", "macos", "windows"}
 KNOWN_ARCH = {"x64", "arm64"}
 
-# Exact release contract (P0: mirrors pre-publish-verification — macOS
-# ships BOTH arm64 and x64; linux/windows ship x64 in RC, arm64 entries
-# are bonus-only). A SIGNED manifest missing a required variant is a
-# broken release: correct format, wrong content — fail BEFORE signing.
-# (Ma trận phát hành chính xác — thiếu biến thể bắt buộc thì fail trước ký.)
+# Exact release contract: Linux/macOS ship both architectures; Windows ships x64.
+# Ma trận phát hành chính xác: Linux/macOS có hai kiến trúc; Windows chỉ có x64.
+# A signed manifest missing a required variant is a broken release; fail before signing.
+# Manifest thiếu biến thể bắt buộc là bản phát hành lỗi; dừng trước khi ký.
 REQUIRED_MATRIX = [
     ("magicore", os_name, arch)
     for os_name, arch in [
         ("linux", "x64"),
+        ("linux", "arm64"),
         ("macos", "x64"),
         ("macos", "arm64"),
         ("windows", "x64"),
@@ -40,6 +40,7 @@ REQUIRED_MATRIX = [
     ("magicore-web", os_name, arch)
     for os_name, arch in [
         ("linux", "x64"),
+        ("linux", "arm64"),
         ("macos", "x64"),
         ("macos", "arm64"),
         ("windows", "x64"),
@@ -49,8 +50,7 @@ REQUIRED_MATRIX = [
 
 def check_required_matrix(artifacts):
     """Missing/duplicate required (package, os, arch) entries → error
-    lines (empty = contract met). Bonus entries (linux/windows arm64)
-    never fail.
+    lines (empty = contract met). Windows ARM64 is outside this release matrix.
     (Thiếu/trùng biến thể bắt buộc → dòng lỗi.)"""
     errors = []
     seen = {}

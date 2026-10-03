@@ -1,6 +1,5 @@
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -134,32 +133,40 @@ fn build_package(
     target_override: Option<&str>,
     profile: &str,
 ) -> Result<()> {
-    let target = target_override
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(detect_host_target);
+    let target = match target_override {
+        Some(target) => target.to_owned(),
+        None => detect_host_target()?,
+    };
 
-    let mut cargo = Command::new("cargo");
-    cargo.arg("build");
-    cargo.arg("-p").arg("mgc");
-    cargo.arg("--bin").arg(&manifest.binary);
-    cargo.arg("--profile").arg(profile);
+    let mut args = vec![
+        "build".to_string(),
+        "-p".to_string(),
+        "mgc".to_string(),
+        "--bin".to_string(),
+        manifest.binary.clone(),
+        "--profile".to_string(),
+        profile.to_string(),
+    ];
 
     if manifest.no_default_features {
-        cargo.arg("--no-default-features");
+        args.push("--no-default-features".to_string());
     }
     if !manifest.features.is_empty() {
-        cargo.arg("--features").arg(manifest.features.join(","));
+        args.push("--features".to_string());
+        args.push(manifest.features.join(","));
     }
-    cargo.arg("--target").arg(&target);
+    args.push("--target".to_string());
+    args.push(target.clone());
+    args.push("--locked".to_string());
+    args.push("--offline".to_string());
 
-    let status = cargo.status().context("failed to launch cargo build")?;
-    if !status.success() {
-        anyhow::bail!(
-            "cargo build failed for package '{}' with target '{}'",
-            manifest.name,
-            target
-        );
-    }
+    let options = executor_options(false)?;
+    mgc_exec::run::run_inherited("cargo", &args, &options).with_context(|| {
+        format!(
+            "mgc-exec refused or failed Cargo build for package '{}' with target '{}'",
+            manifest.name, target
+        )
+    })?;
 
     let exe_suffix = if target.contains("windows") {
         ".exe"
@@ -205,15 +212,24 @@ fn build_package(
     Ok(())
 }
 
-fn detect_host_target() -> String {
-    let output = Command::new("rustc")
-        .arg("-vV")
-        .output()
-        .expect("failed to execute rustc -vV");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    stdout
+fn executor_options(capture_full_stdout: bool) -> Result<mgc_exec::run::ExecOptions> {
+    Ok(mgc_exec::run::ExecOptions {
+        cwd: Some(std::env::current_dir()?),
+        log_path: Some(Path::new(".magicore").join("exec.log")),
+        execution_scope: Some(mgc_exec::allowlist::ExecutionScope::BuildRunner),
+        capture_full_stdout,
+        ..Default::default()
+    })
+}
+
+fn detect_host_target() -> Result<String> {
+    let options = executor_options(true)?;
+    let report = mgc_exec::run::run("rustc", &["-vV".to_string()], &options)
+        .context("failed to query rustc host target through mgc-exec")?;
+    report
+        .stdout_full
         .lines()
         .find_map(|line| line.strip_prefix("host: "))
-        .unwrap_or("unknown-target")
-        .to_string()
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| anyhow::anyhow!("rustc -vV output did not contain a host target"))
 }

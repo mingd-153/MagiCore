@@ -38,6 +38,7 @@ fn audit_strict_rejects_materializing_install_commands() {
 fn audit_strict_allows_audit_and_manifest_only_mutation() {
     assert!(
         reject_unsupported_audit_strict(&Commands::Audit {
+            cmd: None,
             fix: false,
             format: None
         })
@@ -57,6 +58,40 @@ fn audit_strict_allows_audit_and_manifest_only_mutation() {
         version: None,
     };
     assert!(reject_unsupported_audit_strict(&add).is_ok());
+}
+
+#[test]
+fn audit_strict_rejects_commands_that_never_consult_strictness() {
+    // Build/Remove never read MGC_AUDIT_STRICT — accepting the flag would
+    // silently ignore it. Verify stays allowed (run_strict chain).
+    let err = reject_unsupported_audit_strict(&Commands::Build {
+        target: None,
+        compat_runtime: None,
+    })
+    .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("--audit-strict has no effect on 'build'"),
+        "unexpected error: {err}"
+    );
+    let err = reject_unsupported_audit_strict(&Commands::RemoveWeb {
+        packages: vec![],
+        no_install: false,
+        compat_runtime: None,
+    })
+    .unwrap_err();
+    assert!(
+        err.to_string().contains("--audit-strict has no effect"),
+        "unexpected error: {err}"
+    );
+    assert!(reject_unsupported_audit_strict(&Commands::Verify).is_ok());
+    assert!(
+        reject_unsupported_audit_strict(&Commands::RemoveHardware {
+            packages: vec![],
+            compat_runtime: None,
+        })
+        .is_err()
+    );
 }
 
 #[test]
@@ -82,6 +117,7 @@ fn recursive_supported_includes_build_run_audit_outdated_dev() {
         compat_runtime: None,
     }));
     assert!(recursive_supported(&Commands::Audit {
+        cmd: None,
         fix: false,
         format: None
     }));

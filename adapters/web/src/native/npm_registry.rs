@@ -114,43 +114,57 @@ fn network_profile_log(kind: &str, target: &str, message: &str) {
 
 /// Primary HTTP client: used for metadata fetches. Optimized for many concurrent
 /// short-lived requests against the same host (registry.npmjs.org).
-fn global_http_client() -> &'static reqwest::Client {
-    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
-    CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
-            // Increased pool: 256 concurrent connections per registry host.
-            .pool_max_idle_per_host(256)
-            .pool_idle_timeout(Duration::from_secs(90))
-            .tcp_keepalive(Duration::from_secs(30))
-            // Metadata responses are small; 30s is plenty.
-            .timeout(Duration::from_secs(30))
-            .user_agent(format!("MagiCore/{}", env!("CARGO_PKG_VERSION")))
-            // H2 stream window: 4 MiB — allows multiple concurrent streams without
-            // stalling when one response is slow.
-            .http2_initial_stream_window_size(4 * 1024 * 1024)
-            // H2 connection window: 32 MiB
-            .http2_initial_connection_window_size(32 * 1024 * 1024)
-            .build()
-            .expect("failed to build HTTP client")
-    })
+/// Built once and cheaply cloned (`Client` is reference-counted); a build
+/// failure (broken TLS backend) is an explicit error, never a
+/// process-wide panic.
+fn global_http_client() -> mgc_types::MgResult<reqwest::Client> {
+    use mgc_types::MgError;
+    static CLIENT: std::sync::OnceLock<Result<reqwest::Client, String>> =
+        std::sync::OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            reqwest::Client::builder()
+                // Increased pool: 256 concurrent connections per registry host.
+                .pool_max_idle_per_host(256)
+                .pool_idle_timeout(Duration::from_secs(90))
+                .tcp_keepalive(Duration::from_secs(30))
+                // Metadata responses are small; 30s is plenty.
+                .timeout(Duration::from_secs(30))
+                .user_agent(format!("MagiCore/{}", env!("CARGO_PKG_VERSION")))
+                // H2 stream window: 4 MiB — allows multiple concurrent streams without
+                // stalling when one response is slow.
+                .http2_initial_stream_window_size(4 * 1024 * 1024)
+                // H2 connection window: 32 MiB
+                .http2_initial_connection_window_size(32 * 1024 * 1024)
+                .build()
+                .map_err(|error| format!("cannot build HTTP client: {error}"))
+        })
+        .clone()
+        .map_err(MgError::Other)
 }
 
 /// Batch HTTP client: used for tarball streaming. Optimized for large bodies.
-pub fn batch_http_client() -> &'static reqwest::Client {
-    static BATCH_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
-    BATCH_CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
-            .pool_max_idle_per_host(256)
-            .pool_idle_timeout(Duration::from_secs(300))
-            .tcp_keepalive(Duration::from_secs(60))
-            // Long timeout for massive tarballs like @next/swc (>200 MB).
-            .timeout(Duration::from_secs(300))
-            .user_agent(format!("MagiCore/{}/batch", env!("CARGO_PKG_VERSION")))
-            .http2_initial_stream_window_size(16 * 1024 * 1024)
-            .http2_initial_connection_window_size(64 * 1024 * 1024)
-            .build()
-            .expect("failed to build batch HTTP client")
-    })
+/// Same fail-closed construction as [`global_http_client`].
+pub fn batch_http_client() -> mgc_types::MgResult<reqwest::Client> {
+    use mgc_types::MgError;
+    static BATCH_CLIENT: std::sync::OnceLock<Result<reqwest::Client, String>> =
+        std::sync::OnceLock::new();
+    BATCH_CLIENT
+        .get_or_init(|| {
+            reqwest::Client::builder()
+                .pool_max_idle_per_host(256)
+                .pool_idle_timeout(Duration::from_secs(300))
+                .tcp_keepalive(Duration::from_secs(60))
+                // Long timeout for massive tarballs like @next/swc (>200 MB).
+                .timeout(Duration::from_secs(300))
+                .user_agent(format!("MagiCore/{}/batch", env!("CARGO_PKG_VERSION")))
+                .http2_initial_stream_window_size(16 * 1024 * 1024)
+                .http2_initial_connection_window_size(64 * 1024 * 1024)
+                .build()
+                .map_err(|error| format!("cannot build batch HTTP client: {error}"))
+        })
+        .clone()
+        .map_err(MgError::Other)
 }
 
 fn jitter_ms(attempt: u32) -> u64 {
@@ -242,7 +256,7 @@ impl NpmRegistry {
         &self,
         package: &str,
     ) -> Result<(PackageMetadata, Option<String>)> {
-        let client = global_http_client();
+        let client = global_http_client().map_err(|error| anyhow::anyhow!("{error}"))?;
         let chain = self.chain();
         let mut last_err: Option<anyhow::Error> = None;
         let accept = metadata_accept_header(self.age_gate_armed());
@@ -251,6 +265,8 @@ impl NpmRegistry {
             let endpoint = format!("{}/{}", url.trim_end_matches('/'), package);
             let endpoint_for_closure = endpoint.clone();
             let token_for_closure = token.clone();
+            // `Client` is reference-counted — per-attempt clones are cheap.
+            let client = client.clone();
             let result = with_retry("metadata", package, move || {
                 let resp_future = client.get(&endpoint_for_closure);
                 let token_owned = token_for_closure.clone();
@@ -301,11 +317,12 @@ impl NpmRegistry {
     ) -> Result<Option<(PackageMetadata, String)>> {
         let url = format!("{}/{}", self.registry_url, package);
         let etag_owned = etag.map(|s| s.to_string());
+        let client = global_http_client().map_err(|error| anyhow::anyhow!("{error}"))?;
 
         with_retry("metadata-conditional", package, move || {
             let accept = metadata_accept_header(self.age_gate_armed());
             let mut req = self
-                .with_auth(global_http_client().get(&url), &url)
+                .with_auth(client.get(&url), &url)
                 .header("Accept", accept);
             if let Some(ref etag_val) = etag_owned {
                 req = req.header("If-None-Match", etag_val);
@@ -337,7 +354,12 @@ impl NpmRegistry {
     pub async fn download_tarball(&self, url: &str) -> Result<Vec<u8>> {
         with_retry("tarball", url, || async {
             let resp = self
-                .with_auth(global_http_client().get(url), url)
+                .with_auth(
+                    global_http_client()
+                        .map_err(|error| anyhow::anyhow!("{error}"))?
+                        .get(url),
+                    url,
+                )
                 .send()
                 .await?
                 .error_for_status()?;
@@ -366,7 +388,12 @@ impl NpmRegistry {
                 tokio::fs::create_dir_all(parent).await?;
             }
             let resp = self
-                .with_auth(batch_http_client().get(url), url)
+                .with_auth(
+                    batch_http_client()
+                        .map_err(|error| anyhow::anyhow!("{error}"))?
+                        .get(url),
+                    url,
+                )
                 .send()
                 .await?
                 .error_for_status()?;
@@ -417,7 +444,12 @@ impl NpmRegistry {
             }
 
             let resp = self
-                .with_auth(batch_http_client().get(url), url)
+                .with_auth(
+                    batch_http_client()
+                        .map_err(|error| anyhow::anyhow!("{error}"))?
+                        .get(url),
+                    url,
+                )
                 .send()
                 .await?
                 .error_for_status()?;
@@ -493,7 +525,7 @@ pub async fn batch_fetch_metadata(
 }
 
 pub async fn batch_download_tarball(url: &str) -> Result<Vec<u8>> {
-    let client = batch_http_client();
+    let client = batch_http_client().map_err(|error| anyhow::anyhow!("{error}"))?;
     with_retry("batch-tarball", url, || async {
         let resp = client.get(url).send().await?.error_for_status()?;
         let bytes = resp.bytes().await?;
@@ -504,7 +536,7 @@ pub async fn batch_download_tarball(url: &str) -> Result<Vec<u8>> {
 
 /// Batch download kèm auth token (registry private)
 pub async fn batch_download_tarball_with_auth(url: &str, token: Option<&str>) -> Result<Vec<u8>> {
-    let client = batch_http_client();
+    let client = batch_http_client().map_err(|error| anyhow::anyhow!("{error}"))?;
     with_retry("batch-tarball", url, || async {
         let mut req = client.get(url);
         if let Some(t) = token {
@@ -622,7 +654,16 @@ where
             }
         }
     }
-    Err(last_error.expect("retry loop should capture an error"))
+    // The loop above always runs at least once and returns on the first
+    // success, so a fall-through guarantees an error was captured. The
+    // `None` arm is unreachable by construction — it carries a real error
+    // anyway so a future refactor can never turn it into a panic.
+    match last_error {
+        Some(error) => Err(error),
+        None => Err(anyhow::anyhow!(
+            "retry loop for {kind} {target} exhausted attempts without capturing an error"
+        )),
+    }
 }
 
 #[cfg(test)]

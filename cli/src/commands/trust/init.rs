@@ -5,7 +5,7 @@ use mgc_crypto::keyring::{KeyPair, Keyring};
 
 /// Execute `mgc trust init` — Thực thi `mgc trust init`
 pub fn execute(force: bool) -> anyhow::Result<()> {
-    let keyring_path = Keyring::default_path();
+    let keyring_path = Keyring::default_path().map_err(|error| anyhow::anyhow!("{error}"))?;
     execute_at(&keyring_path, force)
 }
 

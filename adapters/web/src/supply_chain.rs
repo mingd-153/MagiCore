@@ -12,7 +12,7 @@ use mgc_types::MgResult;
 use crate::lockfile::project_cache_dir;
 use crate::native::npm_registry::{PackageMetadata, check_publish_age};
 
-const DEFAULT_QUARANTINE_SECS: u64 = 86400;
+const DEFAULT_QUARANTINE_SECS: u64 = mgc_config::DEFAULT_MIN_RELEASE_AGE_HOURS * 60 * 60;
 
 pub fn enforce_resolution_supply_chain_guards(
     resolutions: &[Resolution],

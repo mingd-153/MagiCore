@@ -6,7 +6,7 @@ pub mod cache;
 pub mod capabilities;
 pub mod compat;
 #[cfg(test)]
-#[path = "compat_test.rs"]
+#[path = "../test/compat_test.rs"]
 mod compat_test;
 pub mod completion;
 pub mod config;

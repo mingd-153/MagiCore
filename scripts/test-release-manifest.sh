@@ -61,24 +61,32 @@ grep -q "VERSION is not set" "$FIX/err.log" || fail "missing VERSION error uncle
 grep -q "KeyError" "$FIX/err.log" && fail "unhandled KeyError leaked"
 echo "ok: missing VERSION fails closed with a clear message"
 
-# 3b. Matrix contract: full 8-asset RC set passes --require-matrix;
+# 3b. Matrix contract: full 10-asset RC set passes --require-matrix;
 # a set missing macos-arm64 fails naming the asset.
-# Hợp đồng ma trận: đủ 8 asset RC thì qua; thiếu macos-arm64 thì fail
-# nêu tên asset.
+# Hợp đồng ma trận: đủ 10 asset RC thì qua; thiếu macos-arm64 thì fail
+# nêu tên asset. Linux ARM64 phải có ở cả hai gói.
 FULL="$(mktemp -d)"
-for spec in "magicore:linux:x64:tar.gz" "magicore:macos:x64:tar.gz" "magicore:macos:arm64:tar.gz" "magicore:windows:x64:zip" "magicore-web:linux:x64:tar.gz" "magicore-web:macos:x64:tar.gz" "magicore-web:macos:arm64:tar.gz" "magicore-web:windows:x64:zip"; do
+for spec in "magicore:linux:x64:tar.gz" "magicore:linux:arm64:tar.gz" "magicore:macos:x64:tar.gz" "magicore:macos:arm64:tar.gz" "magicore:windows:x64:zip" "magicore-web:linux:x64:tar.gz" "magicore-web:linux:arm64:tar.gz" "magicore-web:macos:x64:tar.gz" "magicore-web:macos:arm64:tar.gz" "magicore-web:windows:x64:zip"; do
     pkg="${spec%%:*}"; rest="${spec#*:}"; os="${rest%%:*}"; rest="${rest#*:}"; arch="${rest%%:*}"; ext="${rest##*:}"
     touch "$FULL/${pkg}-1.1.0-rc.9-${os}-${arch}.${ext}"
 done
 VERSION=1.1.0-rc.9 python3 "$SCRIPT_DIR/release-manifest.py" --require-matrix "$FULL" > /dev/null \
-    || fail "full 8-asset matrix must pass --require-matrix"
-echo "ok: full matrix passes --require-matrix (8/8)"
+    || fail "full 10-asset matrix must pass --require-matrix"
+echo "ok: full matrix passes --require-matrix (10/10)"
 rm "$FULL/magicore-web-1.1.0-rc.9-macos-arm64.tar.gz"
 if VERSION=1.1.0-rc.9 python3 "$SCRIPT_DIR/release-manifest.py" --require-matrix "$FULL" 2> "$FULL/matrix-err.log"; then
     fail "matrix missing macos-arm64 must exit non-zero"
 fi
 grep -q "magicore-web-<version>-macos-arm64" "$FULL/matrix-err.log" || fail "matrix error must name the missing asset"
 echo "ok: incomplete matrix fails naming the missing asset"
+touch "$FULL/magicore-web-1.1.0-rc.9-macos-arm64.tar.gz"
+rm "$FULL/magicore-1.1.0-rc.9-linux-arm64.tar.gz"
+if VERSION=1.1.0-rc.9 python3 "$SCRIPT_DIR/release-manifest.py" --require-matrix "$FULL" 2> "$FULL/linux-arm-matrix-err.log"; then
+    fail "matrix missing linux-arm64 must exit non-zero"
+fi
+grep -q "magicore-<version>-linux-arm64" "$FULL/linux-arm-matrix-err.log" \
+    || fail "Linux ARM64 matrix error must name the missing target"
+echo "ok: Linux ARM64 is required in the release matrix"
 rm -rf "$FULL"
 
 # 3c. A recognized release archive may not be a symlink to bytes outside
@@ -143,17 +151,19 @@ PYEOF
 PYTHONDONTWRITEBYTECODE=1 python3 "$SCRIPT_DIR/test_release_manifest_builder.py" \
     || fail "release manifest asset mutation race test failed"
 
-# Exercise updater verification against all eight published artifacts.
-# Kiểm tra updater trên đủ tám artifact phát hành.
+# Exercise updater verification against all ten published artifacts.
+# Kiểm tra updater trên đủ mười artifact phát hành.
 MANIFEST_REPO="$(mktemp -d)"
 ARTIFACTS="$(mktemp -d)"
 mkdir -p "$MANIFEST_REPO/packaging/homebrew" "$MANIFEST_REPO/packaging/scoop"
 for artifact in \
     magicore-1.1.0-rc.9-linux-x64.tar.gz \
+    magicore-1.1.0-rc.9-linux-arm64.tar.gz \
     magicore-1.1.0-rc.9-macos-x64.tar.gz \
     magicore-1.1.0-rc.9-macos-arm64.tar.gz \
     magicore-1.1.0-rc.9-windows-x64.zip \
     magicore-web-1.1.0-rc.9-linux-x64.tar.gz \
+    magicore-web-1.1.0-rc.9-linux-arm64.tar.gz \
     magicore-web-1.1.0-rc.9-macos-x64.tar.gz \
     magicore-web-1.1.0-rc.9-macos-arm64.tar.gz \
     magicore-web-1.1.0-rc.9-windows-x64.zip; do

@@ -180,19 +180,19 @@ impl Keyring {
         Ok(())
     }
 
-    /// Get default keyring path — Lấy đường dẫn keyring mặc định
-    pub fn default_path() -> PathBuf {
+    /// Get default keyring path — Lấy đường dẫn keyring mặc định.
+    /// Fails closed when no home directory exists (headless containers)
+    /// instead of panicking every trust command.
+    pub fn default_path() -> CryptoResult<PathBuf> {
         dirs::home_dir()
-            .expect("home directory not found")
-            .join(".magicore")
-            .join("keys")
-            .join("keyring.json")
+            .ok_or_else(|| CryptoError::KeyringFailed("home directory not found".to_string()))
+            .map(|home| home.join(".magicore").join("keys").join("keyring.json"))
     }
 
     /// Initialize keyring with new key if not exists
     /// Khởi tạo keyring với khóa mới nếu chưa có
     pub fn init_if_not_exists() -> CryptoResult<Self> {
-        let path = Self::default_path();
+        let path = Self::default_path()?;
         if path.exists() {
             Self::load(&path)
         } else {

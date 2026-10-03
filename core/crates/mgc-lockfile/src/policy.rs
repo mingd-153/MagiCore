@@ -323,6 +323,40 @@ pub fn enforce_policy(
     Ok(())
 }
 
+/// SRI algorithms the web materializer enforces (must stay in sync with
+/// `adapters/web/src/install/integrity.rs::verify_sri_integrity`).
+/// Thuật toán SRI materializer web bắt buộc (phải đồng bộ với
+/// `verify_sri_integrity`).
+pub const INSTALL_SRI_ALGORITHMS: &[&str] = &["sha256", "sha512"];
+
+/// Check an SRI string parses as `<algo>-<base64>` with a supported strong
+/// algorithm and non-empty payload — fail-closed on weak/unknown/empty.
+/// The materializer re-verifies bytes at install; this gate only rejects
+/// values that could never verify (never fabricates a hash).
+/// Kiểm tra chuỗi SRI đúng dạng với thuật toán mạnh được hỗ trợ —
+/// fail-closed với yếu/không rõ/trống. Materializer verify lại byte khi
+/// install; gate này chỉ loại giá trị không bao giờ verify được.
+pub fn check_install_sri(sri: &str) -> LockfileResult<()> {
+    let fail =
+        |why: &str| LockfileError::VerificationFailed(format!("unusable SRI integrity: {why}"));
+    let Some((algorithm, payload)) = sri.split_once('-') else {
+        return Err(fail("missing `<algo>-<base64>` shape"));
+    };
+    if !INSTALL_SRI_ALGORITHMS.contains(&algorithm) {
+        return Err(fail(&format!(
+            "algorithm '{algorithm}' is not enforced by the installer (sha256/sha512 only)"
+        )));
+    }
+    if payload.is_empty()
+        || !payload
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'=')
+    {
+        return Err(fail("empty or non-base64 payload"));
+    }
+    Ok(())
+}
+
 /// Verify a v4 lockfile on disk end to end (parse + math + policy).
 /// Xác minh lockfile v4 trên đĩa trọn vẹn (parse + toán + policy).
 pub fn verify_v4_file(

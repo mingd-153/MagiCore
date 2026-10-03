@@ -2,7 +2,7 @@
 # Install mgc binary from GitHub release.
 # Usage: curl -fsSL https://raw.githubusercontent.com/mingd-153/MagiCore/main/scripts/install-from-gh.sh | bash
 # Or:  ./scripts/install-from-gh.sh [--package magicore|magicore-web] [--version v0.1.0] [--dir /usr/local/bin]
-# Local test: ./scripts/install-from-gh.sh --archive dist/magicore-web-1.1.0-rc.6-macos-arm64.tar.gz --dir /tmp/mgc-bin
+# Local test: ./scripts/install-from-gh.sh --archive dist/magicore-web-1.1.0-rc.9-macos-arm64.tar.gz --dir /tmp/mgc-bin
 set -euo pipefail
 
 REPO="mingd-153/MagiCore"
@@ -92,18 +92,18 @@ if [ -n "$ARCHIVE" ]; then
 else
   # Asset names follow scripts/release-artifact-contract.sh:
   # {package}-{version}-{os}-{arch}.{ext}, all lowercase, version WITHOUT
-  # the leading 'v' (e.g. magicore-1.1.0-rc.6-macos-arm64.tar.gz).
+  # the leading 'v' (e.g. magicore-1.1.0-rc.9-macos-arm64.tar.gz).
   if [ "$VERSION" = "latest" ]; then
     if ! TAG="$(resolve_latest_tag)"; then
       echo "Error: could not resolve the latest release (network/API unreachable)."
-      echo "Re-run with an explicit --version (e.g. --version 1.1.0-rc.6)."
+      echo "Re-run with an explicit --version (e.g. --version 1.1.0-rc.9)."
       exit 1
     fi
     VERSION="$TAG"
   fi
   VERSION_NUMBER="${VERSION#v}"
   if ! [[ "$VERSION_NUMBER" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-    echo "Error: invalid version: $VERSION (expected like 1.1.0-rc.6, with or without a leading 'v')."
+    echo "Error: invalid version: $VERSION (expected like 1.1.0-rc.9, with or without a leading 'v')."
     exit 1
   fi
   LABEL="${PKG}-${VERSION_NUMBER}-${OS_LABEL}-${ARCH_LABEL}"

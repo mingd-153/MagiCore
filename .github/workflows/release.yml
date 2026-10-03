@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to build (e.g., 1.1.0-rc.6)"
+        description: "Version to build (e.g., 1.1.0-rc.9)"
         required: true
         type: string
 
@@ -78,6 +78,16 @@ jobs:
             target: x86_64-unknown-linux-gnu
             os_name: linux
             arch: x64
+            ext: tar.gz
+            use_cross: false
+            is_windows: false
+
+          # Native Linux ARM64 runner builds both release variants without cross emulation.
+          # Runner Linux ARM64 bản địa build hai biến thể phát hành, không giả lập cross.
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            os_name: linux
+            arch: arm64
             ext: tar.gz
             use_cross: false
             is_windows: false
@@ -362,7 +372,7 @@ jobs:
             *-sbom.json
 
   test-release-artifacts:
-    name: Smoke Test - ${{ matrix.variant }} (${{ matrix.os_name }})
+    name: Smoke Test - ${{ matrix.variant }} (${{ matrix.os_name }}-${{ matrix.arch }})
     needs: [resolve-version, build-release]
     strategy:
       fail-fast: false
@@ -372,6 +382,14 @@ jobs:
           - os: ubuntu-latest
             os_name: linux
             arch: x64
+            ext: tar.gz
+            binary: mgc
+            variant: all-core
+          # Smoke-test Linux ARM64 on the same architecture as its runner.
+          # Smoke test Linux ARM64 trên runner cùng kiến trúc.
+          - os: ubuntu-24.04-arm
+            os_name: linux
+            arch: arm64
             ext: tar.gz
             binary: mgc
             variant: all-core
@@ -405,6 +423,12 @@ jobs:
           - os: ubuntu-latest
             os_name: linux
             arch: x64
+            ext: tar.gz
+            binary: mgc
+            variant: web
+          - os: ubuntu-24.04-arm
+            os_name: linux
+            arch: arm64
             ext: tar.gz
             binary: mgc
             variant: web
@@ -574,11 +598,9 @@ jobs:
           VERSION="${{ needs.resolve-version.outputs.version }}"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      - name: Verify all 8 archives present
-        # 2026-09-12 (item 12): macOS arm64 artifacts joined the set —
-        # linux-x64, macos-x64, macos-arm64, windows-x64 × {all, web}.
-        # 2026-09-12 (item 12): artifact macOS arm64 vào bộ — linux-x64,
-        # macos-x64, macos-arm64, windows-x64 × {all, web}.
+      - name: Verify all 10 archives present
+        # Required pairs: Linux x64/arm64, macOS x64/arm64, Windows x64 × {all, web}.
+        # Các cặp bắt buộc: Linux x64/arm64, macOS x64/arm64, Windows x64 × {all, web}.
         run: |
           VERSION="${{ steps.version.outputs.version }}"
 
@@ -587,11 +609,8 @@ jobs:
 
           for os in linux macos windows; do
             for arch in x64 arm64; do
-              # macOS publishes BOTH arm64 and x64; linux/windows x64
-              # only for RC — arm64 entries are skipped by contract
-              # availability below.
-              # macOS publish CẢ arm64 lẫn x64; linux/windows chỉ x64
-              # trong RC — entry arm64 được bỏ nếu file không tồn tại.
+              # Windows publishes x64 only; Linux and macOS publish x64 and arm64.
+              # Windows chỉ phát hành x64; Linux và macOS phát hành cả x64 lẫn arm64.
               for variant in all web; do
                 names=$(./scripts/release-artifact-contract.sh "$VERSION" "$os" "$arch" "$variant")
                 archive=$(echo "$names" | grep "^ARCHIVE=" | cut -d= -f2)
@@ -608,15 +627,22 @@ jobs:
           cd verify-assets
           MISSING=0
           PRESENT_ARM64_MACOS=0
+          PRESENT_ARM64_LINUX=0
           for file in "${EXPECTED_FILES[@]}"; do
-            # linux-arm64 / windows-arm64 are NOT published in RC —
-            # absence is expected, presence is a bonus; only macOS
-            # arm64 is REQUIRED (item 12).
-            # linux-arm64 / windows-arm64 KHÔNG publish trong RC — thiếu
-            # là đúng kỳ vọng; riêng macOS arm64 là BẮT BUỘC (item 12).
+            # Windows ARM64 is not in the supported release matrix; Linux/macOS ARM64 are required.
+            # Windows ARM64 chưa thuộc ma trận phát hành; Linux/macOS ARM64 là bắt buộc.
             case "$file" in
-              magicore-*-linux-arm64*|magicore-*-windows-arm64*)
+              magicore-*-windows-arm64*)
                 [[ -f "$file" ]] && echo "BONUS present: $file"
+                continue
+                ;;
+              magicore-*-linux-arm64*)
+                if [[ -f "$file" ]]; then
+                  PRESENT_ARM64_LINUX=$((PRESENT_ARM64_LINUX + 1))
+                else
+                  echo "MISSING REQUIRED (linux arm64): $file"
+                  MISSING=$((MISSING + 1))
+                fi
                 continue
                 ;;
               magicore-*-macos-arm64*)
@@ -645,7 +671,11 @@ jobs:
             echo "macOS arm64 artifact set incomplete (expected 6 files: archives+checksums+SBOMs for all/web, got $PRESENT_ARM64_MACOS)" >&2
             exit 1
           fi
-          echo "All required archives + checksums + SBOMs present (incl. macOS arm64)"
+          if [[ $PRESENT_ARM64_LINUX -lt 6 ]]; then
+            echo "Linux arm64 artifact set incomplete (expected 6 files: archives+checksums+SBOMs for all/web, got $PRESENT_ARM64_LINUX)" >&2
+            exit 1
+          fi
+          echo "All 10 required archives + checksums + SBOMs present (incl. Linux and macOS arm64)"
 
       - name: Verify all checksums
         run: |
@@ -738,7 +768,7 @@ jobs:
 
             echo "✅ Valid SBOM: $sbom ($component_count components, version $sbom_version)"
           done
-          echo "✅ All SBOMs validated (linux+macos+windows, x64+arm64-macos)"
+          echo "✅ All SBOMs validated (linux+macos x64/arm64, windows x64)"
 
       - name: Verification summary
         run: |
@@ -747,7 +777,7 @@ jobs:
           echo "✅ All checksums verified"
           echo "✅ All attestations verified"
           echo "✅ All SBOMs validated"
-          echo "✅ 8 archives + 8 checksums + 8 SBOMs verified (linux-x64, macos-x64, macos-arm64, windows-x64 x all/web)"
+          echo "✅ 10 archives + 10 checksums + 10 SBOMs verified (linux-x64/arm64, macos-x64/arm64, windows-x64 x all/web)"
           echo "Safe to publish."
 
   audit-capability-gate:
@@ -783,7 +813,12 @@ jobs:
           cargo install cargo-audit --version 0.22.2 --locked
           python3 -m pip install --user 'pip-audit==2.9.0'
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          curl -fsSL "https://go.dev/dl/go1.26.0.linux-amd64.tar.gz" -o /tmp/go.tgz
+          GO_ARCHIVE="go1.27.1.linux-amd64.tar.gz"
+          GO_SHA256="63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445"
+          curl -fsSL "https://go.dev/dl/${GO_ARCHIVE}" -o /tmp/go.tgz
+          # Verify the pinned Go archive before extraction.
+          # Xác minh archive Go đã ghim trước khi giải nén.
+          printf '%s  %s\n' "$GO_SHA256" /tmp/go.tgz | sha256sum --check --strict -
           sudo tar -C /usr/local -xzf /tmp/go.tgz
           echo "/usr/local/go/bin" >> "$GITHUB_PATH"
           go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
@@ -813,6 +848,11 @@ jobs:
           data = json.load(open("docs/specs/auditCapabilityMatrix.json"))
           failures = []
           required_kinds = {"clean_fixture", "vulnerable_fixture", "tool_failure"}
+
+          # Source provenance: a dirty-tree report cannot attest GITHUB_SHA.
+          # Provenance nguồn: report từ tree bẩn không thể chứng thực GITHUB_SHA.
+          if data.get("working_tree_clean") is not True:
+              failures.append("matrix source tree is dirty or its cleanliness is unverified")
 
           # 1. Format contract: a matrix without the expected manifest
           #    (old schema / hand-made) cannot be evaluated — reject.
@@ -1112,9 +1152,9 @@ jobs:
           echo "=== DRY-RUN COMPLETED ==="
           echo ""
           echo "Version: ${{ needs.resolve-version.outputs.version }}"
-          echo "Build: ✅ PASS (8 archives incl. macOS arm64)"
-          echo "Smoke: ✅ PASS (6 variants x64)"
-          echo "Pre-publish: ✅ PASS (8 archives + checksums + SBOMs)"
+          echo "Build: ✅ PASS (10 archives incl. Linux and macOS arm64)"
+          echo "Smoke: ✅ PASS (10 variants incl. Linux and macOS arm64)"
+          echo "Pre-publish: ✅ PASS (10 archives + checksums + SBOMs)"
           echo ""
           echo "Publish readiness: NOT ASSESSED (dry-run does not authorize publishing)"
           echo "Draft publication requires an approved tag and successful pre-publish and audit-capability gates"

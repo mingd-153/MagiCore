@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use mgc_lockfile::Lockfile;
 use mgc_lockfile::project_lock::ProjectWriteLock;
 use mgc_types::adapter::{AddOptions, InstallOptions, PackageAdapter};
@@ -27,6 +27,56 @@ fn install_command_for_adapter(adapter: &dyn PackageAdapter) -> &'static str {
     }
 
     "mgc install"
+}
+
+pub(crate) fn age_gate_lock_action(
+    core: &str,
+    age_gate_active: bool,
+    age_gate_supported: bool,
+    locked_graph_available: bool,
+    frozen: bool,
+) -> Result<bool> {
+    if !age_gate_active {
+        return Ok(false);
+    }
+    if !age_gate_supported {
+        bail!(
+            "minimum-release-age is configured, but core '{}' has no verified timestamp-aware resolver; refusing to install without the gate",
+            core
+        );
+    }
+    if locked_graph_available && frozen {
+        bail!(
+            "--frozen cannot verify minimum-release-age because mgc.lock does not store registry publication timestamps; run install without --frozen to resolve again and refresh the lock"
+        );
+    }
+    Ok(locked_graph_available)
+}
+
+pub(crate) fn refresh_locked_graph_for_age_gate(
+    adapter: &dyn PackageAdapter,
+    project_root: &Path,
+    locked_graph_available: bool,
+    frozen: bool,
+) -> Result<bool> {
+    let Some(security) = mgc_config::project::load_security_config(project_root)? else {
+        return Ok(false);
+    };
+    let active = security
+        .min_age_for_ecosystem(adapter.core_id())
+        .is_some_and(|cutoff| cutoff > 0);
+    let supported = if active {
+        adapter.supports_age_gate_for(project_root)?
+    } else {
+        false
+    };
+    age_gate_lock_action(
+        adapter.core_id(),
+        active,
+        supported,
+        locked_graph_available,
+        frozen,
+    )
 }
 
 /// Dependency mutations may only proceed when MagiCore owns the manifest
@@ -1841,9 +1891,15 @@ pub(crate) async fn prepare_install_execution(
         });
     }
 
-    let (graph, used_lockfile) = if let Some(graph) =
-        load_locked_graph(root, adapter.name(), &manifest)?
-    {
+    let loaded_lock = load_locked_graph(root, adapter.name(), &manifest)?;
+    let force_fresh_resolve =
+        refresh_locked_graph_for_age_gate(adapter, root, loaded_lock.is_some(), frozen)?;
+    let loaded_lock = if force_fresh_resolve {
+        None
+    } else {
+        loaded_lock
+    };
+    let (graph, used_lockfile) = if let Some(graph) = loaded_lock {
         info("Using mgc.lock for install state.");
         profile_install_mark("load_locked_graph", started_at);
         (graph, true)
@@ -2013,6 +2069,12 @@ async fn try_install_added_packages_from_lock(
     let Some(previous_manifest) = manifest_before_add else {
         return Ok(false);
     };
+    // Delta install would retain old pins without registry publication data;
+    // an active age gate must rebuild the complete graph from fresh metadata.
+    // (Delta giữ pin cũ thiếu timestamp; age gate phải resolve lại toàn graph.)
+    if refresh_locked_graph_for_age_gate(adapter, root, true, false)? {
+        return Ok(false);
+    }
     let Some(locked_graph) = load_locked_graph(root, adapter.name(), previous_manifest)? else {
         return Ok(false);
     };
@@ -2128,8 +2190,7 @@ fn profile_install_mark(label: &str, started_at: std::time::Instant) {
     }
 }
 
-#[allow(dead_code)]
-fn load_locked_graph(
+pub(crate) fn load_locked_graph(
     project_root: &Path,
     adapter_name: &str,
     manifest: &Manifest,
@@ -2138,6 +2199,36 @@ fn load_locked_graph(
     // mgc.lock là nguồn chân lý duy nhất; migration phải tường minh qua
     // `mgc import`. Thiếu mgc.lock → resolver tự resolve (không có rival
     // lockfile nào được đọc trên đường vận hành).
+    // v4 documents take the lossless v4 path below (parse + digest +
+    // closure + conversion); legacy documents keep the legacy path
+    // unchanged. Version dispatch happens BEFORE any schema parse so a
+    // v4 file never enters the legacy model.
+    // (Tài liệu v4 đi đường v4 lossless; legacy giữ nguyên. Dispatch
+    // version trước mọi parse để file v4 không bao giờ lọt vào model cũ.)
+    let lock_path = project_root.join("mgc.lock");
+    let lock_bytes = match std::fs::symlink_metadata(&lock_path) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            return Err(anyhow::anyhow!(
+                "lockfile '{}' must be a regular non-symlink file",
+                lock_path.display()
+            ));
+        }
+        Ok(_) => mgc_lockfile::parser::read_lockfile_bytes(&lock_path)
+            .map_err(|error| anyhow::anyhow!("{error}"))?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(anyhow::anyhow!("{error}")),
+    };
+    let lock_text = String::from_utf8(lock_bytes)
+        .map_err(|error| anyhow::anyhow!("mgc.lock is not valid UTF-8: {error}"))?;
+    let owner_core = lock_owner_core(project_root, adapter_name)?;
+    // Only version "4" takes the v4 path; every other version — including
+    // unreadable ones — falls through to the legacy reader, which owns
+    // their exact historical error messages.
+    // (Chỉ version "4" đi đường v4; mọi version khác — kể cả không đọc
+    // được — rơi về legacy reader giữ nguyên message lỗi cũ.)
+    if mgc_lockfile::detect_lockfile_version(&lock_text).is_ok_and(|version| version == 4) {
+        return load_locked_graph_v4(&lock_text, manifest, &owner_core);
+    }
     let Some(mut lock) = read_checked_lockfile(project_root)? else {
         return Ok(None);
     };
@@ -2176,7 +2267,7 @@ fn load_locked_graph(
     Ok(Some(graph_from_lockfile(&lock, &owner_core)?))
 }
 
-fn lock_owner_core(project_root: &Path, adapter_name: &str) -> Result<String> {
+pub(crate) fn lock_owner_core(project_root: &Path, adapter_name: &str) -> Result<String> {
     let marker = mgc_config::project::ProjectConfig::read_core_marker(project_root)
         .map_err(|error| anyhow::anyhow!("cannot determine lock owner core: {error}"))?;
     let core = match marker {
@@ -2510,6 +2601,86 @@ fn graph_from_lockfile(lock: &Lockfile, owner_core: &str) -> Result<ResolvedGrap
     Ok(ResolvedGraph { packages })
 }
 
+/// Build an install graph from a v4 lock document — canonical home is
+/// `mgc_lockfile::v4_graph` (shared with adapter resolve short-circuits);
+/// this delegate exists so CLI call sites and tests keep one stable path.
+/// (Dựng graph từ lock v4 — implementation chuẩn ở `v4_graph`.)
+pub(crate) fn graph_from_v4_lockfile(
+    doc: &mgc_lockfile::canonical::LockfileV4,
+    owner_core: &str,
+) -> Result<ResolvedGraph> {
+    mgc_lockfile::v4_graph::graph_from_v4_lockfile(doc, owner_core)
+        .map_err(|error| anyhow::anyhow!("{error}"))
+}
+
+/// v4 manifest-closure check — canonical home is
+/// `mgc_lockfile::v4_graph`; this delegate keeps one stable CLI path.
+/// (Kiểm tra closure v4 — implementation chuẩn ở `v4_graph`.)
+pub(crate) fn v4_graph_matches_manifest_closure(
+    doc: &mgc_lockfile::canonical::LockfileV4,
+    manifest: &Manifest,
+    owner_core: &str,
+) -> bool {
+    mgc_lockfile::v4_graph::v4_graph_matches_manifest_closure(doc, manifest, owner_core)
+}
+
+/// Load an install graph from a v4 lock document: parse + digest math +
+/// policy (digest mismatch always fails; unsigned warns) + manifest
+/// closure + lossless conversion. Closure mismatch falls back to fresh
+/// resolve (`Ok(None)`); lossy shapes propagate as errors.
+/// (Nạp graph install từ lock v4: parse + digest + policy + closure +
+/// convert lossless. Closure lệch → resolve mới; shape hao hụt → lỗi.)
+pub(crate) fn load_locked_graph_v4(
+    lock_text: &str,
+    manifest: &Manifest,
+    owner_core: &str,
+) -> Result<Option<ResolvedGraph>> {
+    let doc = mgc_lockfile::canonical::parse_v4_document(lock_text)
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+    let report =
+        mgc_lockfile::policy::verify_v4_math(&doc).map_err(|error| anyhow::anyhow!("{error}"))?;
+    mgc_lockfile::policy::enforce_policy(&report, mgc_lockfile::policy::LockPolicyMode::Warn, &[])
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+    if !report.signed {
+        mgc_ui::warning(
+            "mgc.lock v4 digest is valid, but the lock is unsigned; signer trust was not evaluated",
+        );
+    }
+    if !v4_graph_matches_manifest_closure(&doc, manifest, owner_core) {
+        return Ok(None);
+    }
+    Ok(Some(graph_from_v4_lockfile(&doc, owner_core)?))
+}
+
+/// Package ids (`name@version`) in mgc.lock for cache invalidation —
+/// version-dispatched (v4 reads instance keys, legacy reads packages).
+/// (Liệt kê id package trong mgc.lock để invalidate cache — dispatch
+/// theo version.)
+pub(crate) fn locked_package_ids(project_root: &Path) -> Result<Vec<String>> {
+    let bytes = mgc_lockfile::parser::read_lockfile_bytes(&project_root.join("mgc.lock"))
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+    let text = String::from_utf8(bytes)
+        .map_err(|error| anyhow::anyhow!("mgc.lock is not valid UTF-8: {error}"))?;
+    if mgc_lockfile::detect_lockfile_version(&text).is_ok_and(|version| version == 4) {
+        let doc = mgc_lockfile::canonical::parse_v4_document(&text)
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
+        return Ok(doc
+            .packages
+            .iter()
+            .map(|package| format!("{}@{}", package.key.name, package.key.version))
+            .collect());
+    }
+    // Non-v4 documents (including unreadable versions) go through the
+    // legacy parser, which owns their exact historical error messages.
+    let lock =
+        mgc_lockfile::parser::parse_lockfile(&text).map_err(|error| anyhow::anyhow!("{error}"))?;
+    Ok(lock
+        .packages
+        .iter()
+        .map(|package| format!("{}@{}", package.name, package.version))
+        .collect())
+}
+
 fn link_name(package: &str) -> &str {
     if package.contains('/') {
         package.rsplit('/').next().unwrap_or(package)
@@ -2828,7 +2999,8 @@ pub fn core_adapter(eco: &Ecosystem) -> Arc<dyn PackageAdapter> {
         .expect("core adapter always available in this core build")
 }
 
-/// game: materialize optimizer template + hook dep (bevy). Dùng chung add/install game.
+/// game add: materialize the optimizer template + hook dep for Bevy only.
+/// game add: materialize optimizer template + hook dep, chỉ hỗ trợ Bevy.
 /// Staging-first transaction (P0-3): the template materializes into a
 /// temp dir and is renamed into the project ONLY after the manifest
 /// edit commits — a crash can never leave template files without their
@@ -2837,24 +3009,54 @@ pub fn core_adapter(eco: &Ecosystem) -> Arc<dyn PackageAdapter> {
 /// (Staging trước — crash không để lại nửa tính năng.)
 #[cfg(feature = "game")]
 pub async fn game_optimizer_template(root: &Path) -> Result<()> {
-    let adapter = mgc_game_adapter::adapter_for(root);
+    let adapter = require_bevy_optimizer_project(root)?;
     // Gateway FIRST (P0-3): recover any stale journal before touching
     // anything; the guard serializes against concurrent mutations.
     // (Gateway trước — recovery journal cũ trước mọi sửa đổi.)
-    if let Some(adapter) = adapter.as_ref() {
-        let _guard = begin_dependency_mutation(
-            adapter as &dyn PackageAdapter,
-            root,
-            MutationOperation::Optimizer,
+    let _guard = begin_dependency_mutation(
+        &adapter as &dyn PackageAdapter,
+        root,
+        MutationOperation::Optimizer,
+    )
+    .await?;
+    game_optimizer_template_locked(&adapter as &dyn PackageAdapter, root).await
+}
+
+/// Validate optimizer ownership before any gateway/template side effect.
+/// Xác thực quyền sở hữu optimizer trước mọi side effect.
+#[cfg(feature = "game")]
+pub(crate) fn validate_game_optimizer_project(root: &Path) -> Result<()> {
+    require_bevy_optimizer_project(root).map(|_| ())
+}
+
+#[cfg(feature = "game")]
+fn require_bevy_optimizer_project(root: &Path) -> Result<mgc_game_adapter::GameAdapter> {
+    let adapter = mgc_game_adapter::adapter_for(root).ok_or_else(|| {
+        anyhow::anyhow!(
+            "game optimizer requires a detected native Bevy project; '{}' is not a detected game project",
+            root.display()
         )
-        .await?;
-        return game_optimizer_template_locked(adapter as &dyn PackageAdapter, root).await;
+    })?;
+    if adapter.engine() != "bevy" {
+        anyhow::bail!(
+            "game optimizer is only supported for native Bevy projects; detected '{}'",
+            adapter.engine()
+        );
     }
-    // Undetectable engine: legacy best-effort path (no manifest identity
-    // to journal under) — template only, hook refuses below.
-    // (Không detect được engine: chỉ template, hook sẽ từ chối.)
-    materialize_template(root, OPTIMIZER_PKG).await?;
-    game_hook_optimizer_dep(root).await
+    let manifest = root.join("Cargo.toml");
+    let metadata = std::fs::symlink_metadata(&manifest).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            anyhow::anyhow!(
+                "native Bevy optimizer operations require Cargo.toml at the project root"
+            )
+        } else {
+            anyhow::anyhow!("cannot inspect Bevy Cargo.toml: {error}")
+        }
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        anyhow::bail!("native Bevy optimizer requires a regular non-symlink Cargo.toml");
+    }
+    Ok(adapter)
 }
 
 /// Locked body: template-to-staging → manifest edit (byte snapshot +
@@ -2908,8 +3110,15 @@ async fn game_optimizer_template_locked(_adapter: &dyn PackageAdapter, root: &Pa
 #[cfg(feature = "game")]
 async fn game_edit_optimizer_dep(root: &Path) -> Result<()> {
     let manifest = root.join("Cargo.toml");
-    if !manifest.exists() {
-        return Ok(());
+    let metadata = std::fs::symlink_metadata(&manifest).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            anyhow::anyhow!("game optimizer hook requires Cargo.toml")
+        } else {
+            anyhow::anyhow!("cannot inspect game Cargo.toml: {error}")
+        }
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        anyhow::bail!("game optimizer hook requires a regular non-symlink Cargo.toml");
     }
     refuse_project_link(&manifest)?;
     let content = std::fs::read_to_string(&manifest)?;
@@ -2962,32 +3171,6 @@ async fn game_edit_optimizer_dep(root: &Path) -> Result<()> {
         ));
     }
     Ok(())
-}
-
-/// game: thêm dep path `mgc-optimizer = { path = "./optimizer" }` vào root Cargo.toml (bevy only).
-#[cfg(feature = "game")]
-async fn game_hook_optimizer_dep(root: &Path) -> Result<()> {
-    // Serialized idempotent edit: the mgc-optimizer path dep is
-    // insert-if-missing with VALUE verification (an identical key with a
-    // different value is a user conflict, not a skip), written atomically
-    // (tmp + rename, no torn file). Enters the mutation gateway FIRST so
-    // a stale journal from an earlier crashed op is recovered-or-refused
-    // before touching Cargo.toml (P0-3-adjacent). No journal of its own:
-    // both crash outcomes (pre-write / post-write) are valid states and
-    // re-running converges, so there is nothing to roll back to.
-    // (Sửa idempotent qua gateway + verify giá trị + atomic.)
-    let Some(adapter) = mgc_game_adapter::adapter_for(root) else {
-        return Err(anyhow::anyhow!(
-            "game optimizer hook refused: '{}' is not a detected game project",
-            root.display()
-        ));
-    };
-    let manifest = root.join("Cargo.toml");
-    if !manifest.exists() {
-        return Ok(());
-    }
-    let _guard = begin_dependency_mutation(&adapter, root, MutationOperation::Optimizer).await?;
-    game_edit_optimizer_dep(root).await
 }
 
 // ── ai helpers (Phase 7 v5) ───────────────────────────────────────────────────

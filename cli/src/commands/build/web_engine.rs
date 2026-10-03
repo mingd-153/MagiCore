@@ -658,6 +658,7 @@ pub(crate) fn build_rust_with_env(
         log_path: Some(root.join(".magicore").join("exec.log")),
         env: optimizer_envs.into_iter().collect(),
         clean_env: false, // Preserve existing env
+        execution_scope: Some(mgc_exec::allowlist::ExecutionScope::BuildRunner),
         ..Default::default()
     };
     mgc_exec::prelude::run(

@@ -225,6 +225,14 @@ pub struct ArtifactRef {
     pub content_hash: String,
     /// Which mirror/endpoint the bytes were downloaded from — Byte được tải về từ mirror/endpoint nào.
     pub downloaded_from: String,
+    /// SRI integrity the materializer enforces (`sha256-…`/`sha512-…`) —
+    /// None until a resolver/import lane supplies one. v4 install refuses
+    /// pins without it instead of silently skipping verification.
+    /// Integrity SRI mà materializer bắt buộc — None cho tới khi lane
+    /// resolve/import cung cấp. Install v4 từ chối pin thiếu field này
+    /// thay vì lặng lẽ bỏ qua verify.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub integrity_sri: Option<String>,
 }
 
 /// Provenance of a pin — how it entered mgc.lock — Nguồn gốc của pin — pin vào mgc.lock bằng đường nào.

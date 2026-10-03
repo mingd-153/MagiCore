@@ -91,16 +91,49 @@ async fn sbom_command_rejects_v4_with_stale_digest_before_writing_output() {
 }
 
 #[tokio::test]
-async fn sbom_command_does_not_advertise_unimplemented_spdx_output() {
+async fn sbom_command_exports_spdx_23_from_a_verified_v4_lockfile() {
     let root = tempfile::tempdir().unwrap();
+    let signer = KeyPair::generate().unwrap();
+    create_signed_v4_lock(root.path(), &signer);
+    let output = root.path().join("sbom.spdx.json");
+
     let result = super::run(
-        Some("spdx".into()),
-        None,
-        None,
-        None,
+        Some("spdx-json".into()),
+        Some(output.clone()),
+        Some("sbom-fixture".into()),
+        Some("1.2.3".into()),
         Some(PathBuf::from(root.path())),
     )
     .await;
 
-    assert!(result.unwrap_err().to_string().contains("not implemented"));
+    result.unwrap();
+    let document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(output).unwrap()).unwrap();
+    assert_eq!(document["spdxVersion"], "SPDX-2.3");
+    assert_eq!(document["name"], "sbom-fixture@1.2.3");
+    assert_eq!(document["packages"][0]["name"], "serde");
+    assert!(
+        document["relationships"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|relationship| {
+                relationship["spdxElementId"] == "SPDXRef-DOCUMENT"
+                    && relationship["relationshipType"] == "DESCRIBES"
+            })
+    );
+
+    let alias_output = root.path().join("alias.spdx.json");
+    super::run(
+        Some("spdx".into()),
+        Some(alias_output.clone()),
+        Some("sbom-fixture".into()),
+        Some("1.2.3".into()),
+        Some(PathBuf::from(root.path())),
+    )
+    .await
+    .unwrap();
+    let alias_document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(alias_output).unwrap()).unwrap();
+    assert_eq!(alias_document["spdxVersion"], "SPDX-2.3");
 }

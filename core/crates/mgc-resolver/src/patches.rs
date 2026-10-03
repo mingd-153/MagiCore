@@ -36,7 +36,9 @@ pub fn apply_patch(vstore_root: &Path, patch_path: &Path) -> Result<Vec<PathBuf>
             if !line.starts_with("@@") {
                 bail!("expected unified-diff hunk header, found: {line}");
             }
-            let header = lines.next().expect("peeked hunk header must still exist");
+            let Some(header) = lines.next() else {
+                bail!("patch stream ended after a peeked hunk header");
+            };
             hunks.push(parse_hunk(header, &mut lines)?);
         }
         let original = fs::read_to_string(&target)?;
@@ -135,7 +137,9 @@ where
             // Leave the next hunk/file header for the caller.
             break;
         }
-        let line = lines.next().expect("peeked patch line must still exist");
+        let Some(line) = lines.next() else {
+            bail!("patch stream ended after a peeked patch line");
+        };
         if line.is_empty() {
             hunk_lines.push((' ', String::new()));
             continue;

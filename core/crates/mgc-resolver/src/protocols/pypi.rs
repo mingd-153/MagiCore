@@ -18,6 +18,7 @@ use mgc_types::{MgError, MgResult, Version};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 const DEFAULT_INDEX_URL: &str = "https://pypi.org";
 
@@ -27,6 +28,19 @@ const DEFAULT_INDEX_URL: &str = "https://pypi.org";
 pub struct PypiProtocol {
     index_url: String,
     client: mgc_http::HttpClient,
+    age_gate: Option<PypiAgeGate>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PypiAgeGate {
+    cutoff_hours: u64,
+    allow_missing_time: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AgeGateExclusion {
+    TooYoung,
+    Unstamped,
 }
 
 impl PypiProtocol {
@@ -36,7 +50,64 @@ impl PypiProtocol {
         Self {
             index_url: index_url.trim_end_matches('/').to_string(),
             client: mgc_http::HttpClient::default(),
+            age_gate: None,
         }
+    }
+
+    /// Arm the per-operation PyPI release-age gate; zero hours disables it.
+    /// Bật cổng tuổi phát hành PyPI cho operation; 0 giờ sẽ tắt cổng.
+    pub fn with_age_gate(mut self, cutoff_hours: u64, allow_missing_time: bool) -> Self {
+        self.age_gate = (cutoff_hours > 0).then_some(PypiAgeGate {
+            cutoff_hours,
+            allow_missing_time,
+        });
+        self
+    }
+
+    fn release_age_exclusion(
+        files: &[PypiFile],
+        policy: PypiAgeGate,
+        now: OffsetDateTime,
+        name: &str,
+        version: &Version,
+    ) -> Option<AgeGateExclusion> {
+        let mut latest_upload: Option<OffsetDateTime> = None;
+        let mut has_missing_timestamp = false;
+        for file in files {
+            let Some(raw_timestamp) = file.upload_time_iso_8601.as_deref() else {
+                has_missing_timestamp = true;
+                continue;
+            };
+            let Ok(timestamp) = OffsetDateTime::parse(raw_timestamp, &Rfc3339) else {
+                has_missing_timestamp = true;
+                continue;
+            };
+            latest_upload = Some(latest_upload.map_or(timestamp, |current| current.max(timestamp)));
+        }
+
+        let minimum_age_secs = policy.cutoff_hours.saturating_mul(60 * 60);
+        if let Some(timestamp) = latest_upload {
+            let age_seconds = now
+                .unix_timestamp()
+                .saturating_sub(timestamp.unix_timestamp());
+            if age_seconds < 0 || (age_seconds as u64) < minimum_age_secs {
+                return Some(AgeGateExclusion::TooYoung);
+            }
+        }
+
+        if has_missing_timestamp {
+            if policy.allow_missing_time {
+                tracing::warn!(
+                    package = name,
+                    version = %version,
+                    "minimum-release-age: PyPI timestamp missing or invalid; allowing via explicit escape hatch"
+                );
+                return None;
+            }
+            return Some(AgeGateExclusion::Unstamped);
+        }
+
+        None
     }
 
     /// Build from environment: `MGC_PYPI_INDEX_URL`.
@@ -699,6 +770,36 @@ impl RegistryProtocol for PypiProtocol {
             .collect();
         candidates.sort_by(|a, b| b.0.cmp(&a.0));
 
+        // Apply quarantine to registry file timestamps before version or
+        // interpreter selection; the newest uploaded file represents the
+        // release age conservatively. (Áp quarantine theo timestamp file
+        // trước khi chọn version/interpreter; file tải lên mới nhất đại
+        // diện tuổi release theo hướng thận trọng.)
+        let mut excluded_too_young = 0usize;
+        let mut excluded_unstamped = 0usize;
+        if let Some(policy) = self.age_gate {
+            let now = OffsetDateTime::now_utc();
+            candidates.retain(|(version, files)| {
+                match Self::release_age_exclusion(files, policy, now, name, version) {
+                    Some(AgeGateExclusion::TooYoung) => {
+                        excluded_too_young += 1;
+                        false
+                    }
+                    Some(AgeGateExclusion::Unstamped) => {
+                        excluded_unstamped += 1;
+                        false
+                    }
+                    None => true,
+                }
+            });
+        }
+        if candidates.is_empty() && (excluded_too_young > 0 || excluded_unstamped > 0) {
+            return Err(MgError::Other(format!(
+                "minimum-release-age: all matching versions of {name} excluded ({} too young, {} unstamped); relax [security] min_release_age or explicitly allow missing timestamps",
+                excluded_too_young, excluded_unstamped
+            )));
+        }
+
         // Consumer-Python gate (`MGC_PYTHON_VERSION`): a version whose
         // `requires_python` excludes the consumer must not be selected
         // (pip would skip it too — e.g. click 8.5.0 `>=3.10` on a 3.9
@@ -1303,6 +1404,8 @@ struct PypiFile {
     packagetype: String,
     #[serde(default)]
     requires_python: Option<String>,
+    #[serde(default)]
+    upload_time_iso_8601: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -1436,6 +1539,7 @@ mod tests {
                 digests: PypiDigests::default(),
                 packagetype: "bdist_wheel".to_string(),
                 requires_python: Some(">=3.10".to_string()),
+                upload_time_iso_8601: None,
             };
             assert!(
                 select_file(std::slice::from_ref(&incompatible_file), consumer_python()).is_none(),

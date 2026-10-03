@@ -70,6 +70,9 @@ pub struct GlobalPaths {
     pub quarantine: PathBuf,
     pub registry: PathBuf,
     pub lock_signatures: PathBuf,
+    /// Core-identity attestations by project (`identities/<path-hash>/attestation.json`).
+    /// Chứng thực identity core theo project.
+    pub identities: PathBuf,
 }
 
 impl GlobalPaths {
@@ -89,6 +92,7 @@ impl GlobalPaths {
             quarantine: mgc_dir.join("quarantine"),
             registry: mgc_dir.join("registry"),
             lock_signatures: mgc_dir.join("lock-signatures.json"),
+            identities: mgc_dir.join("identities"),
         })
     }
 

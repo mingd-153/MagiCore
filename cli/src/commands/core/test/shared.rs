@@ -3,6 +3,99 @@ use mgc_lockfile::{Lockfile, Package};
 use mgc_types::{DependencySpec, Ecosystem, PackageName, VersionRange};
 
 #[test]
+fn active_age_gate_rejects_locked_frozen_replay_without_release_evidence() {
+    let error = age_gate_lock_action("web", true, true, true, true).unwrap_err();
+    assert!(error.to_string().contains("publication timestamps"));
+    assert!(age_gate_lock_action("web", true, true, true, false).unwrap());
+    assert!(!age_gate_lock_action("web", false, false, true, true).unwrap());
+    assert!(!age_gate_lock_action("web", true, true, false, true).unwrap());
+    assert!(age_gate_lock_action("iot", true, false, false, false).is_err());
+}
+
+#[test]
+fn install_lock_refresh_uses_project_policy_and_adapter_capability() {
+    let project = tempfile::tempdir().unwrap();
+    std::fs::write(project.path().join("mgc.toml"), "[security]\nweb = 24\n").unwrap();
+    let web = mgc_web_adapter::WebAdapter::new().unwrap();
+
+    assert!(refresh_locked_graph_for_age_gate(&web, project.path(), true, false).unwrap());
+    assert!(refresh_locked_graph_for_age_gate(&web, project.path(), true, true).is_err());
+
+    let project = tempfile::tempdir().unwrap();
+    std::fs::write(project.path().join("mgc.toml"), "[security]\napp = 24\n").unwrap();
+    let app = mgc_app_adapter::AppAdapter::new(mgc_app_adapter::AppLanguage::Flutter);
+    assert!(refresh_locked_graph_for_age_gate(&app, project.path(), false, false).is_err());
+}
+
+#[tokio::test]
+async fn age_gate_disables_delta_install_from_a_previous_lock_graph() {
+    let project = tempfile::tempdir().unwrap();
+    std::fs::write(
+        project.path().join("mgc.toml"),
+        "name = \"demo\"\nversion = \"0.1.0\"\necosystem = \"web\"\n[security]\nweb = 24\n",
+    )
+    .unwrap();
+    mgc_config::project::ProjectConfig::write_core_marker_at(project.path(), "web").unwrap();
+
+    let mut previous_manifest = Manifest::new("demo", Ecosystem::Web);
+    previous_manifest.add_dep(
+        DependencySpec::new(
+            PackageName::new("react").unwrap(),
+            VersionRange::parse("^18.2.0").unwrap(),
+        ),
+        false,
+        false,
+        false,
+    );
+    let mut lock = Lockfile::new();
+    let mut package = Package::new(
+        "react".into(),
+        "18.2.0".into(),
+        "https://registry.example/react.tgz".into(),
+        "sha512-react".into(),
+    );
+    package.owner_core = Some("web".into());
+    package.ecosystem = mgc_lockfile::EcosystemTag::Web;
+    lock.add_package(package);
+    lock.root_dependencies_by_owner.insert(
+        "web".into(),
+        vec![mgc_lockfile::format_root_pin(
+            mgc_lockfile::EcosystemTag::Web,
+            "react@18.2.0",
+        )],
+    );
+    std::fs::write(
+        project.path().join("mgc.lock"),
+        mgc_lockfile::writer::serialize_lockfile(&lock).unwrap(),
+    )
+    .unwrap();
+
+    let adapter =
+        mgc_web_adapter::WebAdapter::with_registry("https://registry.example".to_string()).unwrap();
+    let added = AddedPackage {
+        id: mgc_types::PackageId::new(
+            PackageName::new("zod").unwrap(),
+            mgc_types::Version::parse("3.22.4").unwrap(),
+        ),
+        dev: false,
+        optional: false,
+        peer: false,
+    };
+
+    let result = try_install_added_packages_from_lock(
+        &adapter,
+        project.path(),
+        Some(&previous_manifest),
+        &[added],
+    )
+    .await;
+    assert!(
+        matches!(result, Ok(false)),
+        "age-gated add must fall back to a full graph resolve, got {result:?}"
+    );
+}
+
+#[test]
 fn core_command_identity_rejects_a_foreign_project_with_a_matching_manifest() {
     let temp = tempfile::tempdir().expect("tempdir");
     mgc_config::project::ProjectConfig::new("ai-rust-project", "ai")
@@ -1398,8 +1491,8 @@ async fn relpath_participates_in_identity() {
 
 #[cfg(feature = "game")]
 #[tokio::test]
-async fn optimizer_hook_conflicting_value_fails_closed() {
-    // Hook optimizer gặp dependency cùng tên khác giá trị: LỖI chứ
+async fn optimizer_template_conflicting_value_fails_closed() {
+    // Optimizer template gặp dependency cùng tên khác giá trị: lỗi chứ
     // không ghi đè mù (idempotent chỉ khi giá trị khớp).
     // (Conflicting user value fails closed — never overwritten.)
     let dir = tempfile::tempdir().unwrap();
@@ -1409,7 +1502,7 @@ async fn optimizer_hook_conflicting_value_fails_closed() {
         "[package]\nname = \"g\"\nversion = \"0.1.0\"\n\n[dependencies]\nmgc-optimizer = { path = \"./custom\" }\n",
     )
     .unwrap();
-    game_hook_optimizer_dep(root)
+    game_optimizer_template(root)
         .await
         .expect_err("conflicting mgc-optimizer value must fail closed");
     let kept = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
@@ -1421,9 +1514,9 @@ async fn optimizer_hook_conflicting_value_fails_closed() {
 
 #[cfg(feature = "game")]
 #[tokio::test]
-async fn optimizer_hook_inserts_and_converges() {
-    // Hook chèn dep thiếu (atomic), chạy lại hội tụ cùng bytes.
-    // (Missing dep inserted atomically; re-run converges.)
+async fn optimizer_template_inserts_and_converges() {
+    // Template inserts the missing dep atomically; a rerun converges.
+    // Template chèn dep thiếu nguyên tử; chạy lại hội tụ cùng bytes.
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     std::fs::write(
@@ -1431,10 +1524,275 @@ async fn optimizer_hook_inserts_and_converges() {
         "[package]\nname = \"g\"\nversion = \"0.1.0\"\n\n[dependencies]\n",
     )
     .unwrap();
-    game_hook_optimizer_dep(root).await.unwrap();
+    game_optimizer_template(root).await.unwrap();
     let once = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
     assert!(once.contains("./optimizer"), "dep must land:\n{once}");
-    game_hook_optimizer_dep(root).await.unwrap();
+    game_optimizer_template(root).await.unwrap();
     let twice = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
     assert_eq!(once, twice, "re-run must converge byte-identical");
+}
+
+#[cfg(feature = "game")]
+#[tokio::test]
+async fn optimizer_template_refuses_non_bevy_without_mutating_project() {
+    // Godot may contain an unrelated Cargo.toml; optimizer must still be
+    // refused before either the manifest or template is touched.
+    // Godot có thể chứa Cargo.toml không liên quan; phải từ chối trước sửa.
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("project.godot"), "config_version=5\n").unwrap();
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"godot-helper\"\nversion = \"0.1.0\"\n\n[dependencies]\n",
+    )
+    .unwrap();
+    let original_manifest = std::fs::read(root.join("Cargo.toml")).unwrap();
+
+    let error = game_optimizer_template(root)
+        .await
+        .expect_err("Godot must not receive Bevy optimizer files");
+    assert!(error.to_string().contains("Bevy"), "{error:#}");
+    assert_eq!(
+        std::fs::read(root.join("Cargo.toml")).unwrap(),
+        original_manifest
+    );
+    assert!(!root.join("optimizer").exists());
+    assert!(!root.join(".magicore").join("tmp-optimizer").exists());
+}
+
+#[cfg(feature = "game")]
+#[tokio::test]
+async fn optimizer_template_refuses_bevy_without_cargo_manifest_without_mutating() {
+    // A detected Bevy project without Cargo.toml is incomplete; missing
+    // manifest cannot be reported as a successful optimizer operation.
+    // Project Bevy thiếu Cargo.toml chưa hợp lệ; không thể báo thành công.
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(
+        root.join("mgc.toml"),
+        "name = \"demo\"\necosystem = \"game\"\n\n[game]\nengine = \"bevy\"\n",
+    )
+    .unwrap();
+    std::fs::write(root.join(".mgc.core"), "game\n").unwrap();
+
+    let error = game_optimizer_template(root)
+        .await
+        .expect_err("Bevy optimizer requires a Cargo.toml");
+    assert!(error.to_string().contains("Cargo.toml"), "{error:#}");
+    assert!(!root.join("optimizer").exists());
+    assert!(!root.join(".magicore").join("tmp-optimizer").exists());
+}
+
+fn v4_sample_doc() -> mgc_lockfile::canonical::LockfileV4 {
+    use mgc_lockfile::v4::{Edge, EdgeKind, EdgeOrigin};
+    let mut doc = mgc_lockfile::canonical::LockfileV4::new("mgc/test");
+    let pin = |name: &str, version: &str, edges: Vec<Edge>| {
+        mgc_lockfile::canonical::PackageV4 {
+        key: mgc_lockfile::PackageKey {
+            ecosystem: mgc_lockfile::EcosystemTag::Web,
+            name: name.to_string(),
+            version: version.to_string(),
+            source_id: "npm".to_string(),
+            variant: mgc_lockfile::VariantKey::default(),
+        },
+        edges,
+        artifact: Some(mgc_lockfile::schema::ArtifactRef {
+            url: format!("https://registry.npmjs.org/{name}/-/{name}-{version}.tgz"),
+            size_bytes: None,
+            content_hash: String::new(),
+            downloaded_from: "https://registry.npmjs.org".to_string(),
+            integrity_sri: Some("sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==".to_string()),
+        }),
+        provenance: None,
+        toolchain: None,
+        scripts_policy: None,
+        store_ref: None,
+    }
+    };
+    let edge = |name: &str, version: &str, kind: EdgeKind| Edge {
+        target_key: mgc_lockfile::PackageKey {
+            ecosystem: mgc_lockfile::EcosystemTag::Web,
+            name: name.to_string(),
+            version: version.to_string(),
+            source_id: "npm".to_string(),
+            variant: mgc_lockfile::VariantKey::default(),
+        },
+        range: "*".to_string(),
+        kind,
+        origin: EdgeOrigin::Manifest,
+        marker: None,
+    };
+    doc.packages.push(pin(
+        "app",
+        "1.0.0",
+        vec![
+            edge("leftpad", "1.3.0", EdgeKind::Normal),
+            edge("devonly", "2.0.0", EdgeKind::Dev),
+        ],
+    ));
+    doc.packages.push(pin(
+        "leftpad",
+        "1.3.0",
+        vec![edge("react", "18.2.0", EdgeKind::Peer)],
+    ));
+    doc.packages.push(pin("react", "18.2.0", Vec::new()));
+    doc.packages.push(pin("devonly", "2.0.0", Vec::new()));
+    doc.root_dependencies_by_owner
+        .insert("web".to_string(), vec!["app@1.0.0".to_string()]);
+    doc
+}
+
+fn v4_sample_manifest() -> Manifest {
+    let mut manifest = Manifest::new("demo", Ecosystem::Web);
+    for (name, range) in [
+        ("app", "=1.0.0"),
+        ("leftpad", "^1.0.0"),
+        ("react", "^18.0.0"),
+        ("devonly", "^2.0.0"),
+    ] {
+        manifest.add_dep(
+            DependencySpec::new(
+                PackageName::new(name).unwrap(),
+                VersionRange::parse(range).unwrap(),
+            ),
+            false,
+            false,
+            false,
+        );
+    }
+    manifest
+}
+
+#[test]
+fn v4_graph_maps_edges_peers_and_dev_without_flattening() {
+    let doc = v4_sample_doc();
+    assert!(v4_graph_matches_manifest_closure(
+        &doc,
+        &v4_sample_manifest(),
+        "web"
+    ));
+    let graph = graph_from_v4_lockfile(&doc, "web").unwrap();
+    assert_eq!(graph.packages.len(), 4);
+    let by_id: std::collections::HashMap<String, &ResolvedPackage> = graph
+        .packages
+        .iter()
+        .map(|package| (package.id.to_string(), package))
+        .collect();
+    let app = by_id["app@1.0.0"];
+    assert!(app.direct && !app.dev);
+    assert_eq!(app.deps.len(), 2);
+    assert!(app.peer_deps.is_empty());
+    assert!(app.integrity.starts_with("sha512-"));
+    assert!(app.tarball_url.contains("app-1.0.0.tgz"));
+    let leftpad = by_id["leftpad@1.3.0"];
+    assert!(!leftpad.direct && !leftpad.dev);
+    assert!(
+        leftpad
+            .peer_deps
+            .iter()
+            .any(|id| id.to_string() == "react@18.2.0")
+    );
+    let devonly = by_id["devonly@2.0.0"];
+    assert!(devonly.dev, "dev-only reachable package must be flagged");
+    assert!(!by_id["react@18.2.0"].dev);
+}
+
+#[test]
+fn v4_graph_refuses_duplicate_instances_missing_sri_and_dangling_edges() {
+    let mut doc = v4_sample_doc();
+    // Duplicate name@version with a distinct source must not collapse.
+    let mut twin = doc.packages[1].clone();
+    twin.key.source_id = "mirror".to_string();
+    doc.packages.push(twin);
+    assert!(graph_from_v4_lockfile(&doc, "web").is_err());
+
+    let mut doc = v4_sample_doc();
+    doc.packages[1].artifact.as_mut().unwrap().integrity_sri = None;
+    let error = graph_from_v4_lockfile(&doc, "web").unwrap_err();
+    assert!(
+        error.to_string().contains("installer-enforced SRI"),
+        "{error:#}"
+    );
+
+    let mut doc = v4_sample_doc();
+    doc.packages[1].artifact.as_mut().unwrap().url = String::new();
+    assert!(graph_from_v4_lockfile(&doc, "web").is_err());
+
+    let mut doc = v4_sample_doc();
+    doc.packages[0].edges.push(mgc_lockfile::v4::Edge {
+        target_key: mgc_lockfile::PackageKey {
+            ecosystem: mgc_lockfile::EcosystemTag::Web,
+            name: "ghost".to_string(),
+            version: "9.9.9".to_string(),
+            source_id: "npm".to_string(),
+            variant: mgc_lockfile::VariantKey::default(),
+        },
+        range: "*".to_string(),
+        kind: mgc_lockfile::v4::EdgeKind::Normal,
+        origin: mgc_lockfile::v4::EdgeOrigin::Manifest,
+        marker: None,
+    });
+    assert!(graph_from_v4_lockfile(&doc, "web").is_err());
+}
+
+#[test]
+fn v4_closure_supports_rootless_web_locks_with_unique_manifest_anchors() {
+    // Web-style locks deliberately carry no roots: the manifest anchors
+    // the graph (exactly-one match per dependency) instead.
+    // (Lock kiểu web không mang roots: manifest làm neo.)
+    let mut doc = v4_sample_doc();
+    doc.root_dependencies_by_owner.clear();
+    doc.root_dependencies.clear();
+    assert!(v4_graph_matches_manifest_closure(
+        &doc,
+        &v4_sample_manifest(),
+        "web"
+    ));
+    // Ambiguity fails closed: two leftpad versions, one manifest range.
+    let mut twin = doc.packages[1].clone();
+    twin.key.version = "1.4.0".to_string();
+    doc.packages.push(twin);
+    assert!(!v4_graph_matches_manifest_closure(
+        &doc,
+        &v4_sample_manifest(),
+        "web"
+    ));
+}
+
+#[test]
+fn v4_closure_rejects_orphans_and_manifest_mismatch() {
+    let mut doc = v4_sample_doc();
+    doc.packages.push(mgc_lockfile::canonical::PackageV4 {
+        key: mgc_lockfile::PackageKey {
+            ecosystem: mgc_lockfile::EcosystemTag::Web,
+            name: "orphan".to_string(),
+            version: "1.0.0".to_string(),
+            source_id: "npm".to_string(),
+            variant: mgc_lockfile::VariantKey::default(),
+        },
+        edges: Vec::new(),
+        artifact: None,
+        provenance: None,
+        toolchain: None,
+        scripts_policy: None,
+        store_ref: None,
+    });
+    assert!(!v4_graph_matches_manifest_closure(
+        &doc,
+        &v4_sample_manifest(),
+        "web"
+    ));
+
+    let doc = v4_sample_doc();
+    let mut manifest = Manifest::new("demo", Ecosystem::Web);
+    manifest.add_dep(
+        DependencySpec::new(
+            PackageName::new("missing").unwrap(),
+            VersionRange::parse("^1.0.0").unwrap(),
+        ),
+        false,
+        false,
+        false,
+    );
+    assert!(!v4_graph_matches_manifest_closure(&doc, &manifest, "web"));
 }

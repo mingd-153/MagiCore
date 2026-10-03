@@ -152,18 +152,24 @@ pub fn dependency_ownership(core: &str) -> serde_json::Value {
 /// `mgc capabilities [--core <core>]` — có `--core`, in shape đơn đã chốt;
 /// không có, in mọi core đã build (lifecycle matrix dùng shape all-cores).
 pub fn run(core: Option<&str>) -> Result<()> {
+    println!("{}", serde_json::to_string_pretty(&json_payload(core)?)?);
+    Ok(())
+}
+
+/// Build the capability manifest as structured JSON without writing to stdout.
+/// Tạo capability manifest dạng JSON mà không ghi ra stdout.
+pub fn json_payload(core: Option<&str>) -> Result<serde_json::Value> {
     match core {
         Some(name) => {
             let caps = capabilities_for_core(name)?;
-            let payload = serde_json::json!({
+            Ok(serde_json::json!({
                 "version": env!("CARGO_PKG_VERSION"),
                 "core": name,
                 "capabilities": caps,
                 "dependency_ownership": dependency_ownership(name),
                 "framework_qualification": crate::commands::framework_records::qualification_json(name),
                 "everything_else": "unsupported",
-            });
-            println!("{}", serde_json::to_string_pretty(&payload)?);
+            }))
         }
         None => {
             let mut cores = Vec::new();
@@ -188,8 +194,7 @@ pub fn run(core: Option<&str>) -> Result<()> {
                 "version": env!("CARGO_PKG_VERSION"),
                 "cores": cores,
             });
-            println!("{}", serde_json::to_string_pretty(&payload)?);
+            Ok(payload)
         }
     }
-    Ok(())
 }

@@ -24,6 +24,9 @@ pub fn get_embedded_template(core: &str, framework: &str) -> Option<Vec<Embedded
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "engines": {
+    "node": ">=22.17"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -455,30 +458,24 @@ export default nextConfig;
     "preview": "vite preview --port 4315"
   },
   "devDependencies": {
-    "@sveltejs/adapter-auto": "^7.0.0",
-    "@sveltejs/kit": "^2.0.0",
-    "@sveltejs/vite-plugin-svelte": "^4.0.0",
-    "svelte": "^5.0.0",
-    "typescript": "^5.7.2",
-    "vite": "^6.0.0"
+    "@sveltejs/adapter-auto": "^8.0.0",
+    "@sveltejs/kit": "^3.0.0",
+    "@sveltejs/vite-plugin-svelte": "^7.2.0",
+    "svelte": "^5.57.1",
+    "typescript": "^6.0.3",
+    "vite": "^8.1.4"
   }
 }"#,
             },
             EmbeddedFile {
-                path: "svelte.config.js",
-                content: r#"import adapter from '@sveltejs/adapter-auto';
-
-/** @type {import('@sveltejs/kit').Config} */
-const config = { kit: { adapter: adapter() } };
-export default config;
-"#,
-            },
-            EmbeddedFile {
                 path: "vite.config.ts",
-                content: r#"import { sveltekit } from '@sveltejs/kit/vite';
+                content: r#"import adapter from '@sveltejs/adapter-auto';
+import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 
-export default defineConfig({ plugins: [sveltekit()] });
+// SvelteKit 3 accepts framework configuration through its Vite plugin.
+// SvelteKit 3 nhận cấu hình framework qua Vite plugin.
+export default defineConfig({ plugins: [sveltekit({ adapter: adapter() })] });
 "#,
             },
             EmbeddedFile {

@@ -79,18 +79,28 @@ impl ChunkedUploader {
         offset: u64,
         data: &[u8],
     ) -> Result<u64> {
+        if data.is_empty() {
+            return Ok(offset);
+        }
         let url = format!(
             "{}/v2/{}/blobs/uploads/{}",
             self.base_url.trim_end_matches('/'),
             repo,
             upload_id
         );
-        let end = offset + data.len() as u64 - 1;
-        let _range = format!("bytes={}-{}", offset, end);
+        let end = offset
+            .checked_add(u64::try_from(data.len())?)
+            .and_then(|next| next.checked_sub(1))
+            .ok_or_else(|| anyhow::anyhow!("OCI blob upload offset overflow"))?;
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::CONTENT_RANGE,
+            reqwest::header::HeaderValue::from_str(&format!("{offset}-{end}"))?,
+        );
 
         let resp = self
             .client
-            .patch_with_timeout(&url, data.to_vec(), self.timeout_per_chunk)
+            .patch_with_timeout_and_headers(&url, data.to_vec(), self.timeout_per_chunk, headers)
             .await?;
 
         if resp.status().as_u16() == 308 {

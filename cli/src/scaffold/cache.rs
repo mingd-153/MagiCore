@@ -6,6 +6,10 @@ use std::path::{Path, PathBuf};
 
 use super::spec::ScaffoldSpec;
 
+fn cache_root_with_override(override_root: Option<PathBuf>, default_root: PathBuf) -> PathBuf {
+    override_root.unwrap_or(default_root)
+}
+
 /// Scaffold cache manager (versioned storage).
 pub struct ScaffoldCache;
 
@@ -114,12 +118,15 @@ impl ScaffoldCache {
         Ok(())
     }
 
-    /// Root cache directory (~/.mgc/scaffolds/).
+    /// Root of the versioned scaffold cache; MGC_SCAFFOLDS_DIR overrides the platform default.
+    /// Gốc cache template có version; MGC_SCAFFOLDS_DIR ghi đè vị trí mặc định của hệ điều hành.
     fn cache_root() -> PathBuf {
-        dirs::cache_dir()
+        let default_root = dirs::cache_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join("mgc")
-            .join("scaffolds")
+            .join("scaffolds");
+        let override_root = std::env::var_os("MGC_SCAFFOLDS_DIR").map(PathBuf::from);
+        cache_root_with_override(override_root, default_root)
     }
 
     /// Check if directory contains template contract (template.toml).
@@ -168,5 +175,27 @@ mod tests {
 
         let versions = ScaffoldCache::list_versions(&spec);
         assert!(versions.is_empty());
+    }
+
+    #[test]
+    fn explicit_cache_root_overrides_the_platform_default() {
+        let explicit = tempfile::tempdir().unwrap();
+        let default = tempfile::tempdir().unwrap();
+        assert_eq!(
+            cache_root_with_override(
+                Some(explicit.path().to_path_buf()),
+                default.path().to_path_buf()
+            ),
+            explicit.path()
+        );
+    }
+
+    #[test]
+    fn missing_cache_override_keeps_the_platform_default() {
+        let default = tempfile::tempdir().unwrap();
+        assert_eq!(
+            cache_root_with_override(None, default.path().to_path_buf()),
+            default.path()
+        );
     }
 }

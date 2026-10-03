@@ -39,7 +39,14 @@ impl RateLimiter {
     pub async fn wait(&self) {
         loop {
             let wait_time = {
-                let mut requests = self.requests.lock().expect("lock poisoned");
+                // Poisoned lock: a previous holder panicked mid-prune. The
+                // deque holds only timestamps — continuing with the
+                // recovered guard degrades to possibly-loose rate limiting
+                // instead of panicking every later request.
+                let mut requests = self
+                    .requests
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
                 let now = Instant::now();
                 let cutoff = now - self.config.period;
 

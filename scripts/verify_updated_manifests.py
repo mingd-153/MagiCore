@@ -109,11 +109,13 @@ def main() -> int:
     core_brew = [
         expected_entry(artifacts, version, f"magicore-{version}-macos-arm64.tar.gz"),
         expected_entry(artifacts, version, f"magicore-{version}-macos-x64.tar.gz"),
+        expected_entry(artifacts, version, f"magicore-{version}-linux-arm64.tar.gz"),
         expected_entry(artifacts, version, f"magicore-{version}-linux-x64.tar.gz"),
     ]
     web_brew = [
         expected_entry(artifacts, version, f"magicore-web-{version}-macos-arm64.tar.gz"),
         expected_entry(artifacts, version, f"magicore-web-{version}-macos-x64.tar.gz"),
+        expected_entry(artifacts, version, f"magicore-web-{version}-linux-arm64.tar.gz"),
         expected_entry(artifacts, version, f"magicore-web-{version}-linux-x64.tar.gz"),
     ]
     check_formula(homebrew / "magicore.rb", version, core_brew)
@@ -124,7 +126,7 @@ def main() -> int:
     check_scoop(scoop / "magicore.json", version, *scoop_core)
     check_scoop(scoop / "magicore-web.json", version, *scoop_web)
 
-    print("all 8 generated manifest URL/SHA256 entries match their release assets")
+    print("all 10 generated manifest URL/SHA256 entries match their release assets")
     return 0
 
 

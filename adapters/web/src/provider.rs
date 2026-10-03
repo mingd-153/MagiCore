@@ -99,14 +99,25 @@ impl NpmDependencyProvider {
     }
 
     /// Overwrite this provider's gate (P0/F6 — every operation re-arms
-    /// from its own project; no first-writer-wins). Also flips the
-    /// registry client's fetch mode (full packuments + no stale
+    /// from its own project; no first-writer-wins). A policy change evicts
+    /// version and optional-dependency decisions made under the old gate.
+    /// Also flips the registry client's fetch mode (full packuments + no stale
     /// abbreviated cache) so fetchers and filters can never disagree.
-    /// (Đặt lại cổng tuổi — mỗi operation nạp lại từ project của nó.)
+    /// (Đặt lại cổng tuổi; đổi policy thì xóa quyết định version cũ.)
     pub fn set_age_policy(&self, policy: Option<AgePolicy>) {
         let armed = policy.is_some_and(|p| p.cutoff_hours > 0);
-        if let Ok(mut slot) = self.age_policy.write() {
+        let changed = {
+            let mut slot = self
+                .age_policy
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let changed = *slot != policy;
             *slot = policy;
+            changed
+        };
+        if changed {
+            self.registry_cache.clear();
+            self.optional_enqueue_cache.clear();
         }
         self.registry.set_age_gate_armed(armed);
     }

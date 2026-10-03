@@ -12,7 +12,7 @@ resolver = "2"
 [workspace.package]
 version = "1.1.0-rc.9"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.86"
 license = "MIT"
 repository = "https://github.com/mingd-153/MagiCore"
 authors = ["MagiCore Contributors"]
@@ -40,6 +40,7 @@ mgc-pack = { path = "core/crates/mgc-pack" }
 mgc-publish = { path = "core/crates/mgc-publish" }
 mgc-oci = { path = "core/crates/mgc-oci" }
 mgc-registry-server = { path = "core/crates/mgc-registry-server" }
+mgc-oidc = { path = "core/crates/mgc-oidc" }
 mgc-exec = { path = "core/crates/mgc-exec" }
 which = "6.0"
 
@@ -54,7 +55,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 
 # HTTP
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "gzip", "rustls-tls", "http2"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "gzip", "rustls-tls", "http2", "multipart"] }
 url = "2.5"
 object_store = { version = "0.14.1", features = ["aws"] }  # 0.14.1+: gets quick-xml 0.42+ (fixes RUSTSEC-2026-0194/0195)
 axum = { version = "0.7", features = ["ws", "multipart"] }

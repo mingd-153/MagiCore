@@ -550,6 +550,15 @@ pub trait PackageAdapter:
         Ok(())
     }
 
+    /// Whether this adapter can enforce the configured minimum-release-age
+    /// policy for this project. CLI install rejects explicit policies when
+    /// this returns false instead of silently resolving without a gate.
+    /// Adapter này có thực thi được minimum-release-age cho project không;
+    /// CLI từ chối policy tường minh nếu false để không resolve âm thầm.
+    fn supports_age_gate_for(&self, _project_root: &Path) -> MgResult<bool> {
+        Ok(false)
+    }
+
     async fn prepare_add(
         &self,
         _project_root: &Path,

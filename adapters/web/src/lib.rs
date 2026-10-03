@@ -18,7 +18,7 @@ use mgc_adapter_base::BaseAdapter;
 use mgc_resolver::Resolver as CoreResolver;
 use mgc_store::ContentStore;
 use mgc_types::{
-    Manifest, MgResult, PackageId, PackageName, Version, VersionRange,
+    Manifest, MgError, MgResult, PackageId, PackageName, Version, VersionRange,
     adapter::{
         AddOptions, AuditReport, InstallOptions, InstallSummary, InstalledPackage, PackageAdapter,
         ResolvedGraph, ResolvedPackage,
@@ -85,6 +85,49 @@ fn is_manifest_root_package(manifest: &Manifest, package_id: &PackageId) -> bool
     manifest.all_dependencies().any(|dependency| {
         dependency.name == *package_id.name() && dependency.range.matches(package_id.version())
     })
+}
+
+/// v4 resolve short-circuit: reuse a satisfying v4 lock graph instead of
+/// re-solving. Returns `None` (miss) for missing/non-v4 locks, closure
+/// mismatches, and lossy-but-valid v4 shapes — all fall through to fresh
+/// resolve exactly like a legacy short-circuit miss. Corrupt (version-4
+/// but unparseable) files fail like the legacy reader; the CLI authority
+/// path separately enforces hardness for lossy v4 inside install.
+/// (Short-circuit v4: lock v4 thỏa thì tái dùng, còn lại miss về resolve
+/// mới như legacy; file v4 hỏng thì lỗi như reader cũ.)
+fn try_v4_short_circuit(manifest: &Manifest) -> MgResult<Option<ResolvedGraph>> {
+    use std::io::ErrorKind;
+    let lock_path = std::path::Path::new(".").join("mgc.lock");
+    let bytes = match mgc_lockfile::read_lockfile_bytes(&lock_path) {
+        Ok(bytes) => bytes,
+        Err(mgc_lockfile::LockfileError::IoError(error)) if error.kind() == ErrorKind::NotFound => {
+            return Ok(None);
+        }
+        Err(error) => {
+            return Err(MgError::Other(format!("Failed to read lockfile: {error}")));
+        }
+    };
+    let content = String::from_utf8(bytes)
+        .map_err(|error| MgError::Other(format!("Lockfile is not valid UTF-8: {error}")))?;
+    if !mgc_lockfile::detect_lockfile_version(&content).is_ok_and(|version| version == 4) {
+        return Ok(None);
+    }
+    let doc = mgc_lockfile::canonical::parse_v4_document(&content)
+        .map_err(|error| MgError::Other(format!("Failed to parse lockfile: {error}")))?;
+    let verification = crate::lockfile::verify_v4_document_integrity(&doc)?;
+    if !verification.signed {
+        mgc_ui::warning(
+            "mgc.lock v4 digest is valid, but the lock is unsigned; signer trust was not evaluated",
+        );
+    }
+    let owner = crate::lockfile::web_lock_owner_core(std::path::Path::new("."))?;
+    if !mgc_lockfile::v4_graph::v4_graph_matches_manifest_closure(&doc, manifest, &owner) {
+        return Ok(None);
+    }
+    match mgc_lockfile::v4_graph::graph_from_v4_lockfile(&doc, &owner) {
+        Ok(graph) => Ok(Some(graph)),
+        Err(_) => Ok(None),
+    }
 }
 
 fn prune_unreachable_packages(graph: &mut ResolvedGraph) {
@@ -280,13 +323,22 @@ impl WebAdapter {
     pub fn load_age_policy_for(
         project_root: &std::path::Path,
     ) -> mgc_types::MgResult<Option<crate::provider::AgePolicy>> {
+        Self::load_age_policy_for_core(project_root, "web")
+    }
+
+    /// Load age policy for the owning core when this engine is embedded.
+    /// Nạp policy tuổi theo core sở hữu khi engine này được nhúng.
+    pub fn load_age_policy_for_core(
+        project_root: &std::path::Path,
+        core: &str,
+    ) -> mgc_types::MgResult<Option<crate::provider::AgePolicy>> {
         use mgc_types::MgError;
         let path = project_root.join("mgc.toml");
-        if !path.is_file() {
+        let Some(text) = mgc_config::project::read_regular_project_text(&path, "project config")
+            .map_err(|error| MgError::Other(format!("cannot read {}: {error}", path.display())))?
+        else {
             return Ok(None);
-        }
-        let text = std::fs::read_to_string(&path)
-            .map_err(|e| MgError::Other(format!("cannot read {}: {e}", path.display())))?;
+        };
         let value: toml::Value = text
             .parse()
             .map_err(|e| MgError::Other(format!("invalid TOML in {}: {e}", path.display())))?;
@@ -294,24 +346,49 @@ impl WebAdapter {
             return Ok(None);
         };
         let security: mgc_config::project::SecurityConfig =
-            serde_json::from_value(serde_json::to_value(table).map_err(|e| {
-                MgError::Other(format!(
-                    "invalid [security] table in {}: {e}",
-                    path.display()
-                ))
-            })?)
-            .map_err(|e| {
+            table.clone().try_into().map_err(|e| {
                 MgError::Other(format!(
                     "invalid [security] table in {}: {e}",
                     path.display()
                 ))
             })?;
         Ok(security
-            .min_age_for_ecosystem("web")
+            .min_age_for_ecosystem(core)
             .map(|cutoff_hours| crate::provider::AgePolicy {
                 cutoff_hours,
                 allow_missing_time: security.allow_missing_time.unwrap_or(false),
             }))
+    }
+
+    /// Set the gate using a core-specific override before an operation.
+    /// Đặt gate theo override của core trước operation.
+    pub fn arm_age_gate_for_core(
+        &self,
+        project_root: &std::path::Path,
+        core: &str,
+    ) -> mgc_types::MgResult<()> {
+        let policy = Self::load_age_policy_for_core(project_root, core)?;
+        self.provider.set_age_policy(policy);
+        Ok(())
+    }
+
+    /// Resolve-first add under an embedded core's age policy.
+    /// Resolve-first add theo policy tuổi của core nhúng.
+    pub async fn prepare_add_for_core(
+        &self,
+        project_root: &Path,
+        name: &PackageName,
+        range: Option<&VersionRange>,
+        opts: AddOptions,
+        core: &str,
+    ) -> mgc_types::MgResult<mgc_types::adapter::PreparedAdd> {
+        self.arm_age_gate_for_core(project_root, core)?;
+        let (inferred, selected_version) = self.infer_add_range(name, range, opts.exact).await?;
+        let version = selected_version.unwrap_or_else(|| Version::new(0, 0, 0));
+        Ok(mgc_types::adapter::PreparedAdd {
+            id: PackageId::new(name.clone(), version),
+            range: inferred,
+        })
     }
 
     pub fn metadata_versions(metadata: &native::npm_registry::PackageMetadata) -> Vec<Version> {
@@ -555,9 +632,11 @@ impl PackageAdapter for WebAdapter {
     /// (overwrites — no first-writer-wins across projects).
     /// (Nạp cổng tuổi theo từng operation từ root project của nó.)
     fn arm_age_gate_for(&self, project_root: &std::path::Path) -> mgc_types::MgResult<()> {
-        let policy = Self::load_age_policy_for(project_root)?;
-        self.provider.set_age_policy(policy);
-        Ok(())
+        self.arm_age_gate_for_core(project_root, "web")
+    }
+
+    fn supports_age_gate_for(&self, _project_root: &std::path::Path) -> mgc_types::MgResult<bool> {
+        Ok(true)
     }
 
     fn set_dedupe_pref(&self, enabled: bool) {
@@ -585,17 +664,13 @@ impl PackageAdapter for WebAdapter {
 
     async fn prepare_add(
         &self,
-        _project_root: &Path,
+        project_root: &Path,
         name: &PackageName,
         range: Option<&VersionRange>,
         opts: AddOptions,
     ) -> MgResult<mgc_types::adapter::PreparedAdd> {
-        let (inferred, selected_version) = self.infer_add_range(name, range, opts.exact).await?;
-        let version = selected_version.unwrap_or_else(|| Version::new(0, 0, 0));
-        Ok(mgc_types::adapter::PreparedAdd {
-            id: PackageId::new(name.clone(), version),
-            range: inferred,
-        })
+        self.prepare_add_for_core(project_root, name, range, opts, "web")
+            .await
     }
 
     async fn list(&self, project_root: &Path) -> MgResult<Vec<InstalledPackage>> {
@@ -667,12 +742,36 @@ impl WebAdapter {
             return Ok(ResolvedGraph::empty());
         }
 
+        // A cached graph records versions, not publication timestamps, so
+        // an active age policy must re-check registry metadata on every resolve.
+        // (Graph cache không lưu timestamp phát hành; policy tuổi phải resolve lại.)
+        let age_gate_active = self
+            .provider
+            .age_policy()
+            .is_some_and(|policy| policy.cutoff_hours > 0);
+
         // Lockfile short-circuit (skipped by resolve_fresh): a satisfying
         // lock reuses its graph instead of re-solving. Bumper flows must
         // never take it — the locked version is exactly what they escape.
         // (Short-circuit lockfile — bumper không bao giờ đi đường này.)
         // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+        // v4 documents take the lossless v4 branch first (shared
+        // v4_graph home); anything unusable there misses the short-circuit
+        // and falls through to fresh resolve — EXCEPT corrupt v4 files,
+        // which fail exactly like the legacy reader. Lossy-but-valid v4
+        // is a miss here (the CLI authority path enforces its hardness
+        // before the adapter ever runs inside install).
         if allow_shortcircuit
+            && !age_gate_active
+            && let Some(graph) = try_v4_short_circuit(manifest)?
+        {
+            let graph = normalize_resolved_graph(manifest, graph);
+            profile.mark("lockfile_short_circuit_v4", started_at);
+            profile.flush(started_at.elapsed().as_millis() as u64);
+            return Ok(graph);
+        }
+        if allow_shortcircuit
+            && !age_gate_active
             && let Some(lockfile) = read_web_lockfile_checked(Path::new("."))?
             && lockfile_satisfies_manifest(&lockfile, manifest)
             && let Ok(Some(graph)) = build_graph_from_lockfile(&lockfile, manifest)
@@ -689,8 +788,9 @@ impl WebAdapter {
             .as_ref()
             .map(|_| manifest_resolution_cache_key(manifest, &self.registry_url));
         // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
-        if let (Some(shared_cache), Some(key)) =
-            (self.shared_cache.as_ref(), resolution_cache_key.as_deref())
+        if !age_gate_active
+            && let (Some(shared_cache), Some(key)) =
+                (self.shared_cache.as_ref(), resolution_cache_key.as_deref())
             && let Some(graph) = shared_cache.read_resolution(key, &self.registry_url)?
         {
             let graph = normalize_resolved_graph(manifest, graph);

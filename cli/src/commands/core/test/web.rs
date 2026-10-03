@@ -9,6 +9,76 @@ fn v3_web_lockfile_is_written_with_current_schema_version() {
     assert_eq!(decoded.version, "3");
 }
 
+#[test]
+fn primary_package_seed_does_not_duplicate_existing_dependency_sections() {
+    let package = "@sveltejs/kit";
+    let mut manifest = serde_json::Map::new();
+    manifest.insert(
+        "devDependencies".to_string(),
+        serde_json::json!({ package: "^2.0.0" }),
+    );
+    manifest.insert(
+        "dependencies".to_string(),
+        serde_json::json!({ "react": "^19.0.0" }),
+    );
+
+    super::ensure_primary_package(&mut manifest, package, "^2.69.2");
+
+    let declarations = ["dependencies", "devDependencies"]
+        .into_iter()
+        .filter(|section| {
+            manifest
+                .get(*section)
+                .and_then(serde_json::Value::as_object)
+                .is_some_and(|packages| packages.contains_key(package))
+        })
+        .count();
+    assert_eq!(declarations, 1, "primary package should be declared once");
+    assert_eq!(
+        manifest["devDependencies"][package], "^2.69.2",
+        "the resolved range should update the existing declaration"
+    );
+    assert!(
+        !manifest["dependencies"]
+            .as_object()
+            .expect("dependencies should remain an object")
+            .contains_key(package)
+    );
+    assert_eq!(manifest["dependencies"]["react"], "^19.0.0");
+}
+
+#[test]
+fn primary_package_seed_removes_duplicate_from_secondary_section() {
+    let package = "@sveltejs/kit";
+    let mut manifest = serde_json::json!({
+        "dependencies": { package: "^3.0.0" },
+        "devDependencies": { package: "^2.0.0" }
+    })
+    .as_object()
+    .expect("manifest should be an object")
+    .clone();
+
+    super::ensure_primary_package(&mut manifest, package, "^2.69.2");
+
+    assert_eq!(manifest["dependencies"][package], "^2.69.2");
+    assert!(
+        !manifest["devDependencies"]
+            .as_object()
+            .expect("devDependencies should remain an object")
+            .contains_key(package)
+    );
+}
+
+#[test]
+fn primary_package_seed_defaults_to_dependencies_when_not_declared() {
+    let package = "@sveltejs/kit";
+    let mut manifest = serde_json::Map::new();
+
+    super::ensure_primary_package(&mut manifest, package, "^2.69.2");
+
+    assert_eq!(manifest["dependencies"][package], "^2.69.2");
+}
+
 #[cfg(all(unix, feature = "lib"))]
 #[test]
 fn backend_language_ignores_external_mgc_toml_symlink() {

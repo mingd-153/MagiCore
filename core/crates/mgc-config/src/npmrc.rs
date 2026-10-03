@@ -4,7 +4,29 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::path::Path;
 
-#[derive(Debug, Clone, Default)]
+use std::fmt;
+
+/// Never Debug-print tokens: counts and hosts only, values stay out of logs.
+/// (Không bao giờ Debug-print token: chỉ số lượng và host.)
+impl fmt::Debug for NpmRc {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("NpmRc")
+            .field("registry", &self.registry)
+            .field("scope_registries", &self.scope_registries)
+            .field(
+                "auth_token_hosts",
+                &self.auth_tokens.keys().collect::<Vec<_>>(),
+            )
+            .field(
+                "basic_auth_hosts",
+                &self.basic_auth.keys().collect::<Vec<_>>(),
+            )
+            .finish()
+    }
+}
+
+#[derive(Clone, Default)]
 pub struct NpmRc {
     /// registry=URL (registry mặc định)
     pub registry: Option<String>,
@@ -28,6 +50,18 @@ impl NpmRc {
         }
         let project_npmrc = project_dir.join(".npmrc");
         if project_npmrc.exists() {
+            // A planted symlink here would pull foreign files (e.g. another
+            // user's tokens) into auth resolution — refuse, don't follow.
+            // (Symlink trong project có thể kéo file ngoài vào auth.)
+            if std::fs::symlink_metadata(&project_npmrc)
+                .map(|metadata| metadata.file_type().is_symlink())
+                .unwrap_or(false)
+            {
+                anyhow::bail!(
+                    "project .npmrc '{}' must not be a symlink",
+                    project_npmrc.display()
+                );
+            }
             combined.merge(Self::parse(&std::fs::read_to_string(&project_npmrc)?)?);
         }
         Ok(combined)
@@ -112,9 +146,25 @@ impl NpmRc {
 
     /// Ghi `//host/:_authToken=TOKEN` vào file .npmrc (thay dòng cũ nếu có).
     /// (login flow — lưu token sau `mgc login` / `mgc registry user add`)
+    ///
+    /// Security: refuses symlinked paths (a planted link would redirect a
+    /// live token outside the project) and creates the file `0600` on
+    /// Unix, mirroring the keyring writer. Existing files keep their
+    /// content; only the token line is replaced.
+    /// (Từ chối path symlink; file mới `0600` trên Unix như keyring.)
     pub fn save_auth_token(npmrc_path: &Path, host: &str, token: &str) -> Result<()> {
         use std::fs;
         use std::io::Write;
+
+        if fs::symlink_metadata(npmrc_path)
+            .map(|metadata| metadata.file_type().is_symlink())
+            .unwrap_or(false)
+        {
+            anyhow::bail!(
+                "refusing to write auth token through symlink '{}'",
+                npmrc_path.display()
+            );
+        }
 
         let host_key = format!("//{}/:_authToken", Self::normalize_host(host));
         let new_line = format!("{}={}", host_key, token);
@@ -144,8 +194,21 @@ impl NpmRc {
             out.push_str(&line);
             out.push('\n');
         }
-        let mut f = fs::File::create(npmrc_path)?;
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut f = options.open(npmrc_path)?;
         f.write_all(out.as_bytes())?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let permissions = std::fs::Permissions::from_mode(0o600);
+            std::fs::set_permissions(npmrc_path, permissions)?;
+        }
         Ok(())
     }
 }

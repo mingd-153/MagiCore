@@ -9,6 +9,17 @@ use mgc_config::project::ProjectConfig;
 use mgc_ui::{print_banner, print_next_steps, section};
 use std::path::{Path, PathBuf};
 
+fn iot_wizard_config() -> Result<ScaffoldConfig> {
+    #[cfg(feature = "iot")]
+    {
+        Ok(crate::wizard::iot::IotWizard::run())
+    }
+    #[cfg(not(feature = "iot"))]
+    {
+        Err(crate::error::core_not_in_build("iot"))
+    }
+}
+
 /// mgc init — create a new project with mgc.toml
 ///
 /// `--signature <core>` is a compatibility flag that writes a plain-text
@@ -39,7 +50,7 @@ pub async fn run(template: Option<String>, signature: Option<String>) -> Result<
         } else if t == "game" {
             crate::wizard::game::GameWizard::run()
         } else if t == "iot" {
-            crate::wizard::iot::IotWizard::run()
+            iot_wizard_config()?
         } else if t == "clo" || t == "cloud" {
             crate::wizard::cloud::CloudWizard::run()
         } else if t == "cicd" {
@@ -151,6 +162,10 @@ fn write_mgc_toml(project_dir: &Path, config: &ScaffoldConfig) -> Result<()> {
         config.features.clone(),
     );
     proj_config.save(project_dir)?;
+    // Best-effort core attestation: binds (.mgc.core + mgc.toml) to a home
+    // key; never fails project creation (the read path warns on use).
+    // (Chứng thực core best-effort: không bao giờ làm hỏng tạo project.)
+    crate::commands::trust::anchor::attest_new_project(project_dir, &config.core);
     if config.core == "game" && config.frameworks.iter().any(|name| name == "bevy") {
         // Cargo scripts currently apply only to the Bevy scaffold — không gắn lệnh Rust cho engine khác.
         let scripts = "\n[scripts]\nrun = \"cargo run\"\nbuild = \"cargo build\"\n".to_string();
@@ -207,7 +222,7 @@ fn run_core_wizard(core: &str) -> Result<(ScaffoldConfig, Vec<Answer>, bool)> {
             Ok((cfg, Vec::new(), false))
         }
         "iot" => {
-            let mut cfg = crate::wizard::iot::IotWizard::run();
+            let mut cfg = iot_wizard_config()?;
             cfg.project_name = ask_project_name()?;
             Ok((cfg, Vec::new(), false))
         }

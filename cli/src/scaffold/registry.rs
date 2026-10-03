@@ -14,21 +14,40 @@ pub struct ScaffoldRegistry {
 
 impl ScaffoldRegistry {
     /// Create registry client with default URL.
-    pub fn new() -> Self {
-        Self::with_url("https://registry.magicore.io")
+    pub fn new() -> Result<Self> {
+        Self::try_with_url("https://registry.magicore.io")
     }
 
     /// Create registry client with custom URL.
-    pub fn with_url(base_url: &str) -> Self {
+    pub fn with_url(base_url: &str) -> Result<Self> {
+        Self::try_with_url(base_url)
+    }
+
+    fn try_with_url(base_url: &str) -> Result<Self> {
+        // Strip any `user:pass@` userinfo first: credentials in the base URL
+        // would otherwise land verbatim in error messages and logs built
+        // from derived request URLs. Authentication belongs in headers,
+        // never in a logged URL.
+        // (Lột userinfo trước: credential trong URL sẽ lọt vào log/error.)
+        let mut parsed =
+            url::Url::parse(base_url).map_err(|e| anyhow::anyhow!("invalid registry URL: {e}"))?;
+        if !parsed.username().is_empty() || parsed.password().is_some() {
+            parsed
+                .set_username("")
+                .map_err(|_| anyhow::anyhow!("invalid registry URL"))?;
+            parsed
+                .set_password(None)
+                .map_err(|_| anyhow::anyhow!("invalid registry URL"))?;
+        }
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
-            .expect("Failed to create HTTP client");
+            .map_err(|e| anyhow::anyhow!("cannot build HTTP client: {e}"))?;
 
-        Self {
-            base_url: base_url.to_string(),
+        Ok(Self {
+            base_url: parsed.to_string().trim_end_matches('/').to_string(),
             client,
-        }
+        })
     }
 
     /// Fetch scaffold tarball for a specific spec and resolved version.
@@ -138,12 +157,6 @@ impl ScaffoldRegistry {
     }
 }
 
-impl Default for ScaffoldRegistry {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[derive(Debug, Deserialize, Serialize)]
 struct DistTags {
     #[serde(flatten)]
@@ -184,5 +197,21 @@ mod tests {
             ScaffoldRef::Version(v) => assert_eq!(v, "15.5.0"),
             _ => panic!("Expected version ref"),
         }
+    }
+
+    #[test]
+    fn test_userinfo_stripped_from_custom_url() {
+        let registry = ScaffoldRegistry::with_url("https://user:s3cret@example.com/reg/").unwrap();
+        assert!(
+            !registry.base_url.contains("s3cret"),
+            "credential leaked into base URL: {}",
+            registry.base_url
+        );
+        assert!(registry.base_url.starts_with("https://example.com/"));
+    }
+
+    #[test]
+    fn test_garbage_url_refused() {
+        assert!(ScaffoldRegistry::with_url("not a url :::").is_err());
     }
 }

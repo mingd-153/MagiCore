@@ -126,6 +126,18 @@ impl TlsConfig {
     /// Apply vào reqwest::ClientBuilder
     pub fn apply(&self, mut builder: ClientBuilder) -> Result<ClientBuilder> {
         if self.allow_untrusted {
+            // Loud once-per-process: disabling certificate verification is
+            // an explicit operator opt-in (MAGICORE_ALLOW_UNTRUSTED=1), but
+            // it must never pass silently — a leaked env var would
+            // otherwise downgrade every TLS connection without a trace.
+            // (Cảnh báo rõ khi tắt verify cert — env rò rỉ không được hạ
+            // TLS âm thầm.)
+            static WARNED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+            if WARNED.set(()).is_ok() {
+                eprintln!(
+                    "WARNING: TLS certificate verification is DISABLED (MAGICORE_ALLOW_UNTRUSTED=1) — connections are vulnerable to interception"
+                );
+            }
             builder = builder.danger_accept_invalid_certs(true);
         }
 

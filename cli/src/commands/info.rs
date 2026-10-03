@@ -32,11 +32,14 @@ pub async fn run(package: String, json: bool) -> Result<()> {
         let core_label = detect_core_label(&package, meta.description.as_deref().unwrap_or(""));
 
         if json {
+            let mut versions: Vec<String> = meta.versions.keys().cloned().collect();
+            versions.sort();
             let output = InfoJson {
                 name: meta.name.clone(),
                 description: meta.description.clone().unwrap_or_default(),
                 core_support: core_label.clone(),
                 version_count: meta.versions.len(),
+                versions,
                 dist_tags: meta
                     .dist_tags
                     .iter()
@@ -78,6 +81,44 @@ pub async fn run(package: String, json: bool) -> Result<()> {
         }
 
         Ok(())
+    }
+}
+
+/// Return registry version metadata as JSON without printing it.
+/// Trả metadata phiên bản registry dạng JSON mà không in ra stdout.
+pub async fn versions_json(package: &str) -> Result<String> {
+    #[cfg(not(feature = "web"))]
+    {
+        let _ = package;
+        return Err(crate::error::info_no_web_adapter());
+    }
+
+    #[cfg(feature = "web")]
+    {
+        let registry = mgc_web_adapter::native::npm_registry::NpmRegistry::new(&web_registry_url());
+        let meta = registry
+            .fetch_metadata(package)
+            .await
+            .map_err(|error| crate::error::registry_fetch_failed(package, &error))?;
+        let mut versions: Vec<String> = meta.versions.keys().cloned().collect();
+        versions.sort();
+        let payload = InfoJson {
+            name: meta.name.clone(),
+            description: meta.description.clone().unwrap_or_default(),
+            core_support: detect_core_label(
+                package,
+                meta.description.as_deref().unwrap_or_default(),
+            ),
+            version_count: versions.len(),
+            versions,
+            dist_tags: meta
+                .dist_tags
+                .iter()
+                .map(|(name, version)| (name.clone(), version.clone()))
+                .collect(),
+            local_version: detect_local_version(package),
+        };
+        Ok(serde_json::to_string_pretty(&payload)?)
     }
 }
 
@@ -198,6 +239,7 @@ struct InfoJson {
     description: String,
     core_support: String,
     version_count: usize,
+    versions: Vec<String>,
     dist_tags: Vec<(String, String)>,
     local_version: Option<String>,
 }
