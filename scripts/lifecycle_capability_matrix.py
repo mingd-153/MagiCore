@@ -549,24 +549,15 @@ LANES = [
         "note": "per-tier: js=web-pipeline, android=Maven-engine, ios=CocoaPods-CDN-verify; invoked lane has no runner and errors (fail-closed); iOS tier fail-closed without Podfile.lock",
         "owner_by_operation": {},
     },
-    # ===== Evidence-only lanes (P0-6, Tech Lead 2026-09-15) =====
-    # Five lanes RECORD evidence but NEVER gate a release. Their external
-    # toolchains are often absent on dev machines and CI runners — when a
-    # probe fails, EVERY dimension is recorded as `unverified` (honest
-    # absence, never a pass, never a silent skip) and the verdict becomes
-    # `evidence-unverified`. The JSON carries `"evidence_only": true` and
-    # `"gate_role": "evidence-only"` so no consumer can mistake them for
-    # release-blocking lanes. Owner taxonomy is STILL declared (the Gate
-    # 11-C owner gate stays intact — evidence-only is not a metadata
-    # bypass).
-    # (Năm lane CHỈ-GHI-BẰNG-CHỨNG, KHÔNG bao giờ gate release. Toolchain
-    # ngoài của chúng thường vắng trên máy dev và runner CI — probe hụt thì
-    # MỌI dimension ghi `unverified` (vắng mặt trung thực, không phải pass,
-    # không skip âm thầm) và verdict thành `evidence-unverified`. JSON mang
-    # `"evidence_only": true` + `"gate_role": "evidence-only"` để không
-    # consumer nào đọc nhầm thành lane chặn release. Taxonomy owner VẪN
-    # khai (cổng owner Gate 11-C giữ nguyên — evidence-only không phải
-    # lối thoát khỏi metadata).)
+    # ===== Lifecycle evidence-only lanes (P0-6, Tech Lead 2026-09-15) =====
+    # These lanes record lifecycle evidence without gating lifecycle
+    # promotion. Missing external toolchains produce `unverified` dimensions
+    # and `evidence-unverified`, never a pass. Owner taxonomy remains declared;
+    # MGC-native package claims still require the independent native-PM gate.
+    # (Các lane này ghi lifecycle evidence nhưng không chặn lifecycle
+    # promotion. Thiếu toolchain ngoài ghi dimension `unverified` và verdict
+    # `evidence-unverified`, không giả pass. Owner vẫn phải khai; claim package
+    # MGC-native vẫn phải qua gate native-PM riêng.)
     {
         "core": "game",
         "language": "rust",
@@ -1084,6 +1075,14 @@ PASS_STATUSES = (STATUS_NATIVE, STATUS_MANAGED, STATUS_PLAIN)
 ALL_STATUSES = frozenset(
     (*PASS_STATUSES, STATUS_UNVERIFIED, STATUS_UNSUPPORTED, STATUS_FAILED)
 )
+LIFECYCLE_VERDICTS = frozenset(
+    (
+        "orchestration-lifecycle-passed",
+        "partial",
+        "unsupported",
+        "evidence-unverified",
+    )
+)
 
 # JSON schema version v7: framework-qualified lanes, per-dimension lifecycle
 # ownership, and the full compiled framework-qualification inventory.
@@ -1216,12 +1215,124 @@ def native_pm_claim_errors(lanes):
     for lane in lanes:
         if lane.get("dependency_owner") != "mgc-native":
             continue
-        if lane.get("native_pm_verdict") != "native-pm-supported":
-            failures.append(
-                f"{lane['core']}/{lane['language']} declares mgc-native but "
-                f"native_pm_verdict = {lane.get('native_pm_verdict')}"
-            )
+        failures.extend(native_pm_lane_errors(lane))
     return failures
+
+
+def native_pm_lane_errors(lane):
+    """Validate native-PM evidence only for native claims; keep other owners explicit.
+    (Chỉ đòi native-PM evidence với claim native; owner khác phải khai rõ.)"""
+    label = f"{lane.get('core', '?')}/{lane.get('language', '?')}"
+    owner = lane.get("dependency_owner")
+    install_owner = lane.get("install_owner")
+    verdict = lane.get("native_pm_verdict")
+    valid_install_owners = {
+        "native-engine",
+        "managed-delegation",
+        "plain-delegation",
+        "unsupported",
+    }
+    if owner not in {"mgc-native", "delegated", "scaffold-only", "unsupported"}:
+        return [f"{label} has invalid dependency_owner {owner!r}"]
+    if install_owner not in valid_install_owners:
+        return [f"{label} has invalid install_owner {install_owner!r}"]
+    failures = []
+    lifecycle_verdict = lane.get("verdict")
+    if (
+        not isinstance(lifecycle_verdict, str)
+        or lifecycle_verdict not in LIFECYCLE_VERDICTS
+    ):
+        failures.append(f"{label} has invalid lifecycle verdict {lifecycle_verdict!r}")
+    if owner == "mgc-native":
+        if install_owner != "native-engine":
+            failures.append(
+                f"{label} declares mgc-native with install_owner {install_owner!r}"
+            )
+        dimensions = lane.get("dimensions")
+        if not isinstance(dimensions, dict):
+            failures.append(f"{label} has malformed native-PM dimensions")
+            dimensions = {}
+        delegated = lane.get("native_pm_delegated")
+        if not isinstance(delegated, list):
+            failures.append(f"{label} has malformed native-PM delegation evidence")
+            delegated = ["invalid"]
+        operation_owners = lane.get("owner_by_operation")
+        if not isinstance(operation_owners, dict):
+            failures.append(f"{label} has malformed native-PM operation ownership")
+            operation_owners = {}
+        if not native_pm_supported(
+            owner,
+            install_owner,
+            delegated,
+            dimensions,
+            operation_owners,
+        ):
+            failures.append(
+                f"{label} lacks complete native package-manager evidence"
+            )
+        if verdict != "native-pm-supported":
+            failures.append(
+                f"{label} declares mgc-native but native_pm_verdict = {verdict!r}"
+            )
+        return failures
+    if owner == "delegated":
+        if install_owner not in {"managed-delegation", "plain-delegation"}:
+            failures.append(
+                f"{label} delegated owner has incompatible install_owner {install_owner!r}"
+            )
+        expected = (
+            "compatibility-passed"
+            if lifecycle_verdict == "orchestration-lifecycle-passed"
+            else "not-native-pm"
+        )
+        if verdict != expected:
+            failures.append(
+                f"{label} delegated owner requires native_pm_verdict {expected!r}, got {verdict!r}"
+            )
+        return failures
+    release_reason = lane.get("release_scope_out_reason")
+    if not isinstance(release_reason, str) or not release_reason.strip():
+        failures.append(
+            f"{label} {owner} owner is missing an explicit release scope-out reason"
+        )
+    if install_owner != "unsupported" or verdict != "unsupported":
+        failures.append(
+            f"{label} {owner} owner requires unsupported install and native-PM verdicts"
+        )
+    return failures
+
+
+def lifecycle_lane_owner_contract_errors(lane):
+    """Require matrix package owners to match the source lane registry.
+    (Bắt owner package trong matrix khớp registry lane trong source.)"""
+    core = lane.get("core", "?")
+    language = lane.get("language", "?")
+    framework_id = lane.get("framework_id", "") or ""
+    label = f"{core}/{language}" + (f"#{framework_id}" if framework_id else "")
+    source_lane = next(
+        (
+            candidate for candidate in LANES
+            if candidate["core"] == core
+            and candidate["language"] == language
+            and (candidate.get("framework_id", "") or "") == framework_id
+        ),
+        None,
+    )
+    if source_lane is None:
+        return [f"{label} has no source owner contract"]
+    errors = []
+    for field, description in (
+        ("dependency_owner", "dependency owner"),
+        ("install_owner", "install owner"),
+    ):
+        actual = lane.get(field)
+        expected = source_lane.get(field)
+        if actual != expected:
+            errors.append(
+                f"{label} {description} differs from source contract: "
+                f"matrix={actual!r}, source={expected!r}"
+            )
+    return errors
 
 
 def evidence_commit_error(
@@ -1285,6 +1396,45 @@ PLATFORM_EVIDENCE_RELEASE_SCOPE = frozenset(
     (lane["core"], lane["language"], lane.get("framework_id", ""))
     for lane in LANES
 )
+
+# Keep lifecycle evidence-only lanes in the inventory with an exact reason.
+# A scope-out never removes the lane or its package claim; native claims still
+# pass the separate completeness gate for every required dimension/operation.
+# (Giữ lifecycle evidence-only lanes trong inventory cùng lý do chính xác.
+# Scope-out không xóa lane hay claim package; claim native vẫn phải qua gate
+# riêng kiểm đủ dimension và operation.)
+LANE_RELEASE_SCOPE_OUT_REASONS = {
+    ("app", "swift", ""): (
+        "Swift lifecycle evidence remains non-blocking until release E2E qualifies app lifecycle parity."
+    ),
+    ("app", "objc", ""): (
+        "Objective-C dependency lifecycle is unsupported and not qualified for v1.2 release."
+    ),
+    ("app", "react-native", ""): (
+        "React Native has scaffold evidence only; native dependency lifecycle is not qualified for v1.2."
+    ),
+    ("clo", "terraform", ""): (
+        "Terraform dependency operations are unsupported; the declared cloud release lanes are CDK and Pulumi."
+    ),
+    ("game", "rust", ""): (
+        "Game/Rust lifecycle evidence remains non-blocking until the game lane is qualified for release."
+    ),
+    ("hardware", "benchmark", ""): (
+        "Hardware is generator and benchmark tooling only; it has no package lifecycle."
+    ),
+    ("iot", "rust", ""): (
+        "IoT/Rust lifecycle evidence remains non-blocking until board toolchains and the lane are release-qualified."
+    ),
+    ("cicd", "github-actions", ""): (
+        "GitHub Actions is a workflow scaffold; install, test, and build run on the external CI provider."
+    ),
+}
+
+
+def release_scope_out_reason(core, language, framework_id=""):
+    """Return the source-controlled reason a lane is visible but out of release scope.
+    (Trả lý do từ source cho lane vẫn hiện nhưng nằm ngoài phạm vi release.)"""
+    return LANE_RELEASE_SCOPE_OUT_REASONS.get((core, language, framework_id or ""))
 
 
 # Manifest markers per language: the file that PROVES the scaffold
@@ -2169,8 +2319,8 @@ def validate_dep_gate_consistency(mgc_bin=None) -> int:
 
 
 def framework_catalog_errors(catalog, lanes):
-    """Require every binary-reported framework to be fully owned and lane-tested.
-    (Bắt mọi framework trong binary phải có ownership native đầy đủ và lane E2E.)"""
+    """Require native-qualified frameworks to have full evidence and scope-outs to explain gaps.
+    (Framework claim native phải đủ evidence; scope-out phải nêu rõ phần còn thiếu.)"""
     if not isinstance(catalog, list) or not catalog:
         return ["compiled capability output has no framework catalog"]
     errors = []
@@ -2197,9 +2347,13 @@ def framework_catalog_errors(catalog, lanes):
         status = row.get("status")
         if not isinstance(status, str) or status not in valid_statuses:
             errors.append(f"{core}/{framework} has unknown qualification status {status!r}")
-        elif status != "mgc-engine-path":
-            errors.append(f"{core}/{framework} is scaffold-only, not lifecycle-qualified")
-        if key not in lane_keys:
+        elif status == "scaffold-only":
+            evidence = row.get("evidence")
+            if not isinstance(evidence, str) or not evidence.strip():
+                errors.append(
+                    f"{core}/{framework} scaffold-only entry is missing its scope-out reason"
+                )
+        if status == "mgc-engine-path" and key not in lane_keys:
             errors.append(f"{core}/{framework} has no lifecycle evidence lane")
         ownership = row.get("dependency_ownership")
         if not isinstance(ownership, dict):
@@ -2214,10 +2368,16 @@ def framework_catalog_errors(catalog, lanes):
         for operation in ALL_DEPENDENCY_OPERATIONS:
             cell = ownership.get(operation)
             owner = cell.get("owner") if isinstance(cell, dict) else None
-            if owner != "mgc-native":
+            valid_owners = {"mgc-native", "scaffold-only", "unsupported"}
+            if status == "mgc-engine-path" and owner != "mgc-native":
                 errors.append(
                     f"{core}/{framework} operation {operation} is not MGC-native "
                     f"(owner={owner!r})"
+                )
+            elif status == "scaffold-only" and owner not in valid_owners:
+                errors.append(
+                    f"{core}/{framework} scoped-out operation {operation} has "
+                    f"invalid owner {owner!r}"
                 )
     for lane in lanes:
         if not isinstance(lane, dict) or not lane.get("framework_id"):
@@ -2460,8 +2620,21 @@ def platform_evidence_errors(
         if lane is None:
             errors.append(f"platform release-scope lane {tag} is missing")
             continue
-        if lane.get("toolchain_available") is not True:
+        expected_scope_out_reason = release_scope_out_reason(core, language, framework_id)
+        actual_scope_out_reason = lane.get("release_scope_out_reason")
+        if actual_scope_out_reason != expected_scope_out_reason:
+            errors.append(
+                f"platform lane {tag} release scope-out reason differs from source contract"
+            )
+        scope_out = expected_scope_out_reason is not None
+        if not scope_out and lane.get("toolchain_available") is not True:
             errors.append(f"platform lane {tag} toolchain is unavailable or unverified")
+        expected_gate_role = "scoped-out" if scope_out else "release-blocking"
+        if lane.get("gate_role") != expected_gate_role:
+            errors.append(
+                f"platform lane {tag} gate_role is {lane.get('gate_role')!r}, "
+                f"expected {expected_gate_role!r}"
+            )
         required = lane.get("required_dimensions")
         dimensions = lane.get("dimensions")
         if (
@@ -2488,6 +2661,11 @@ def platform_evidence_errors(
         if source_lane is None:
             errors.append(f"platform release-scope lane {tag} has no source owner contract")
             continue
+        errors.extend(lifecycle_lane_owner_contract_errors(lane))
+        if lane.get("evidence_only") is not bool(source_lane.get("evidence_only")):
+            errors.append(
+                f"platform lane {tag} evidence_only differs from source contract"
+            )
         if tuple(required) != source_required:
             errors.append(
                 f"platform release-scope lane {tag} required dimensions differ from source contract: "
@@ -2520,12 +2698,12 @@ def platform_evidence_errors(
             )
         enforced_required = source_required
         failed = [name for name in enforced_required if dimensions.get(name) not in PASS_STATUSES]
-        if failed:
+        if failed and not scope_out:
             errors.append(
                 f"platform release-scope lane {tag} has non-passing required dimensions: "
                 + ", ".join(f"{name}={dimensions.get(name, 'missing')}" for name in failed)
             )
-        if lane.get("verdict") != "orchestration-lifecycle-passed":
+        if not scope_out and lane.get("verdict") != "orchestration-lifecycle-passed":
             errors.append(
                 f"platform release-scope lane {tag} verdict is "
                 f"{lane.get('verdict')!r}, not orchestration-lifecycle-passed"
@@ -2563,36 +2741,19 @@ def platform_evidence_errors(
                             f"contract for {dimension}: matrix={owner!r}, "
                             f"source={source_owner!r}"
                         )
-                if isinstance(owner, str) and owner in LIFECYCLE_OWNER_VALUES and owner != "mgc-native":
-                    errors.append(
-                        f"platform lane {tag} required dimension {dimension} is not "
-                        f"MGC-native (owner={owner})"
-                    )
-                elif dimensions.get(dimension) != lifecycle_status_for_owner(owner):
+                if (
+                    (not scope_out or lane.get("toolchain_available") is True)
+                    and isinstance(owner, str)
+                    and owner in LIFECYCLE_OWNER_VALUES
+                    and dimensions.get(dimension)
+                    != lifecycle_status_for_owner(owner)
+                ):
                     errors.append(
                         f"platform lane {tag} status/owner mismatch for {dimension}: "
                         f"status={dimensions.get(dimension)!r}, owner={owner!r}"
                     )
         if lane.get("dependency_owner") != "mgc-native":
-            errors.append(
-                f"platform lane {tag} requires mgc-native ownership, got "
-                f"{lane.get('dependency_owner')!r}"
-            )
-        if not native_pm_supported(
-            lane.get("dependency_owner"),
-            lane.get("install_owner"),
-            lane.get("native_pm_delegated", []),
-            dimensions,
-            lane.get("owner_by_operation", {}),
-        ):
-            errors.append(
-                f"platform lane {tag} lacks complete native package-manager evidence"
-            )
-        if lane.get("native_pm_verdict") != "native-pm-supported":
-            errors.append(
-                f"platform lane {tag} native-PM verdict is "
-                f"{lane.get('native_pm_verdict')!r}, not native-pm-supported"
-            )
+            errors.extend(native_pm_lane_errors(lane))
     errors.extend(native_pm_claim_errors(lanes))
     errors.extend(framework_catalog_errors(matrix.get("framework_catalog"), lanes))
     return errors
@@ -3600,16 +3761,21 @@ def main() -> int:
                 for dimension in lane["required_dims"]
             },
             # P0-6 (Tech Lead 2026-09-15): lanes are SPLIT by gate role —
-            # `release-blocking` lanes gate the RC, `evidence-only` lanes
-            # record what the ecosystem does today and NEVER gate. The
-            # machine-readable split means a consumer never has to guess
-            # from lane names.
-            # (P0-6: lane TÁCH theo vai trò gate — lane `release-blocking`
-            # gate RC, lane `evidence-only` chỉ ghi hệ sinh thái hôm nay và
-            # KHÔNG BAO GIỜ gate. Tách máy-đọc-được để consumer không phải
-            # đoán từ tên lane.)
+            # Lifecycle evidence-only lanes stay visible with a source reason;
+            # their native-PM claims, when declared, remain strictly gated.
+            # (Lane lifecycle evidence-only vẫn hiện cùng lý do từ source;
+            # claim native-PM nếu có vẫn bị gate nghiêm ngặt.)
             "evidence_only": bool(lane.get("evidence_only")),
-            "gate_role": "evidence-only" if lane.get("evidence_only") else "release-blocking",
+            "release_scope_out_reason": release_scope_out_reason(
+                lane["core"], lane["language"], lane.get("framework_id", "")
+            ),
+            "gate_role": (
+                "scoped-out"
+                if release_scope_out_reason(
+                    lane["core"], lane["language"], lane.get("framework_id", "")
+                )
+                else "release-blocking"
+            ),
             "toolchain_available": r.get("toolchain_available"),
             # Honest dimension rename (P0-mới-2): lanes whose install is
             # proven against a lane-injected fixture (not the template's
