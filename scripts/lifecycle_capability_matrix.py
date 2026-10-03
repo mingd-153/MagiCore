@@ -2865,6 +2865,9 @@ def lifecycle_environment(sandbox: str, project_path: str) -> dict[str, str]:
     go_path = os.path.join(sandbox, ".go")
     env["HOME"] = home
     env["USERPROFILE"] = home
+    # Windows dirs::home_dir can ignore HOME/USERPROFILE; pin the shared store.
+    # Windows dirs::home_dir có thể bỏ qua HOME/USERPROFILE; ghim store riêng.
+    env["MAGICORE_STORE_ROOT"] = os.path.join(home, ".magicore", "store")
     env["TMPDIR"] = temp
     env["TMP"] = temp
     env["TEMP"] = temp
@@ -2902,11 +2905,6 @@ def lifecycle_environment(sandbox: str, project_path: str) -> dict[str, str]:
     env["PUB_CACHE"] = os.path.join(cache, "pub")
     env["NUGET_PACKAGES"] = os.path.join(cache, "nuget")
     env["SWIFT_MODULECACHE_PATH"] = os.path.join(cache, "swift-modules")
-    # GlobalPaths derives ~/.magicore from HOME (dirs::home_dir); there is
-    # no MAGICORE_STORE_ROOT override in the production path implementation.
-    # (GlobalPaths lấy ~/.magicore từ HOME; code production không đọc biến
-    # MAGICORE_STORE_ROOT.)
-    env.pop("MAGICORE_STORE_ROOT", None)
     env["MGC_CACHE_DIR"] = os.path.join(project_path, ".magicore")
     # Several tools (notably Go) require TMPDIR to exist before startup.
     # Create only lane-owned tool/cache directories; project state remains
@@ -2922,6 +2920,7 @@ def lifecycle_environment(sandbox: str, project_path: str) -> dict[str, str]:
         "PYTHONPYCACHEPREFIX",
         "CARGO_HOME",
         "CARGO_TARGET_DIR",
+        "MAGICORE_STORE_ROOT",
         "PIP_CACHE_DIR",
         "UV_CACHE_DIR",
         "npm_config_cache",

@@ -63,6 +63,14 @@ mod script_policy_tests;
 #[path = "test/audit_lane_test.rs"]
 mod audit_lane_test;
 
+/// Serialize tests that change process-wide environment variables.
+/// Tuần tự hóa các test thay đổi biến môi trường dùng chung của process.
+#[cfg(test)]
+pub(crate) fn environment_test_lock() -> &'static std::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+}
+
 pub use lockfile::{read_web_lockfile, read_web_lockfile_checked};
 pub use manifest::PackageJson;
 pub use prefetch::spawn_tarball_download;

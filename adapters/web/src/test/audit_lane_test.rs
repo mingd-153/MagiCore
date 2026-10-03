@@ -436,11 +436,7 @@ fn v4_pins_returns_none_for_legacy_locks() {
 fn insecure_loopback_requires_explicit_opt_in() {
     // Default deny: loopback http is rejected unless the operator opts in.
     // Serialized: env is process-global.
-    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-    let _guard = LOCK
-        .get_or_init(|| std::sync::Mutex::new(()))
-        .lock()
-        .unwrap();
+    let _guard = crate::environment_test_lock().lock().unwrap();
     let old = std::env::var_os("MAGICORE_WEB_ALLOW_INSECURE_LOCALHOST");
     let restore = |previous: Option<std::ffi::OsString>| {
         if let Some(value) = previous {

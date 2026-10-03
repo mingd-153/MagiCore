@@ -196,6 +196,7 @@ impl MatrixSandbox {
             .current_dir(cwd)
             .env("PATH", self.path_env())
             .env("HOME", self.home_dir.path())
+            .env("MAGICORE_STORE_ROOT", self.store_root())
             .env("MGC_CANARY_LOG", self.canary_log.as_os_str())
             .env_remove("MGC_COMPAT_RUNTIME");
         #[cfg(windows)]
@@ -215,6 +216,12 @@ impl MatrixSandbox {
                 String::from_utf8_lossy(&out.stderr)
             ),
         )
+    }
+
+    /// Resolve this sandbox's package-store root.
+    /// Trả gốc package store riêng của sandbox này.
+    fn store_root(&self) -> std::path::PathBuf {
+        self.home_dir.path().join(".magicore/store")
     }
 
     fn path_env(&self) -> std::ffi::OsString {
@@ -1131,11 +1138,7 @@ fn matrix_python_cached_reinstall_survives_registry_outage() {
         manifest_before
     );
     assert!(
-        !cold_sandbox
-            .home_dir
-            .path()
-            .join(".magicore/store/pypi")
-            .exists(),
+        !cold_sandbox.store_root().join("pypi").exists(),
         "cold offline preflight must not create a package store"
     );
     cold_sandbox.assert_no_spawn("cold offline native Python install");

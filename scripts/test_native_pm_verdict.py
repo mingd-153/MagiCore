@@ -98,6 +98,10 @@ class LifecycleEnvironmentIsolation(unittest.TestCase):
         )
         self.assertEqual(env["HOME"], os.path.join("/tmp/mgc-lane-sandbox", ".home"))
         self.assertEqual(
+            env["MAGICORE_STORE_ROOT"],
+            os.path.join("/tmp/mgc-lane-sandbox", ".home", ".magicore", "store"),
+        )
+        self.assertEqual(
             env["CARGO_HOME"], os.path.join("/tmp/mgc-lane-sandbox", ".cargo-home")
         )
         self.assertEqual(
@@ -117,7 +121,6 @@ class LifecycleEnvironmentIsolation(unittest.TestCase):
         self.assertEqual(
             env["DENO_DIR"], os.path.join("/tmp/mgc-lane-sandbox", ".cache", "deno")
         )
-        self.assertNotIn("MAGICORE_STORE_ROOT", env)
 
     def test_pulumi_lane_uses_ephemeral_local_backend_and_drops_cloud_credentials(self):
         with tempfile.TemporaryDirectory() as root:

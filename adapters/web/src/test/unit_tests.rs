@@ -17,7 +17,6 @@ use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
 };
-use std::sync::{Mutex, OnceLock};
 use tar::{Builder, Header};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -2940,6 +2939,8 @@ async fn test_install_materializes_nested_conflicting_dependency_versions() {
 
 #[tokio::test]
 async fn test_install_retries_flaky_tarball_download() {
+    let _env_guard = env_test_lock().lock().unwrap();
+    let _allow_insecure = ScopedEnvVar::set("MAGICORE_WEB_ALLOW_INSECURE_LOCALHOST", "1");
     let dir = tempdir_real().unwrap();
     std::fs::write(
         dir.path().join("package.json"),
@@ -3689,9 +3690,27 @@ fn reg_key(url: &str) -> String {
         .collect()
 }
 
-fn env_test_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
+fn env_test_lock() -> &'static std::sync::Mutex<()> {
+    crate::environment_test_lock()
+}
+
+struct ScopedEnvVar {
+    key: &'static str,
+    previous: Option<std::ffi::OsString>,
+}
+
+impl ScopedEnvVar {
+    fn set(key: &'static str, value: &str) -> Self {
+        let previous = std::env::var_os(key);
+        unsafe { std::env::set_var(key, value) };
+        Self { key, previous }
+    }
+}
+
+impl Drop for ScopedEnvVar {
+    fn drop(&mut self) {
+        restore_env_var(self.key, self.previous.take());
+    }
 }
 
 #[test]
