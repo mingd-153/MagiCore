@@ -488,11 +488,22 @@ fn windows_native_inspector_detects_forbidden_descendant() -> Result<(), Box<dyn
     let mut child = std::process::Command::new(&forbidden)
         .args(["/D", "/C", "ping -n 10 127.0.0.1 > NUL"])
         .spawn()?;
-    let found = super::find_forbidden_descendant(std::process::id(), &[], directory.path());
+    let mut ancestry = super::WindowsProcessAncestry::default();
+    let found = super::find_forbidden_descendant_with_timeout(
+        std::process::id(),
+        &[],
+        directory.path(),
+        std::time::Instant::now(),
+        None,
+        &mut ancestry,
+        || Ok(false),
+    );
     super::terminate_process_tree(child.id());
     let _ = child.kill();
     let _ = child.wait();
-    let found = found?.ok_or("native Windows inspector must detect npm.exe")?;
+    let super::WindowsProcessScan::Forbidden(found) = found? else {
+        return Err("native Windows inspector must detect npm.exe".into());
+    };
     assert_eq!(found.name, "npm");
     Ok(())
 }
@@ -550,5 +561,340 @@ fn command_line_is_required_when_missing_for_any_child_image() {
         super::forbidden_process_name("npm.exe", "", &[]).as_deref(),
         Some("npm"),
         "a forbidden executable must still be rejected when its command line is empty"
+    );
+}
+
+#[test]
+fn windows_metadata_retry_rewalks_new_descendants() {
+    use std::collections::VecDeque;
+    use std::ffi::OsString;
+
+    let snapshot = |pid, parent_pid, creation_time, image_name: &str, command: &[&str]| {
+        super::WindowsProcessSnapshot {
+            pid,
+            parent_pid,
+            creation_time: Some(creation_time),
+            image_name: image_name.to_owned(),
+            command: command.iter().map(OsString::from).collect(),
+        }
+    };
+    let snapshots = VecDeque::from([
+        vec![
+            snapshot(100, None, 1, "runner.exe", &["runner.exe"]),
+            snapshot(101, Some(100), 2, "node.exe", &[]),
+        ],
+        vec![
+            snapshot(100, None, 1, "runner.exe", &["runner.exe"]),
+            snapshot(102, Some(101), 3, "npm.exe", &["npm.exe", "install"]),
+        ],
+    ]);
+    let mut snapshots = snapshots;
+    let mut inspections = 0;
+    let mut ancestry = super::WindowsProcessAncestry::default();
+
+    let found = super::retry_windows_process_scan(
+        std::time::Instant::now(),
+        None,
+        || Ok(false),
+        || {
+            inspections += 1;
+            let snapshot = snapshots.pop_front().expect("retry must inspect again");
+            super::scan_windows_process_snapshot(100, &mut ancestry, &snapshot, &[], |_| Ok(None))
+        },
+    )
+    .expect("process snapshot inspection should succeed");
+
+    assert_eq!(inspections, 2, "the retry must refresh and rescan the tree");
+    let super::WindowsProcessScan::Forbidden(found) = found else {
+        panic!("npm below an exited launcher must still be rejected");
+    };
+    assert_eq!(found.pid, 102);
+    assert_eq!(found.name, "npm");
+}
+
+#[test]
+fn windows_process_scan_keeps_ancestry_across_clean_snapshots() {
+    use std::ffi::OsString;
+
+    let mut ancestry = super::WindowsProcessAncestry::default();
+    let first_snapshot = [
+        super::WindowsProcessSnapshot {
+            pid: 100,
+            parent_pid: None,
+            creation_time: Some(1),
+            image_name: "runner.exe".to_owned(),
+            command: vec![OsString::from("runner.exe")],
+        },
+        super::WindowsProcessSnapshot {
+            pid: 101,
+            parent_pid: Some(100),
+            creation_time: Some(2),
+            image_name: "node.exe".to_owned(),
+            command: vec![OsString::from("node.exe"), OsString::from("script.js")],
+        },
+    ];
+    assert!(matches!(
+        super::scan_windows_process_snapshot(100, &mut ancestry, &first_snapshot, &[], |_| {
+            Ok(None)
+        })
+        .expect("initial tree scan should succeed"),
+        super::WindowsProcessScan::Clean
+    ));
+
+    let second_snapshot = [
+        super::WindowsProcessSnapshot {
+            pid: 100,
+            parent_pid: None,
+            creation_time: Some(1),
+            image_name: "runner.exe".to_owned(),
+            command: vec![OsString::from("runner.exe")],
+        },
+        super::WindowsProcessSnapshot {
+            pid: 102,
+            parent_pid: Some(101),
+            creation_time: Some(3),
+            image_name: "npm.exe".to_owned(),
+            command: vec![OsString::from("npm.exe"), OsString::from("install")],
+        },
+    ];
+    let result =
+        super::scan_windows_process_snapshot(100, &mut ancestry, &second_snapshot, &[], |_| {
+            Ok(None)
+        })
+        .expect("detached descendant scan should succeed");
+
+    let super::WindowsProcessScan::Forbidden(found) = result else {
+        panic!("npm below a previously observed launcher must still be rejected");
+    };
+    assert_eq!(found.pid, 102);
+    assert_eq!(found.name, "npm");
+}
+
+#[test]
+fn windows_process_scan_fails_closed_on_child_below_reused_pid() {
+    use std::ffi::OsString;
+
+    let snapshot = |pid, parent_pid, creation_time, image_name: &str, command: &[&str]| {
+        super::WindowsProcessSnapshot {
+            pid,
+            parent_pid,
+            creation_time: Some(creation_time),
+            image_name: image_name.to_owned(),
+            command: command.iter().map(OsString::from).collect(),
+        }
+    };
+    let first_snapshot = vec![
+        snapshot(100, None, 1, "runner.exe", &["runner.exe"]),
+        snapshot(101, Some(100), 2, "node.exe", &["node.exe", "script.js"]),
+    ];
+    let second_snapshot = vec![
+        snapshot(100, None, 1, "runner.exe", &["runner.exe"]),
+        snapshot(101, Some(999), 10, "unrelated.exe", &["unrelated.exe"]),
+        snapshot(102, Some(101), 11, "npm.exe", &["npm.exe", "install"]),
+    ];
+    let mut ancestry = super::WindowsProcessAncestry::default();
+    assert!(matches!(
+        super::scan_windows_process_snapshot(100, &mut ancestry, &first_snapshot, &[], |_| Ok(
+            None
+        ),)
+        .expect("initial ancestry scan should succeed"),
+        super::WindowsProcessScan::Clean
+    ));
+
+    let result = super::retry_windows_process_scan(
+        std::time::Instant::now(),
+        None,
+        || Ok(false),
+        || {
+            super::scan_windows_process_snapshot(100, &mut ancestry, &second_snapshot, &[], |_| {
+                Ok(None)
+            })
+        },
+    );
+
+    let error = match result {
+        Ok(_) => panic!("a child below a reused PID must fail closed"),
+        Err(error) => error.to_string(),
+    };
+    assert!(error.contains("ambiguous after PID reuse"), "{error}");
+    assert!(!error.contains("forbidden child process"), "{error}");
+}
+
+#[test]
+fn windows_process_scan_ignores_unrelated_process_after_pid_reuse() {
+    use std::ffi::OsString;
+
+    let mut ancestry = super::WindowsProcessAncestry::default();
+    let first_snapshot = [
+        super::WindowsProcessSnapshot {
+            pid: 100,
+            parent_pid: None,
+            creation_time: Some(1),
+            image_name: "runner.exe".to_owned(),
+            command: vec![OsString::from("runner.exe")],
+        },
+        super::WindowsProcessSnapshot {
+            pid: 101,
+            parent_pid: Some(100),
+            creation_time: Some(2),
+            image_name: "node.exe".to_owned(),
+            command: vec![OsString::from("node.exe"), OsString::from("script.js")],
+        },
+    ];
+    super::scan_windows_process_snapshot(100, &mut ancestry, &first_snapshot, &[], |_| Ok(None))
+        .expect("initial ancestry scan should succeed");
+
+    let second_snapshot = [
+        super::WindowsProcessSnapshot {
+            pid: 100,
+            parent_pid: None,
+            creation_time: Some(1),
+            image_name: "runner.exe".to_owned(),
+            command: vec![OsString::from("runner.exe")],
+        },
+        super::WindowsProcessSnapshot {
+            pid: 101,
+            parent_pid: Some(999),
+            creation_time: Some(10),
+            image_name: "npm.exe".to_owned(),
+            command: vec![OsString::from("npm.exe"), OsString::from("install")],
+        },
+    ];
+
+    assert!(matches!(
+        super::scan_windows_process_snapshot(100, &mut ancestry, &second_snapshot, &[], |_| Ok(
+            None
+        ),)
+        .expect("unrelated PID reuse without descendants should remain clean"),
+        super::WindowsProcessScan::Clean
+    ));
+}
+
+#[test]
+fn windows_process_scan_retries_transient_creation_time_unavailability() {
+    use std::cell::Cell;
+    use std::ffi::OsString;
+
+    let snapshot = [
+        super::WindowsProcessSnapshot {
+            pid: 100,
+            parent_pid: None,
+            creation_time: Some(1),
+            image_name: "runner.exe".to_owned(),
+            command: vec![OsString::from("runner.exe")],
+        },
+        super::WindowsProcessSnapshot {
+            pid: 101,
+            parent_pid: Some(100),
+            creation_time: None,
+            image_name: "node.exe".to_owned(),
+            command: vec![OsString::from("node.exe"), OsString::from("script.js")],
+        },
+    ];
+    let mut ancestry = super::WindowsProcessAncestry::default();
+    let inspections = Cell::new(0);
+    let identity_queries = Cell::new(0);
+
+    let result = super::retry_windows_process_scan(
+        std::time::Instant::now(),
+        None,
+        || Ok(false),
+        || {
+            inspections.set(inspections.get() + 1);
+            super::scan_windows_process_snapshot(100, &mut ancestry, &snapshot, &[], |_| {
+                let query = identity_queries.get() + 1;
+                identity_queries.set(query);
+                Ok((query > 1).then_some(2))
+            })
+        },
+    )
+    .expect("transient process creation-time lookup should recover");
+
+    assert!(matches!(result, super::WindowsProcessScan::Clean));
+    assert_eq!(
+        inspections.get(),
+        2,
+        "retry must refresh the full process tree"
+    );
+    assert_eq!(
+        identity_queries.get(),
+        2,
+        "retry must query process identity again"
+    );
+}
+
+#[test]
+fn windows_metadata_retry_stops_when_child_exits() {
+    use std::cell::Cell;
+
+    let running_checks = Cell::new(0);
+    let inspections = Cell::new(0);
+    let result = super::retry_windows_process_scan(
+        std::time::Instant::now(),
+        None,
+        || {
+            let check = running_checks.get() + 1;
+            running_checks.set(check);
+            Ok(check >= 3)
+        },
+        || {
+            inspections.set(inspections.get() + 1);
+            Ok(super::WindowsProcessScan::MissingCommandLine {
+                pid: 101,
+                image_name: "node.exe".to_owned(),
+            })
+        },
+    )
+    .expect("finished child should end retries cleanly");
+
+    assert!(matches!(result, super::WindowsProcessScan::ChildExited));
+    assert_eq!(inspections.get(), 1, "do not refresh after the child exits");
+}
+
+#[test]
+fn windows_metadata_retry_observes_child_exit_after_clean_scan() {
+    use std::cell::Cell;
+
+    let running_checks = Cell::new(0);
+    let result = super::retry_windows_process_scan(
+        std::time::Instant::now(),
+        None,
+        || {
+            let check = running_checks.get() + 1;
+            running_checks.set(check);
+            Ok(check == 2)
+        },
+        || Ok(super::WindowsProcessScan::Clean),
+    )
+    .expect("child exit during a clean scan should be observed");
+
+    assert!(matches!(result, super::WindowsProcessScan::ChildExited));
+}
+
+#[test]
+fn windows_metadata_retry_respects_command_deadline() {
+    use std::cell::Cell;
+
+    let inspections = Cell::new(0);
+    let result = super::retry_windows_process_scan(
+        std::time::Instant::now(),
+        Some(std::time::Duration::from_millis(1)),
+        || Ok(false),
+        || {
+            inspections.set(inspections.get() + 1);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            Ok(super::WindowsProcessScan::MissingCommandLine {
+                pid: 101,
+                image_name: "node.exe".to_owned(),
+            })
+        },
+    )
+    .expect("slow snapshot must stop retries at the command deadline");
+
+    assert!(matches!(result, super::WindowsProcessScan::DeadlineReached));
+    assert_eq!(
+        inspections.get(),
+        1,
+        "do not start another scan after timeout"
     );
 }

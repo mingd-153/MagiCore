@@ -13,12 +13,20 @@ use std::time::{Duration, Instant};
 const DEFAULT_EXEC_TIMEOUT_SECS: u64 = 1800;
 const EXEC_TIMEOUT_ENV: &str = "MGC_EXEC_TIMEOUT_SECS";
 const WAIT_POLL_INTERVAL_MS: u64 = 20;
-/// Retry transient Windows snapshots before treating unreadable child metadata as unsafe.
-/// Đọc lại snapshot Windows thoáng qua trước khi coi metadata tiến trình con là không an toàn.
+/// Retry for at most 500 ms of sleep while refreshing Windows child metadata.
+/// Chờ tối đa 500 ms tổng thời gian ngủ và liên tục làm mới metadata tiến trình con.
+#[cfg(any(windows, test))]
+const WINDOWS_COMMAND_LINE_RETRIES: usize = 20;
+#[cfg(any(windows, test))]
+const WINDOWS_COMMAND_LINE_RETRY_DELAY_MS: u64 = 25;
+#[cfg(any(windows, test))]
+/// Check child status during short waits so natural exits stay responsive.
+/// Kiểm tra trạng thái child trong lúc chờ ngắn để nhận biết thoát tự nhiên kịp thời.
+const WINDOWS_COMMAND_LINE_RETRY_POLL_INTERVAL_MS: u64 = 1;
 #[cfg(windows)]
-const WINDOWS_COMMAND_LINE_RETRIES: usize = 3;
+const WINDOWS_FILETIME_TICKS_PER_SECOND: u64 = 10_000_000;
 #[cfg(windows)]
-const WINDOWS_COMMAND_LINE_RETRY_DELAY_MS: u64 = 5;
+const WINDOWS_FILETIME_UNIX_EPOCH_OFFSET_SECONDS: u64 = 11_644_473_600;
 /// Exact read-only npm shim body; the process guard authenticates these bytes.
 /// Nội dung chính xác của shim npm chỉ đọc; process guard xác thực byte này.
 #[cfg(unix)]
@@ -1094,6 +1102,8 @@ fn wait_with_timeout(
     mode: OutputMode,
 ) -> Result<ExecOutcome> {
     let started = Instant::now();
+    #[cfg(windows)]
+    let mut process_ancestry = WindowsProcessAncestry::default();
 
     // DEADLOCK FIX (2026-09-09): a child writing MORE than the OS pipe
     // buffer (~64 KB) blocks on write until the parent drains the pipe.
@@ -1172,7 +1182,36 @@ fn wait_with_timeout(
             return Ok(drain(&mut child, None));
         }
         if monitor_forbidden_children {
-            match find_forbidden_descendant(child.id(), exempt, shadow_dir) {
+            #[cfg(windows)]
+            let process_scan = find_forbidden_descendant_with_timeout(
+                child.id(),
+                exempt,
+                shadow_dir,
+                started,
+                timeout,
+                &mut process_ancestry,
+                || Ok(child.try_wait()?.is_some()),
+            );
+            #[cfg(windows)]
+            let process_scan = match process_scan {
+                Ok(WindowsProcessScan::Clean) | Ok(WindowsProcessScan::DeadlineReached) => Ok(None),
+                Ok(WindowsProcessScan::Forbidden(found)) => Ok(Some(found)),
+                Ok(WindowsProcessScan::ChildExited) => return Ok(drain(&mut child, None)),
+                Ok(WindowsProcessScan::MissingCommandLine { .. }) => {
+                    unreachable!("retry controller must resolve missing command-line metadata")
+                }
+                Ok(WindowsProcessScan::MissingProcessIdentity { .. }) => {
+                    unreachable!("retry controller must resolve process identity metadata")
+                }
+                Ok(WindowsProcessScan::UnverifiableAncestry { .. }) => {
+                    unreachable!("retry controller must reject ambiguous process ancestry")
+                }
+                Err(error) => Err(error),
+            };
+            #[cfg(not(windows))]
+            let process_scan = find_forbidden_descendant(child.id(), exempt, shadow_dir);
+
+            match process_scan {
                 Ok(Some(found)) => {
                     terminate_process_tree(child.id());
                     let _ = child.kill();
@@ -1444,73 +1483,427 @@ fn next_process_table_field(line: &[u8]) -> Option<(&[u8], &[u8])> {
 
 /// Inspect native Windows process metadata, without a shell or WMI command.
 /// Kiểm metadata process Windows bằng API native, không shell hoặc lệnh WMI.
+#[cfg(any(windows, test))]
+struct WindowsProcessSnapshot {
+    pid: u32,
+    parent_pid: Option<u32>,
+    creation_time: Option<u64>,
+    image_name: String,
+    command: Vec<OsString>,
+}
+
+#[cfg(any(windows, test))]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct WindowsProcessIdentity {
+    creation_time: u64,
+    image_name: String,
+}
+
+#[cfg(any(windows, test))]
+impl WindowsProcessSnapshot {
+    fn identity(&self, creation_time: u64) -> WindowsProcessIdentity {
+        WindowsProcessIdentity {
+            creation_time,
+            image_name: self.image_name.clone(),
+        }
+    }
+}
+
+#[cfg(any(windows, test))]
+#[derive(Default)]
+struct WindowsProcessAncestry {
+    known_descendant_instances: std::collections::HashMap<u32, WindowsProcessIdentity>,
+    retired_pids: std::collections::HashSet<u32>,
+}
+
+#[cfg(any(windows, test))]
+enum WindowsProcessScan {
+    Clean,
+    Forbidden(ForbiddenProcess),
+    MissingCommandLine { pid: u32, image_name: String },
+    MissingProcessIdentity { pid: u32 },
+    UnverifiableAncestry { parent_pid: u32, child_pid: u32 },
+    ChildExited,
+    DeadlineReached,
+}
+
+#[cfg(any(windows, test))]
+fn scan_windows_process_snapshot(
+    root_pid: u32,
+    ancestry: &mut WindowsProcessAncestry,
+    processes: &[WindowsProcessSnapshot],
+    exempt: &[&str],
+    mut query_creation_time: impl FnMut(u32) -> Result<Option<u64>>,
+) -> Result<WindowsProcessScan> {
+    use std::collections::HashMap;
+
+    let mut children_by_parent: HashMap<u32, Vec<&WindowsProcessSnapshot>> = HashMap::new();
+    let mut processes_by_pid = HashMap::new();
+    for process in processes {
+        processes_by_pid.insert(process.pid, process);
+        if let Some(parent_pid) = process.parent_pid {
+            children_by_parent
+                .entry(parent_pid)
+                .or_default()
+                .push(process);
+        }
+    }
+    let Some(root_process) = processes_by_pid.get(&root_pid) else {
+        bail!("process table did not contain monitored root PID {root_pid}");
+    };
+    let mut current_identities = HashMap::new();
+    let Some(root_creation_time) = current_windows_process_creation_time(
+        root_process,
+        &mut query_creation_time,
+        &mut current_identities,
+    )?
+    else {
+        return Ok(WindowsProcessScan::MissingProcessIdentity { pid: root_pid });
+    };
+    let root_identity = root_process.identity(root_creation_time);
+    if ancestry
+        .known_descendant_instances
+        .get(&root_pid)
+        .is_some_and(|known| known != &root_identity)
+    {
+        bail!("monitored root PID {root_pid} changed process identity");
+    }
+    ancestry
+        .known_descendant_instances
+        .insert(root_pid, root_identity);
+    ancestry.retired_pids.remove(&root_pid);
+
+    // Match each remembered PID to its process instance before traversing its current children.
+    // So danh tính instance cho PID đã lưu trước khi duyệt các tiến trình con hiện tại.
+    let mut frontier = Vec::new();
+    let mut verified_current_pids = std::collections::HashSet::new();
+    for (&pid, known_identity) in &ancestry.known_descendant_instances {
+        if pid == root_pid {
+            frontier.push(pid);
+            verified_current_pids.insert(pid);
+            continue;
+        }
+        match processes_by_pid.get(&pid) {
+            Some(current) if current.image_name != known_identity.image_name => {
+                ancestry.retired_pids.insert(pid);
+            }
+            Some(current) => {
+                let Some(current_creation_time) = current_windows_process_creation_time(
+                    current,
+                    &mut query_creation_time,
+                    &mut current_identities,
+                )?
+                else {
+                    return Ok(WindowsProcessScan::MissingProcessIdentity { pid });
+                };
+                if current.identity(current_creation_time) == *known_identity {
+                    ancestry.retired_pids.remove(&pid);
+                    frontier.push(pid);
+                    verified_current_pids.insert(pid);
+                } else {
+                    ancestry.retired_pids.insert(pid);
+                }
+            }
+            None if !ancestry.retired_pids.contains(&pid) => frontier.push(pid),
+            None => {}
+        }
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    while let Some(parent_pid) = frontier.pop() {
+        if !seen.insert(parent_pid) {
+            continue;
+        }
+        for process in children_by_parent.get(&parent_pid).into_iter().flatten() {
+            if process.pid != root_pid {
+                let Some(creation_time) = current_windows_process_creation_time(
+                    process,
+                    &mut query_creation_time,
+                    &mut current_identities,
+                )?
+                else {
+                    return Ok(WindowsProcessScan::MissingProcessIdentity { pid: process.pid });
+                };
+                ancestry
+                    .known_descendant_instances
+                    .insert(process.pid, process.identity(creation_time));
+                ancestry.retired_pids.remove(&process.pid);
+                verified_current_pids.insert(process.pid);
+                frontier.push(process.pid);
+            }
+        }
+    }
+
+    // A child under a PID known to belong to a different instance has ambiguous ancestry; fail closed.
+    // Con dưới PID đã xác định bị thay instance có nguồn gốc mơ hồ; từ chối an toàn.
+    for &parent_pid in &ancestry.retired_pids {
+        if let Some(child) = children_by_parent.get(&parent_pid).and_then(|children| {
+            children
+                .iter()
+                .find(|child| !verified_current_pids.contains(&child.pid))
+        }) {
+            return Ok(WindowsProcessScan::UnverifiableAncestry {
+                parent_pid,
+                child_pid: child.pid,
+            });
+        }
+    }
+
+    let mut missing_command_line = None;
+    for process in processes
+        .iter()
+        .filter(|process| process.pid != root_pid && verified_current_pids.contains(&process.pid))
+    {
+        let command_line = process
+            .command
+            .iter()
+            .map(|arg| arg.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join(" ");
+        if process.command.is_empty() && missing_command_line.is_none() {
+            missing_command_line = Some((process.pid, process.image_name.clone()));
+        }
+        if let Some(name) = forbidden_process_name(&process.image_name, &command_line, exempt) {
+            return Ok(WindowsProcessScan::Forbidden(ForbiddenProcess {
+                pid: process.pid,
+                name,
+            }));
+        }
+    }
+
+    Ok(match missing_command_line {
+        Some((pid, image_name)) => WindowsProcessScan::MissingCommandLine { pid, image_name },
+        None => WindowsProcessScan::Clean,
+    })
+}
+
+#[cfg(any(windows, test))]
+fn current_windows_process_creation_time(
+    process: &WindowsProcessSnapshot,
+    query_creation_time: &mut impl FnMut(u32) -> Result<Option<u64>>,
+    cached_identities: &mut std::collections::HashMap<u32, Option<u64>>,
+) -> Result<Option<u64>> {
+    if let Some(creation_time) = process.creation_time {
+        return Ok(Some(creation_time));
+    }
+    if let Some(creation_time) = cached_identities.get(&process.pid) {
+        return Ok(*creation_time);
+    }
+    let creation_time = query_creation_time(process.pid)?;
+    cached_identities.insert(process.pid, creation_time);
+    Ok(creation_time)
+}
+
+#[cfg(any(windows, test))]
+fn retry_windows_process_scan(
+    started: Instant,
+    timeout: Option<Duration>,
+    mut child_has_exited: impl FnMut() -> Result<bool>,
+    mut inspect_snapshot: impl FnMut() -> Result<WindowsProcessScan>,
+) -> Result<WindowsProcessScan> {
+    for attempt in 0..=WINDOWS_COMMAND_LINE_RETRIES {
+        if child_has_exited()? {
+            return Ok(WindowsProcessScan::ChildExited);
+        }
+        if timeout.is_some_and(|limit| started.elapsed() >= limit) {
+            return Ok(WindowsProcessScan::DeadlineReached);
+        }
+        let snapshot_scan = match inspect_snapshot() {
+            Ok(scan) => scan,
+            Err(error) => {
+                if child_has_exited()? {
+                    return Ok(WindowsProcessScan::ChildExited);
+                }
+                if timeout.is_some_and(|limit| started.elapsed() >= limit) {
+                    return Ok(WindowsProcessScan::DeadlineReached);
+                }
+                return Err(error);
+            }
+        };
+        if !matches!(&snapshot_scan, WindowsProcessScan::Forbidden(_)) {
+            if child_has_exited()? {
+                return Ok(WindowsProcessScan::ChildExited);
+            }
+            if timeout.is_some_and(|limit| started.elapsed() >= limit) {
+                return Ok(WindowsProcessScan::DeadlineReached);
+            }
+        }
+        match snapshot_scan {
+            WindowsProcessScan::Clean => return Ok(WindowsProcessScan::Clean),
+            WindowsProcessScan::Forbidden(process) => {
+                return Ok(WindowsProcessScan::Forbidden(process));
+            }
+            WindowsProcessScan::MissingCommandLine { pid, image_name }
+                if attempt == WINDOWS_COMMAND_LINE_RETRIES =>
+            {
+                if child_has_exited()? {
+                    return Ok(WindowsProcessScan::ChildExited);
+                }
+                if timeout.is_some_and(|limit| started.elapsed() >= limit) {
+                    return Ok(WindowsProcessScan::DeadlineReached);
+                }
+                validate_monitored_child_command_line(&image_name, &[], pid)?;
+                bail!("command line unexpectedly passed validation for monitored child PID {pid}");
+            }
+            WindowsProcessScan::MissingProcessIdentity { pid }
+                if attempt == WINDOWS_COMMAND_LINE_RETRIES =>
+            {
+                bail!("cannot read process creation identity for monitored PID {pid}");
+            }
+            WindowsProcessScan::MissingCommandLine { .. }
+            | WindowsProcessScan::MissingProcessIdentity { .. } => {
+                // Refresh and rewalk the entire tree on the next inspection, not just this PID.
+                // Lần kiểm tra sau làm mới và duyệt lại toàn cây, không chỉ hỏi lại PID này.
+                let retry_delay = Duration::from_millis(WINDOWS_COMMAND_LINE_RETRY_DELAY_MS);
+                if let Some(stop_reason) = wait_for_windows_process_retry(
+                    retry_delay,
+                    started,
+                    timeout,
+                    &mut child_has_exited,
+                )? {
+                    return Ok(stop_reason);
+                }
+            }
+            WindowsProcessScan::UnverifiableAncestry {
+                parent_pid,
+                child_pid,
+            } => bail!(
+                "process ancestry is ambiguous after PID reuse (parent PID {parent_pid}, child PID {child_pid})"
+            ),
+            WindowsProcessScan::ChildExited | WindowsProcessScan::DeadlineReached => {
+                unreachable!("snapshot inspection cannot produce a retry stop reason")
+            }
+        }
+    }
+    unreachable!("bounded process metadata retry loop must return")
+}
+
+#[cfg(any(windows, test))]
+fn wait_for_windows_process_retry(
+    retry_delay: Duration,
+    started: Instant,
+    timeout: Option<Duration>,
+    child_has_exited: &mut impl FnMut() -> Result<bool>,
+) -> Result<Option<WindowsProcessScan>> {
+    let wait_started = Instant::now();
+    loop {
+        if child_has_exited()? {
+            return Ok(Some(WindowsProcessScan::ChildExited));
+        }
+        if timeout.is_some_and(|limit| started.elapsed() >= limit) {
+            return Ok(Some(WindowsProcessScan::DeadlineReached));
+        }
+
+        let wait_elapsed = wait_started.elapsed();
+        if wait_elapsed >= retry_delay {
+            return Ok(None);
+        }
+        let poll_interval = Duration::from_millis(WINDOWS_COMMAND_LINE_RETRY_POLL_INTERVAL_MS);
+        let remaining_wait = retry_delay.saturating_sub(wait_elapsed);
+        let remaining_timeout = timeout
+            .map(|limit| limit.saturating_sub(started.elapsed()))
+            .unwrap_or(remaining_wait);
+        let sleep_for = remaining_wait.min(poll_interval).min(remaining_timeout);
+        if sleep_for.is_zero() {
+            return Ok(Some(WindowsProcessScan::DeadlineReached));
+        }
+        std::thread::sleep(sleep_for);
+    }
+}
+
 #[cfg(windows)]
-fn find_forbidden_descendant(
+fn find_forbidden_descendant_with_timeout(
     root_pid: u32,
     exempt: &[&str],
     _shadow_dir: &Path,
-) -> Result<Option<ForbiddenProcess>> {
+    started: Instant,
+    timeout: Option<Duration>,
+    ancestry: &mut WindowsProcessAncestry,
+    child_has_exited: impl FnMut() -> Result<bool>,
+) -> Result<WindowsProcessScan> {
     use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
     let mut system = System::new();
-    system.refresh_processes_specifics(
-        ProcessesToUpdate::All,
-        true,
-        ProcessRefreshKind::nothing().with_cmd(UpdateKind::Always),
-    );
     let root = Pid::from_u32(root_pid);
-    if system.process(root).is_none() {
-        bail!("process table did not contain monitored root PID {root_pid}");
-    }
-    let mut frontier = vec![root];
-    let mut seen = std::collections::HashSet::new();
-    while let Some(parent) = frontier.pop() {
-        if !seen.insert(parent) {
-            continue;
+    retry_windows_process_scan(started, timeout, child_has_exited, || {
+        // A full refresh discovers descendants created while an earlier command line was blank.
+        // Làm mới toàn bộ giúp phát hiện con cháu được tạo khi command line lượt trước còn trống.
+        system.refresh_processes_specifics(
+            ProcessesToUpdate::All,
+            true,
+            ProcessRefreshKind::nothing().with_cmd(UpdateKind::Always),
+        );
+        if system.process(root).is_none() {
+            bail!("process table did not contain monitored root PID {root_pid}");
         }
-        let children = system
+        let snapshot = system
             .processes()
             .iter()
-            .filter(|(_, p)| p.parent() == Some(parent))
-            .map(|(pid, _)| *pid)
+            .map(|(pid, process)| WindowsProcessSnapshot {
+                pid: pid.as_u32(),
+                parent_pid: process.parent().map(|parent| parent.as_u32()),
+                creation_time: None,
+                image_name: process.name().to_string_lossy().into_owned(),
+                command: process.cmd().to_vec(),
+            })
             .collect::<Vec<_>>();
-        for pid in children {
-            let mut image_name = String::new();
-            let mut command = Vec::new();
-            for attempt in 0..=WINDOWS_COMMAND_LINE_RETRIES {
-                let Some(process) = system.process(pid) else {
-                    break;
-                };
-                image_name = process.name().to_string_lossy().into_owned();
-                command = process.cmd().to_vec();
-                if !command.is_empty() || attempt == WINDOWS_COMMAND_LINE_RETRIES {
-                    break;
-                }
-                // New Windows processes can appear before their command line is queryable.
-                // Tiến trình Windows mới có thể xuất hiện trước khi truy vấn được command line.
-                std::thread::sleep(Duration::from_millis(WINDOWS_COMMAND_LINE_RETRY_DELAY_MS));
-                let process_ids = [pid];
-                system.refresh_processes_specifics(
-                    ProcessesToUpdate::Some(&process_ids),
-                    true,
-                    ProcessRefreshKind::nothing().with_cmd(UpdateKind::Always),
-                );
-            }
-            validate_monitored_child_command_line(&image_name, &command, pid.as_u32())?;
-            let command_line = command
-                .iter()
-                .map(|arg| arg.to_string_lossy())
-                .collect::<Vec<_>>()
-                .join(" ");
-            if let Some(name) = forbidden_process_name(&image_name, &command_line, exempt) {
-                return Ok(Some(ForbiddenProcess {
-                    pid: pid.as_u32(),
-                    name,
-                }));
-            }
-            frontier.push(pid);
-        }
+        let observed_start_times = system
+            .processes()
+            .iter()
+            .map(|(pid, process)| (pid.as_u32(), process.start_time()))
+            .collect::<std::collections::HashMap<_, _>>();
+        scan_windows_process_snapshot(root_pid, ancestry, &snapshot, exempt, |pid| {
+            let Some(observed_start_time) = observed_start_times.get(&pid) else {
+                return Ok(None);
+            };
+            let creation_time = windows_process_creation_time(pid);
+            // Match the live handle to the refreshed row before accepting its exact creation time.
+            // Đối chiếu handle đang sống với dòng vừa refresh trước khi nhận thời điểm tạo chính xác.
+            Ok(creation_time.filter(|creation_time| {
+                (*creation_time / WINDOWS_FILETIME_TICKS_PER_SECOND)
+                    .checked_sub(WINDOWS_FILETIME_UNIX_EPOCH_OFFSET_SECONDS)
+                    == Some(*observed_start_time)
+            }))
+        })
+    })
+}
+
+#[cfg(windows)]
+#[allow(unsafe_code)]
+fn windows_process_creation_time(pid: u32) -> Option<u64> {
+    use windows_sys::Win32::Foundation::{CloseHandle, FILETIME};
+    use windows_sys::Win32::System::Threading::{
+        GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    // SAFETY: this PID comes from the refreshed process table; the requested access is query-only.
+    // (An toàn: PID lấy từ bảng process vừa refresh; quyền mở chỉ dùng để truy vấn thông tin.)
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if handle.is_null() {
+        return None;
     }
-    Ok(None)
+
+    let mut creation_time = FILETIME::default();
+    let mut exit_time = FILETIME::default();
+    let mut kernel_time = FILETIME::default();
+    let mut user_time = FILETIME::default();
+    // SAFETY: handle is valid from OpenProcess and all output pointers reference live FILETIME values.
+    // (An toàn: handle còn hiệu lực từ OpenProcess; các con trỏ output trỏ tới FILETIME còn sống.)
+    let query_succeeded = unsafe {
+        GetProcessTimes(
+            handle,
+            &mut creation_time,
+            &mut exit_time,
+            &mut kernel_time,
+            &mut user_time,
+        ) != 0
+    };
+    // SAFETY: handle is the non-null handle returned by OpenProcess above and is closed exactly once.
+    // (An toàn: đóng đúng một lần handle khác null do OpenProcess trả về ở trên.)
+    let close_succeeded = unsafe { CloseHandle(handle) != 0 };
+    if !query_succeeded || !close_succeeded {
+        return None;
+    }
+    Some(((creation_time.dwHighDateTime as u64) << 32) | creation_time.dwLowDateTime as u64)
 }
 
 #[cfg(not(any(unix, windows)))]
