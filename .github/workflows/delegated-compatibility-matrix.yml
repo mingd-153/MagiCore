@@ -180,7 +180,7 @@ jobs:
         shell: bash
         run: |
           cd test-ai-app
-          python -m py_compile src/agent.py src/compression.py
+          python -m py_compile src/agent.py src/mgc_model_runtime.py
           PYTHONPATH=src python src/agent.py
 
   app-lifecycle:
