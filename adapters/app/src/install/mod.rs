@@ -195,6 +195,24 @@ struct FlutterPackageGraphEntry {
     dev_dependencies: Option<Vec<String>>,
 }
 
+fn flutter_project_root_uri(project_root: &Path, current_dir: Option<&Path>) -> MgResult<String> {
+    let absolute_root = if project_root.is_absolute() {
+        project_root.to_path_buf()
+    } else {
+        current_dir
+            .ok_or_else(|| {
+                MgError::Other(
+                    "cannot resolve relative Flutter project root without a current directory"
+                        .to_string(),
+                )
+            })?
+            .join(project_root)
+    };
+    url::Url::from_directory_path(absolute_root)
+        .map(|uri| uri.to_string())
+        .map_err(|_| MgError::Other("cannot encode Flutter project root URI".to_string()))
+}
+
 fn write_flutter_package_config(
     graph: &ResolvedGraph,
     project_root: &Path,
@@ -240,12 +258,17 @@ fn write_flutter_package_config_with_sdk_root(
             "Flutter package config contains duplicate package name '{root_name}'"
         )));
     }
-    let canonical_project_root = project_root
-        .canonicalize()
-        .map_err(|error| MgError::Other(format!("canonicalize Flutter project root: {error}")))?;
-    let root_uri = url::Url::from_directory_path(&canonical_project_root)
-        .map_err(|_| MgError::Other("cannot encode Flutter project root URI".to_string()))?
-        .to_string();
+    // Preserve the caller-visible path because Flutter matches this URI to its current directory exactly.
+    // Giữ URI theo đường dẫn caller thấy vì Flutter so khớp chính xác với thư mục làm việc hiện tại.
+    let current_dir = if project_root.is_absolute() {
+        None
+    } else {
+        Some(
+            std::env::current_dir()
+                .map_err(|error| MgError::Other(format!("read current directory: {error}")))?,
+        )
+    };
+    let root_uri = flutter_project_root_uri(project_root, current_dir.as_deref())?;
     entries.push(FlutterPackageConfigEntry {
         name: root_name,
         root_uri,

@@ -411,7 +411,7 @@ fn flutter_install_writes_package_config_for_verified_materialized_graph() {
     assert_eq!(package("sample")["packageUri"], "lib/");
     assert_eq!(
         package("sample")["rootUri"],
-        url::Url::from_directory_path(project.path().canonicalize().unwrap())
+        url::Url::from_directory_path(project.path())
             .unwrap()
             .as_str()
     );
@@ -513,7 +513,7 @@ fn flutter_package_config_includes_only_declared_sdk_packages() {
     assert!(packages.iter().any(|entry| {
         entry["name"] == "sample"
             && entry["rootUri"]
-                == url::Url::from_directory_path(project.path().canonicalize().unwrap())
+                == url::Url::from_directory_path(project.path())
                     .unwrap()
                     .as_str()
     }));
@@ -521,6 +521,61 @@ fn flutter_package_config_includes_only_declared_sdk_packages() {
         packages
             .iter()
             .all(|entry| entry["rootUri"].as_str().unwrap().starts_with("file://"))
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn flutter_package_config_preserves_project_root_alias() {
+    let project = tempfile::tempdir().unwrap();
+    let parent = tempfile::tempdir().unwrap();
+    let cache = tempfile::tempdir().unwrap();
+    std::fs::write(project.path().join("pubspec.yaml"), "name: sample\n").unwrap();
+    let alias = parent.path().join("project-alias");
+    std::os::unix::fs::symlink(project.path(), &alias).unwrap();
+
+    write_flutter_package_config(&ResolvedGraph::empty(), &alias, cache.path()).unwrap();
+
+    let config: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(alias.join(".dart_tool/package_config.json")).unwrap(),
+    )
+    .unwrap();
+    let package = config["packages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["name"] == "sample")
+        .unwrap();
+    assert_eq!(
+        package["rootUri"],
+        url::Url::from_directory_path(&alias).unwrap().as_str(),
+        "Flutter compares the root package URI with its caller-visible project URI"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn flutter_package_root_uri_makes_relative_alias_absolute_without_resolving_it() {
+    let current_dir = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let alias = current_dir.path().join("project-alias");
+    std::os::unix::fs::symlink(project.path(), &alias).unwrap();
+
+    let relative_uri = super::flutter_project_root_uri(
+        std::path::Path::new("project-alias"),
+        Some(current_dir.path()),
+    )
+    .unwrap();
+    let absolute_uri = super::flutter_project_root_uri(&alias, None).unwrap();
+
+    assert_eq!(
+        relative_uri,
+        url::Url::from_directory_path(&alias).unwrap().to_string(),
+        "relative roots need an absolute URI while retaining the caller's symlink path"
+    );
+    assert_eq!(
+        absolute_uri, relative_uri,
+        "absolute roots must not need the process current directory"
     );
 }
 

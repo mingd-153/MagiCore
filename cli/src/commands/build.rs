@@ -723,13 +723,21 @@ pub(crate) fn python_cmd() -> &'static str {
 /// pulumi preview, terraform plan — đều là dry-run (không ghi cloud state).
 /// Fail-closed: toolchain thiếu → cảnh báo, không fail project.
 #[cfg(feature = "clo")]
+fn cloud_local_executable_exists(root: &Path, bin_name: &str, windows: bool) -> bool {
+    let bin_dir = root.join("node_modules").join(".bin");
+    let bin = bin_dir.join(bin_name);
+    // Windows npm creates a .cmd shim; Unix uses the extensionless entry.
+    // npm trên Windows tạo shim .cmd; Unix dùng entry không có phần mở rộng.
+    bin.exists() || (windows && bin.with_extension("cmd").exists())
+}
+
+#[cfg(feature = "clo")]
 async fn build_cloud(root: &Path) -> Result<()> {
     let kind = mgc_cloud_adapter::detect_type(root)
         .ok_or_else(|| crate::error::no_framework_detected("cloud", root))?;
     match kind {
         mgc_cloud_adapter::CloudType::Cdk => {
-            let bin = root.join("node_modules").join(".bin").join("cdk");
-            if !bin.exists() {
+            if !cloud_local_executable_exists(root, "cdk", cfg!(windows)) {
                 return Err(crate::error::web_missing_executable(
                     "cdk",
                     "mgc install",

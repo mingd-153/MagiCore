@@ -403,6 +403,26 @@ fn app_build_rejects_symlinked_config_and_framework_manifests() {
 
 #[cfg(feature = "clo")]
 #[test]
+fn cdk_build_recognizes_windows_cmd_shim_as_installed() {
+    let root = tempfile::tempdir().unwrap();
+    let bin_dir = root.path().join("node_modules").join(".bin");
+    fs::create_dir_all(&bin_dir).unwrap();
+    fs::write(bin_dir.join("cdk.cmd"), "@echo off\r\n").unwrap();
+
+    assert!(super::cloud_local_executable_exists(
+        root.path(),
+        "cdk",
+        true
+    ));
+    assert!(!super::cloud_local_executable_exists(
+        root.path(),
+        "cdk",
+        false
+    ));
+}
+
+#[cfg(feature = "clo")]
+#[test]
 fn build_cloud_fails_when_toolchain_missing() {
     let tmp = std::env::temp_dir().join(format!("mgc-build-cloud-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);

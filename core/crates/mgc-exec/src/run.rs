@@ -13,6 +13,12 @@ use std::time::{Duration, Instant};
 const DEFAULT_EXEC_TIMEOUT_SECS: u64 = 1800;
 const EXEC_TIMEOUT_ENV: &str = "MGC_EXEC_TIMEOUT_SECS";
 const WAIT_POLL_INTERVAL_MS: u64 = 20;
+/// Retry transient Windows snapshots before treating unreadable child metadata as unsafe.
+/// Đọc lại snapshot Windows thoáng qua trước khi coi metadata tiến trình con là không an toàn.
+#[cfg(windows)]
+const WINDOWS_COMMAND_LINE_RETRIES: usize = 3;
+#[cfg(windows)]
+const WINDOWS_COMMAND_LINE_RETRY_DELAY_MS: u64 = 5;
 /// Exact read-only npm shim body; the process guard authenticates these bytes.
 /// Nội dung chính xác của shim npm chỉ đọc; process guard xác thực byte này.
 #[cfg(unix)]
@@ -1461,34 +1467,47 @@ fn find_forbidden_descendant(
         if !seen.insert(parent) {
             continue;
         }
-        for (pid, process) in system
+        let children = system
             .processes()
             .iter()
             .filter(|(_, p)| p.parent() == Some(parent))
-        {
-            // Missing command metadata cannot prove that a script host is clean.
-            // Thiếu metadata command không chứng minh được script host an toàn.
-            if process.cmd().is_empty() {
-                bail!(
-                    "cannot read command line for monitored child PID {}",
-                    pid.as_u32()
+            .map(|(pid, _)| *pid)
+            .collect::<Vec<_>>();
+        for pid in children {
+            let mut image_name = String::new();
+            let mut command = Vec::new();
+            for attempt in 0..=WINDOWS_COMMAND_LINE_RETRIES {
+                let Some(process) = system.process(pid) else {
+                    break;
+                };
+                image_name = process.name().to_string_lossy().into_owned();
+                command = process.cmd().to_vec();
+                if !command.is_empty() || attempt == WINDOWS_COMMAND_LINE_RETRIES {
+                    break;
+                }
+                // New Windows processes can appear before their command line is queryable.
+                // Tiến trình Windows mới có thể xuất hiện trước khi truy vấn được command line.
+                std::thread::sleep(Duration::from_millis(WINDOWS_COMMAND_LINE_RETRY_DELAY_MS));
+                let process_ids = [pid];
+                system.refresh_processes_specifics(
+                    ProcessesToUpdate::Some(&process_ids),
+                    true,
+                    ProcessRefreshKind::nothing().with_cmd(UpdateKind::Always),
                 );
             }
-            let command_line = process
-                .cmd()
+            validate_monitored_child_command_line(&image_name, &command, pid.as_u32())?;
+            let command_line = command
                 .iter()
                 .map(|arg| arg.to_string_lossy())
                 .collect::<Vec<_>>()
                 .join(" ");
-            if let Some(name) =
-                forbidden_process_name(&process.name().to_string_lossy(), &command_line, exempt)
-            {
+            if let Some(name) = forbidden_process_name(&image_name, &command_line, exempt) {
                 return Ok(Some(ForbiddenProcess {
                     pid: pid.as_u32(),
                     name,
                 }));
             }
-            frontier.push(*pid);
+            frontier.push(pid);
         }
     }
     Ok(None)
@@ -1610,6 +1629,21 @@ fn process_basename(command: &str) -> String {
         .or_else(|| base.strip_suffix(".ps1"))
         .unwrap_or(&base)
         .to_string()
+}
+
+#[cfg(any(windows, test))]
+fn validate_monitored_child_command_line(
+    image_name: &str,
+    command: &[OsString],
+    pid: u32,
+) -> Result<()> {
+    if command.is_empty() {
+        bail!(
+            "cannot read command line for monitored child '{}' PID {pid}",
+            image_name
+        );
+    }
+    Ok(())
 }
 
 fn forbidden_process_name(command: &str, command_line: &str, exempt: &[&str]) -> Option<String> {
