@@ -119,6 +119,11 @@ jobs:
         with:
           node-version: "24"
 
+      - name: Setup Pulumi CLI (cloud lifecycle lane)
+        uses: pulumi/actions@8e5e406f4007fca908480587cb9893c07090f58d # v7.0.0
+        with:
+          pulumi-version: "3.267.0"
+
       - name: Setup Go (lib/go lane toolchain)
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -214,6 +219,7 @@ jobs:
               native_pm_claim_scope,
               required_dimensions_for_lane,
               lifecycle_status_for_owner,
+              lifecycle_status_owner_matches,
               framework_catalog_errors,
               native_pm_lane_errors,
               lifecycle_lane_owner_contract_errors,
@@ -304,8 +310,9 @@ jobs:
                           )
                       elif (
                           (not scope_out or lane.get("toolchain_available") is True)
-                          and dimensions.get(dimension)
-                          != lifecycle_status_for_owner(owner)
+                          and not lifecycle_status_owner_matches(
+                              dimensions.get(dimension), owner
+                          )
                       ):
                           failures.append(
                               f"{label} {dimension} status/owner mismatch: "
@@ -418,16 +425,29 @@ jobs:
                   "Explicitly scoped-out frameworks: "
                   + " | ".join(framework_scope_outs)
               )
-          print("OK: native-PM lanes: "
-                + ", ".join(
-                    f"{c}/{l}" + (f"#{f}" if f else "")
-                    for c, l, f in sorted(NATIVE_PM_SCOPE)
-                    if any(
-                        (ln["core"], ln["language"], ln.get("framework_id", "")) == (c, l, f)
-                        and ln.get("native_pm_verdict") == "native-pm-supported"
-                        for ln in data["lanes"]
-                    )
-                ))
+          native_pm_qualified = [
+              lane for lane in data["lanes"]
+              if lane.get("dependency_owner") == "mgc-native"
+              and lane.get("native_pm_verdict") == "native-pm-supported"
+          ]
+          native_pm_unqualified = [
+              lane for lane in data["lanes"]
+              if lane.get("dependency_owner") == "mgc-native"
+              and lane.get("native_pm_verdict") != "native-pm-supported"
+          ]
+          print("Fully native-PM qualified lanes: "
+                + (", ".join(
+                    f"{lane['core']}/{lane['language']}"
+                    + (f"#{lane.get('framework_id')}" if lane.get("framework_id") else "")
+                    for lane in native_pm_qualified
+                ) or "none"))
+          if native_pm_unqualified:
+              print("Native-PM claim withheld pending complete runtime evidence: "
+                    + ", ".join(
+                        f"{lane['core']}/{lane['language']}"
+                        + (f"#{lane.get('framework_id')}" if lane.get("framework_id") else "")
+                        for lane in native_pm_unqualified
+                    ))
 
       # ── P0-3 platform evidence (Tech Lead 2026-09-16): Windows stays
       # evidence-only TODAY (the Enforce step above skips it), but the

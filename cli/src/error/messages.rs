@@ -1145,6 +1145,12 @@ pub fn package_json_root_object() -> Error {
     anyhow!("package.json root must be an object")
 }
 
+/// package.json scripts must remain a map of string commands.
+/// Bảng scripts trong package.json phải giữ cấu trúc map lệnh dạng chuỗi.
+pub fn package_json_scripts_object() -> Error {
+    anyhow!("package.json scripts must be an object of string commands")
+}
+
 /// dev chưa implement cho core này
 pub fn dev_core_not_implemented(core: &str) -> Error {
     anyhow!("'mgc dev' Engine is not implemented for the '{core}' core yet")

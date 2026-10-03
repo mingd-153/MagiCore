@@ -52,6 +52,7 @@ import json
 import os
 import platform
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -234,6 +235,10 @@ LANES = [
         "language": "java",
         "framework_ids": ["java"],
         "framework_id": "java",
+        # Maven dependency resolution is native, but Java test/build execution
+        # has no MGC-owned backend yet; retain its evidence without release claims.
+        # (Resolver Maven đã native, nhưng Java chưa có backend test/build do MGC giữ.)
+        "evidence_only": True,
         "scaffold": ["create-lib", "java", "test-lib"],
         "steps": [
             ("install", ["install"]),
@@ -656,6 +661,8 @@ LANES = [
         "framework_ids": ["pulumi"],
         "framework_id": "pulumi",
         "scaffold": ["create-clo", "pulumi", "test-cloud-pulumi"],
+        "toolchain_probes": ["pulumi"],
+        "pre_steps": ["initialize_local_pulumi_stack"],
         "steps": [("install", ["install"]), ("test", ["test"]), ("build", ["build"])],
         "delegated": [],
         "required_dims": ["create", "install", "test", "build"],
@@ -965,6 +972,14 @@ def lifecycle_status_for_owner(owner):
     return STATUS_UNVERIFIED
 
 
+def lifecycle_status_owner_matches(status, owner):
+    """Keep a failed probe visible without rewriting it as an owner mismatch.
+    (Giữ trạng thái probe thất bại trung thực; không biến nó thành lỗi owner.)"""
+    if owner not in LIFECYCLE_OWNER_VALUES:
+        return False
+    return status == STATUS_FAILED or status == lifecycle_status_for_owner(owner)
+
+
 def validate_lane_registry(lanes=LANES):
     """Reject ambiguous or internally inconsistent lifecycle lane declarations."""
     lane_keys = set()
@@ -1198,6 +1213,14 @@ def native_pm_supported(dependency_owner, install_owner, delegated, dimensions, 
     )
 
 
+def native_pm_unavailable_verdict(dependency_owner):
+    """Preserve explicit unsupported ownership when runtime tools are absent.
+    (Giữ verdict unsupported đã khai rõ khi thiếu toolchain runtime.)"""
+    if dependency_owner in {"scaffold-only", "unsupported"}:
+        return "unsupported"
+    return "not-native-pm"
+
+
 def native_pm_claim_scope(lanes):
     """Return every lane that declares MGC-native dependency ownership.
     (Trả mọi lane tự khai MGC sở hữu dependency native.)"""
@@ -1260,7 +1283,7 @@ def native_pm_lane_errors(lane):
         if not isinstance(operation_owners, dict):
             failures.append(f"{label} has malformed native-PM operation ownership")
             operation_owners = {}
-        if not native_pm_supported(
+        if verdict == "native-pm-supported" and not native_pm_supported(
             owner,
             install_owner,
             delegated,
@@ -1268,11 +1291,11 @@ def native_pm_lane_errors(lane):
             operation_owners,
         ):
             failures.append(
-                f"{label} lacks complete native package-manager evidence"
+                f"{label} declares native-pm-supported without complete package-manager evidence"
             )
-        if verdict != "native-pm-supported":
+        elif verdict not in {"native-pm-supported", "not-native-pm"}:
             failures.append(
-                f"{label} declares mgc-native but native_pm_verdict = {verdict!r}"
+                f"{label} mgc-native owner requires native_pm_verdict 'native-pm-supported' or 'not-native-pm', got {verdict!r}"
             )
         return failures
     if owner == "delegated":
@@ -1331,6 +1354,27 @@ def lifecycle_lane_owner_contract_errors(lane):
             errors.append(
                 f"{label} {description} differs from source contract: "
                 f"matrix={actual!r}, source={expected!r}"
+            )
+    matrix_operations = lane.get("owner_by_operation")
+    source_operations = source_lane.get("owner_by_operation")
+    if not isinstance(matrix_operations, dict):
+        errors.append(f"{label} is missing per-operation ownership")
+    elif not isinstance(source_operations, dict):
+        errors.append(f"{label} source contract is missing per-operation ownership")
+    else:
+        for operation in ALL_DEPENDENCY_OPERATIONS:
+            actual = matrix_operations.get(operation)
+            expected = source_operations.get(operation)
+            if actual != expected:
+                errors.append(
+                    f"{label} operation owner differs from source contract for {operation}: "
+                    f"matrix={actual!r}, source={expected!r}"
+                )
+        extra_operations = sorted(set(matrix_operations) - set(ALL_DEPENDENCY_OPERATIONS))
+        if extra_operations:
+            errors.append(
+                f"{label} has unknown package operation owners: "
+                + ", ".join(extra_operations)
             )
     return errors
 
@@ -1404,6 +1448,9 @@ PLATFORM_EVIDENCE_RELEASE_SCOPE = frozenset(
 # Scope-out không xóa lane hay claim package; claim native vẫn phải qua gate
 # riêng kiểm đủ dimension và operation.)
 LANE_RELEASE_SCOPE_OUT_REASONS = {
+    ("lib", "java", "java"): (
+        "Java dependency resolution exists, but native Java test/build execution is not implemented or release-qualified."
+    ),
     ("app", "swift", ""): (
         "Swift lifecycle evidence remains non-blocking until release E2E qualifies app lifecycle parity."
     ),
@@ -2331,6 +2378,11 @@ def framework_catalog_errors(catalog, lanes):
         for lane in lanes
         if isinstance(lane, dict) and lane.get("framework_id")
     }
+    lane_by_key = {
+        (lane.get("core"), lane.get("framework_id")): lane
+        for lane in lanes
+        if isinstance(lane, dict) and lane.get("framework_id")
+    }
     for row in catalog:
         if not isinstance(row, dict):
             errors.append("framework catalog contains a malformed row")
@@ -2369,16 +2421,35 @@ def framework_catalog_errors(catalog, lanes):
             cell = ownership.get(operation)
             owner = cell.get("owner") if isinstance(cell, dict) else None
             valid_owners = {"mgc-native", "scaffold-only", "unsupported"}
-            if status == "mgc-engine-path" and owner != "mgc-native":
+            if owner not in valid_owners:
                 errors.append(
-                    f"{core}/{framework} operation {operation} is not MGC-native "
-                    f"(owner={owner!r})"
+                    f"{core}/{framework} operation {operation} has invalid owner "
+                    f"{owner!r}"
                 )
-            elif status == "scaffold-only" and owner not in valid_owners:
-                errors.append(
-                    f"{core}/{framework} scoped-out operation {operation} has "
-                    f"invalid owner {owner!r}"
+                continue
+            lane = lane_by_key.get(key)
+            if lane is not None:
+                matrix_owners = lane.get("owner_by_operation")
+                matrix_owner = (
+                    matrix_owners.get(operation)
+                    if isinstance(matrix_owners, dict)
+                    else None
                 )
+                matches = (
+                    owner == "mgc-native"
+                    and matrix_owner in {"mgc", "magicore-shared-cas"}
+                ) or (
+                    owner == "scaffold-only" and matrix_owner == "scaffold-only"
+                ) or (
+                    owner == "unsupported"
+                    and isinstance(matrix_owner, str)
+                    and matrix_owner.startswith("unsupported")
+                )
+                if not matches:
+                    errors.append(
+                        f"{core}/{framework} operation {operation} differs from lifecycle owner "
+                        f"(catalog={owner!r}, lane={matrix_owner!r})"
+                    )
     for lane in lanes:
         if not isinstance(lane, dict) or not lane.get("framework_id"):
             continue
@@ -2745,8 +2816,9 @@ def platform_evidence_errors(
                     (not scope_out or lane.get("toolchain_available") is True)
                     and isinstance(owner, str)
                     and owner in LIFECYCLE_OWNER_VALUES
-                    and dimensions.get(dimension)
-                    != lifecycle_status_for_owner(owner)
+                    and not lifecycle_status_owner_matches(
+                        dimensions.get(dimension), owner
+                    )
                 ):
                     errors.append(
                         f"platform lane {tag} status/owner mismatch for {dimension}: "
@@ -2849,6 +2921,27 @@ def lifecycle_environment(sandbox: str, project_path: str) -> dict[str, str]:
     return env
 
 
+def pulumi_local_environment(sandbox: str, environment: dict[str, str]) -> dict[str, str]:
+    """Isolate Pulumi state locally and remove inherited cloud credentials.
+    (Cô lập state Pulumi trong sandbox và bỏ credential cloud từ host.)"""
+    env = environment.copy()
+    backend_root = os.path.join(sandbox, ".pulumi-backend")
+    pulumi_home = os.path.join(sandbox, ".pulumi-home")
+    os.makedirs(backend_root, exist_ok=True)
+    os.makedirs(pulumi_home, exist_ok=True)
+    env["PULUMI_BACKEND_URL"] = Path(backend_root).as_uri()
+    env["PULUMI_HOME"] = pulumi_home
+    env["PULUMI_CONFIG_PASSPHRASE"] = secrets.token_urlsafe(32)
+    env["PULUMI_SKIP_UPDATE_CHECK"] = "true"
+    for name in tuple(env):
+        if name == "PULUMI_ACCESS_TOKEN" or name.startswith(
+            ("AWS_", "AZURE_", "ARM_", "GOOGLE_", "CLOUDSDK_")
+        ):
+            env.pop(name, None)
+    env["AWS_EC2_METADATA_DISABLED"] = "true"
+    return env
+
+
 def recovery_environment(sandbox: str, project_path: str) -> dict[str, str]:
     """Give crash-recovery probes a private store below their project.
     (Cấp store riêng bên dưới project cho probe phục hồi crash.)"""
@@ -2933,6 +3026,8 @@ def run_lane(mgc_bin: str, lane: dict) -> dict:
     project_dir = lane.get("project_dir", lane["scaffold"][-1])
     project_path = os.path.join(sandbox, project_dir)
     lane_env = lifecycle_environment(sandbox, project_path)
+    if (lane.get("core"), lane.get("language")) == ("clo", "pulumi"):
+        lane_env = pulumi_local_environment(sandbox, lane_env)
 
     # Evidence-only lanes may depend on an external toolchain that is often
     # absent (terraform, cross rust targets, ...). Probe BEFORE the
@@ -3093,6 +3188,40 @@ def run_lane(mgc_bin: str, lane: dict) -> dict:
                             "lane-local test/build tool provisioning failed; "
                             "the step was not run without its prerequisite"
                         )
+        elif step == "initialize_local_pulumi_stack":
+            backend_url = lane_env.get("PULUMI_BACKEND_URL")
+            if not backend_url or not backend_url.startswith("file://"):
+                _fail("Pulumi lifecycle requires an isolated file backend URL")
+            commands = (
+                ["pulumi", "login", backend_url, "--non-interactive"],
+                ["pulumi", "stack", "init", "lifecycle", "--non-interactive"],
+            )
+            setup_output = []
+            setup_failed = False
+            for command in commands:
+                try:
+                    proc = subprocess.run(
+                        command,
+                        capture_output=True,
+                        text=True,
+                        cwd=project_path,
+                        env=lane_env,
+                        timeout=timeout_s,
+                    )
+                except FileNotFoundError:
+                    _fail("pre_step 'initialize_local_pulumi_stack' requires pulumi on PATH")
+                except subprocess.TimeoutExpired:
+                    _fail("Pulumi local backend setup timed out")
+                setup_output.append((proc.stdout or "") + (proc.stderr or ""))
+                if proc.returncode != 0:
+                    setup_failed = True
+                    break
+            if setup_failed:
+                detail["pulumi_stack_setup_output"] = "\n".join(setup_output)[-2000:]
+                if any(name == "build" for name, _ in lane["steps"]):
+                    blocked_lifecycle_steps["build"] = (
+                        "local Pulumi stack setup failed; preview was not run"
+                    )
         else:
             _fail(f"unknown pre_step: {step}")
 
@@ -3872,7 +4001,9 @@ def main() -> int:
         # môi trường chưa probe (không bao giờ gate).)
         if not r.get("toolchain_available", True):
             r["verdict"] = "evidence-unverified"
-            r["native_pm_verdict"] = "not-native-pm"
+            r["native_pm_verdict"] = native_pm_unavailable_verdict(
+                r.get("dependency_owner")
+            )
             continue
         r["verdict"] = (
             "orchestration-lifecycle-passed"

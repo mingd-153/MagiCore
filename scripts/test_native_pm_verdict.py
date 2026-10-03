@@ -27,10 +27,12 @@ from lifecycle_capability_matrix import (
     STATUS_UNVERIFIED,
     STATUS_UNSUPPORTED,
     native_pm_supported,
+    native_pm_unavailable_verdict,
     native_pm_claim_scope,
     native_pm_claim_errors,
     native_pm_lane_errors,
     lifecycle_lane_owner_contract_errors,
+    lifecycle_status_owner_matches,
     lifecycle_owner_for,
     lifecycle_pass_status,
     lifecycle_status_for_owner,
@@ -43,6 +45,7 @@ from lifecycle_capability_matrix import (
     print_dependency_owner_summary,
     lifecycle_platform_name,
     lifecycle_environment,
+    pulumi_local_environment,
     recovery_environment,
     python_venv_environment,
     provision_python_build_tools,
@@ -113,6 +116,47 @@ class LifecycleEnvironmentIsolation(unittest.TestCase):
             env["DENO_DIR"], os.path.join("/tmp/mgc-lane-sandbox", ".cache", "deno")
         )
         self.assertNotIn("MAGICORE_STORE_ROOT", env)
+
+    def test_pulumi_lane_uses_ephemeral_local_backend_and_drops_cloud_credentials(self):
+        with tempfile.TemporaryDirectory() as root:
+            env = pulumi_local_environment(
+                root,
+                {
+                    "HOME": os.path.join(root, ".home"),
+                    "PULUMI_ACCESS_TOKEN": "host-token",
+                    "AWS_ACCESS_KEY_ID": "host-access-key",
+                    "AWS_SECRET_ACCESS_KEY": "host-secret-key",
+                    "AWS_PROFILE": "host-profile",
+                    "PATH": "/usr/bin",
+                },
+            )
+
+        self.assertEqual(env["PULUMI_BACKEND_URL"], Path(root, ".pulumi-backend").as_uri())
+        self.assertEqual(env["PULUMI_HOME"], os.path.join(root, ".pulumi-home"))
+        self.assertTrue(env["PULUMI_CONFIG_PASSPHRASE"])
+        self.assertEqual(env["AWS_EC2_METADATA_DISABLED"], "true")
+        for name in ("PULUMI_ACCESS_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_PROFILE"):
+            self.assertNotIn(name, env)
+
+    def test_pulumi_lane_declares_a_local_stack_setup_and_toolchain_probe(self):
+        lane = next(
+            lane for lane in LANES
+            if lane["core"] == "clo" and lane["language"] == "pulumi"
+        )
+        self.assertEqual(lane["toolchain_probes"], ["pulumi"])
+        self.assertIn("initialize_local_pulumi_stack", lane["pre_steps"])
+
+        workflow = (
+            Path(__file__).resolve().parent.parent
+            / ".github"
+            / "workflows"
+            / "lifecycle-matrix.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "pulumi/actions@8e5e406f4007fca908480587cb9893c07090f58d",
+            workflow,
+        )
+        self.assertIn('pulumi-version: "3.267.0"', workflow)
 
     def test_lane_environment_preserves_read_only_rustup_toolchain_home(self):
         with tempfile.TemporaryDirectory() as root:
@@ -341,6 +385,56 @@ class LanePreparationFailure(unittest.TestCase):
         self.assertNotIn(["test"], calls)
         self.assertNotIn(["build"], calls)
 
+    def test_failed_local_pulumi_stack_setup_blocks_preview_without_cloud_auth(self):
+        calls = []
+
+        def fake_run(argv, **kwargs):
+            args = argv[1:] if argv[0] == "/tmp/fake-mgc" else argv
+            calls.append((args, kwargs.get("env", {})))
+            if args[0] == "create-test":
+                project = os.path.join(kwargs["cwd"], args[-1])
+                os.mkdir(project)
+                Path(project, "package.json").write_text("{}", encoding="utf-8")
+                Path(project, "Pulumi.yaml").write_text(
+                    "name: fixture\nruntime: nodejs\n", encoding="utf-8"
+                )
+                return subprocess.CompletedProcess(argv, 0, "created", "")
+            if args[:2] == ["pulumi", "login"]:
+                return subprocess.CompletedProcess(argv, 0, "local login", "")
+            if args[:3] == ["pulumi", "stack", "init"]:
+                return subprocess.CompletedProcess(argv, 1, "", "stack setup failed")
+            if args[0] == "install":
+                return subprocess.CompletedProcess(argv, 0, "installed", "")
+            if args[0] == "test":
+                return subprocess.CompletedProcess(argv, 0, "tested", "")
+            if args[0] == "optimizer":
+                return subprocess.CompletedProcess(argv, 0, "Optimizer skipped", "")
+            raise AssertionError(f"Pulumi preview ran without a local stack: {args}")
+
+        lane = {
+            "core": "clo",
+            "language": "pulumi",
+            "scaffold": ["create-test", "fixture"],
+            "pre_steps": ["initialize_local_pulumi_stack"],
+            "steps": [("install", ["install"]), ("test", ["test"]), ("build", ["build"])],
+            "delegated": [],
+            "install_owner": "native-engine",
+        }
+
+        with patch("lifecycle_capability_matrix.subprocess.run", side_effect=fake_run):
+            result = run_lane("/tmp/fake-mgc", lane)
+
+        self.assertEqual(result["dims"]["install"], STATUS_NATIVE, result)
+        self.assertEqual(result["dims"]["test"], STATUS_PLAIN, result)
+        self.assertEqual(result["dims"]["build"], STATUS_UNVERIFIED)
+        pulumi_calls = [call for call in calls if call[0][0] == "pulumi"]
+        self.assertEqual([call[0][1] for call in pulumi_calls], ["login", "stack"])
+        pulumi_env = pulumi_calls[0][1]
+        self.assertTrue(pulumi_env["PULUMI_BACKEND_URL"].startswith("file://"))
+        self.assertNotIn("PULUMI_ACCESS_TOKEN", pulumi_env)
+        self.assertFalse(any(name.startswith("AWS_") and name != "AWS_EC2_METADATA_DISABLED" for name in pulumi_env))
+        self.assertNotIn((['build'], pulumi_env), calls)
+
 
 def evidence(dimensions=None, owners=None):
     statuses = {name: STATUS_NATIVE for name in NATIVE_PM_REQUIRED_DIMENSIONS}
@@ -386,7 +480,7 @@ class NativePackageManagerVerdict(unittest.TestCase):
         self.assertEqual(len(failures), 1)
         self.assertIn("app/flutter", failures[0])
 
-    def test_native_pm_claim_still_requires_a_complete_runtime_verdict(self):
+    def test_native_pm_claim_with_missing_evidence_shape_fails_closed(self):
         failures = native_pm_lane_errors({
             "core": "web",
             "language": "javascript",
@@ -394,7 +488,7 @@ class NativePackageManagerVerdict(unittest.TestCase):
             "install_owner": "native-engine",
             "native_pm_verdict": "not-native-pm",
         })
-        self.assertTrue(any("native_pm_verdict" in failure for failure in failures))
+        self.assertTrue(any("malformed native-PM dimensions" in failure for failure in failures))
 
     def test_matrix_cannot_downgrade_source_native_owner(self):
         source_lane = next(
@@ -407,6 +501,39 @@ class NativePackageManagerVerdict(unittest.TestCase):
         errors = lifecycle_lane_owner_contract_errors(matrix_lane)
         self.assertTrue(any("dependency owner differs from source contract" in error for error in errors))
         self.assertTrue(any("install owner differs from source contract" in error for error in errors))
+
+    def test_matrix_cannot_downgrade_a_source_operation_owner(self):
+        source_lane = next(
+            lane for lane in LANES
+            if lane["core"] == "lib" and lane["language"] == "rust"
+        )
+        matrix_lane = dict(source_lane)
+        matrix_lane["owner_by_operation"] = dict(source_lane["owner_by_operation"])
+        matrix_lane["owner_by_operation"]["install"] = "cargo"
+        errors = lifecycle_lane_owner_contract_errors(matrix_lane)
+        self.assertTrue(any("operation owner differs from source contract" in error for error in errors))
+
+    def test_partial_native_ownership_is_not_mislabeled_as_full_native_pm(self):
+        source_lane = next(
+            lane for lane in LANES
+            if lane["core"] == "lib" and lane["language"] == "rust"
+        )
+        dimensions, _ = evidence()
+        dimensions["list"] = STATUS_UNVERIFIED
+        self.assertEqual(
+            native_pm_lane_errors({
+                "core": "lib",
+                "language": "rust",
+                "verdict": "orchestration-lifecycle-passed",
+                "dependency_owner": "mgc-native",
+                "install_owner": "native-engine",
+                "native_pm_verdict": "not-native-pm",
+                "native_pm_delegated": [],
+                "dimensions": dimensions,
+                "owner_by_operation": dict(source_lane["owner_by_operation"]),
+            }),
+            [],
+        )
 
     def test_native_claim_errors_recheck_runtime_evidence(self):
         dimensions, operation_owners = evidence()
@@ -424,7 +551,7 @@ class NativePackageManagerVerdict(unittest.TestCase):
         }])
         self.assertTrue(
             any(
-                "lacks complete native package-manager evidence" in failure
+                "without complete package-manager evidence" in failure
                 for failure in failures
             )
         )
@@ -448,7 +575,7 @@ class NativePackageManagerVerdict(unittest.TestCase):
         failures = native_pm_lane_errors(lane)
         self.assertTrue(
             any(
-                "lacks complete native package-manager evidence" in failure
+                "without complete package-manager evidence" in failure
                 for failure in failures
             )
         )
@@ -511,6 +638,7 @@ class NativePackageManagerVerdict(unittest.TestCase):
 
     def test_release_scopeouts_are_named_and_do_not_remove_lanes_from_inventory(self):
         expected = {
+            ("lib", "java", "java"),
             ("app", "swift", ""),
             ("app", "objc", ""),
             ("app", "react-native", ""),
@@ -530,7 +658,12 @@ class NativePackageManagerVerdict(unittest.TestCase):
         self.assertEqual(expected, evidence_only)
         self.assertEqual(
             expected & native_pm_claim_scope(LANES),
-            {("app", "swift", ""), ("game", "rust", ""), ("iot", "rust", "")},
+            {
+                ("lib", "java", "java"),
+                ("app", "swift", ""),
+                ("game", "rust", ""),
+                ("iot", "rust", ""),
+            },
         )
         self.assertIsNone(release_scope_out_reason("web", "javascript"))
 
@@ -548,7 +681,7 @@ class NativePackageManagerVerdict(unittest.TestCase):
         self.assertIn("release_scope_out_reason(*key)", workflow)
         self.assertIn("PLATFORM_EVIDENCE_RELEASE_SCOPE", workflow)
         self.assertIn('if lane.get("dependency_owner") != "mgc-native":', workflow)
-        self.assertNotIn('lane.get("native_pm_verdict") != "native-pm-supported"', workflow)
+        self.assertIn('lane.get("native_pm_verdict") != "native-pm-supported"', workflow)
         self.assertIn("unexpected lane outside global v1.2 scope", workflow)
         self.assertIn("OK: release-blocking lifecycle lanes passed:", workflow)
         self.assertIn(
@@ -562,7 +695,9 @@ class NativePackageManagerVerdict(unittest.TestCase):
         self.assertIn("LIFECYCLE_OWNER_VALUES,", workflow)
         self.assertIn('lifecycle_owners = lane.get("lifecycle_owners")', workflow)
         self.assertNotIn('owner != "mgc-native"', workflow)
-        self.assertIn("lifecycle_status_for_owner(owner)", workflow)
+        self.assertIn("lifecycle_status_owner_matches(", workflow)
+        self.assertIn("Fully native-PM qualified lanes:", workflow)
+        self.assertIn("Native-PM claim withheld pending complete runtime evidence:", workflow)
         self.assertIn("framework_catalog_errors(data.get(\"framework_catalog\"), data[\"lanes\"])", workflow)
         self.assertIn("required_dimensions_for_lane(*key)", workflow)
         self.assertIn("if status not in ALL_STATUSES", workflow)
@@ -582,7 +717,7 @@ class NativePackageManagerVerdict(unittest.TestCase):
         dimensions_assignment = workflow.index(
             'dimensions = lane.get("dimensions", {})'
         )
-        owner_status_check = workflow.index("lifecycle_status_for_owner(owner)")
+        owner_status_check = workflow.index("lifecycle_status_owner_matches(")
         self.assertLess(dimensions_assignment, owner_status_check)
         self.assertIn('if not isinstance(dimensions, dict):', workflow)
 
@@ -657,6 +792,15 @@ class NativePackageManagerVerdict(unittest.TestCase):
         dimensions, owners = evidence()
         self.assertTrue(native_pm_supported("mgc-native", "native-engine", [], dimensions, owners))
 
+    def test_missing_toolchain_preserves_explicit_unsupported_native_pm_verdict(self):
+        self.assertEqual(native_pm_unavailable_verdict("unsupported"), "unsupported")
+        self.assertEqual(native_pm_unavailable_verdict("scaffold-only"), "unsupported")
+        self.assertEqual(native_pm_unavailable_verdict("mgc-native"), "not-native-pm")
+        self.assertEqual(native_pm_unavailable_verdict("delegated"), "not-native-pm")
+
+    def test_failed_probe_is_not_rewritten_as_an_owner_status_mismatch(self):
+        self.assertTrue(lifecycle_status_owner_matches(STATUS_FAILED, "plain-delegation"))
+
 
 class NativeFrameworkLifecycleCoverage(unittest.TestCase):
     def test_framework_qualified_release_scope_uses_new_schema(self):
@@ -676,13 +820,70 @@ class NativeFrameworkLifecycleCoverage(unittest.TestCase):
         }
 
     def test_catalog_native_framework_with_complete_lane_and_owners_passes(self):
-        lanes = [{"core": "lib", "framework_id": "rust"}]
+        source_lane = next(
+            lane for lane in LANES
+            if lane["core"] == "lib" and lane["language"] == "rust"
+        )
+        lanes = [{
+            "core": "lib",
+            "framework_id": "rust",
+            "owner_by_operation": source_lane["owner_by_operation"],
+        }]
         self.assertEqual(
             framework_catalog_errors(
-                [self.catalog_record("rust")], lanes
+                [self.catalog_record("rust", operations=self.catalog_owners(source_lane))], lanes
             ),
             [],
         )
+
+    def catalog_owners(self, lane):
+        owners = {}
+        for operation, matrix_owner in lane["owner_by_operation"].items():
+            owner = (
+                "mgc-native"
+                if matrix_owner in {"mgc", "magicore-shared-cas"}
+                else "scaffold-only"
+                if matrix_owner == "scaffold-only"
+                else "unsupported"
+            )
+            owners[operation] = {"owner": owner}
+        return owners
+
+    def test_native_framework_can_explicitly_leave_an_operation_unsupported(self):
+        source_lane = next(
+            lane for lane in LANES
+            if lane["core"] == "lib" and lane["language"] == "rust"
+        )
+        owners = self.catalog_owners(source_lane)
+        self.assertEqual(owners["gc"]["owner"], "unsupported")
+        self.assertEqual(
+            framework_catalog_errors(
+                [self.catalog_record("rust", operations=owners)],
+                [{
+                    "core": "lib",
+                    "framework_id": "rust",
+                    "owner_by_operation": source_lane["owner_by_operation"],
+                }],
+            ),
+            [],
+        )
+
+    def test_native_framework_operation_cannot_be_downgraded_from_lane_contract(self):
+        source_lane = next(
+            lane for lane in LANES
+            if lane["core"] == "lib" and lane["language"] == "rust"
+        )
+        owners = self.catalog_owners(source_lane)
+        owners["install"] = {"owner": "unsupported"}
+        errors = framework_catalog_errors(
+            [self.catalog_record("rust", operations=owners)],
+            [{
+                "core": "lib",
+                "framework_id": "rust",
+                "owner_by_operation": source_lane["owner_by_operation"],
+            }],
+        )
+        self.assertTrue(any("operation install differs from lifecycle owner" in error for error in errors))
 
     def test_catalog_scaffold_only_framework_with_reason_is_an_explicit_scopeout(self):
         row = self.catalog_record("django", status="scaffold-only")
@@ -703,7 +904,14 @@ class NativeFrameworkLifecycleCoverage(unittest.TestCase):
         del operations["offline-reinstall"]
         errors = framework_catalog_errors(
             [self.catalog_record("rust", operations=operations)],
-            [{"core": "lib", "framework_id": "rust"}],
+            [{
+                "core": "lib",
+                "framework_id": "rust",
+                "owner_by_operation": next(
+                    lane["owner_by_operation"] for lane in LANES
+                    if lane["core"] == "lib" and lane["language"] == "rust"
+                ),
+            }],
         )
         self.assertTrue(any("offline-reinstall" in error for error in errors))
 
@@ -909,15 +1117,46 @@ class PlatformGreenCounter(unittest.TestCase):
         )
 
     def green_matrix(self):
-        package_owners = {
-            **{operation: "mgc" for operation in NATIVE_PM_USER_OPERATIONS},
-            "resolve": "mgc",
-            "lock": "mgc",
-            "fetch": "mgc",
-            "verify": "mgc",
-            "store": "magicore-shared-cas",
-            "materialize": "mgc",
-        }
+        def catalog_owners(lane):
+            return {
+                operation: {
+                    "owner": (
+                        "mgc-native"
+                        if matrix_owner in {"mgc", "magicore-shared-cas"}
+                        else "scaffold-only"
+                        if matrix_owner == "scaffold-only"
+                        else "unsupported"
+                    )
+                }
+                for operation, matrix_owner in lane["owner_by_operation"].items()
+            }
+
+        def native_pm_verdict(lane):
+            dimensions = {
+                **{name: STATUS_NATIVE for name in ALL_DIMENSIONS},
+                **{
+                    name: lifecycle_status_for_owner(
+                        lifecycle_owner_for(lane, name)
+                    )
+                    for name in lane["required_dims"]
+                },
+            }
+            if lane["dependency_owner"] == "mgc-native":
+                return (
+                    "native-pm-supported"
+                    if native_pm_supported(
+                        lane["dependency_owner"],
+                        lane["install_owner"],
+                        [],
+                        dimensions,
+                        lane["owner_by_operation"],
+                    )
+                    else "not-native-pm"
+                )
+            if lane["dependency_owner"] == "delegated":
+                return "compatibility-passed"
+            return "unsupported"
+
         return {
             "schema_version": SCHEMA_VERSION,
             "matrix_kind": "lifecycle",
@@ -949,14 +1188,8 @@ class PlatformGreenCounter(unittest.TestCase):
                     "dependency_owner": lane["dependency_owner"],
                     "install_owner": lane["install_owner"],
                     "native_pm_delegated": [],
-                    "native_pm_verdict": (
-                        "native-pm-supported"
-                        if lane["dependency_owner"] == "mgc-native"
-                        else "compatibility-passed"
-                        if lane["dependency_owner"] == "delegated"
-                        else "unsupported"
-                    ),
-                    "owner_by_operation": package_owners,
+                    "native_pm_verdict": native_pm_verdict(lane),
+                    "owner_by_operation": dict(lane["owner_by_operation"]),
                     "release_scope_out_reason": release_scope_out_reason(
                         lane["core"], lane["language"], lane.get("framework_id", "")
                     ),
@@ -974,11 +1207,12 @@ class PlatformGreenCounter(unittest.TestCase):
                 {
                     "core": lane["core"],
                     "framework": lane["framework_id"],
-                    "status": "mgc-engine-path",
-                    "dependency_ownership": {
-                        operation: {"owner": "mgc-native"}
-                        for operation in ALL_DEPENDENCY_OPERATIONS
-                    },
+                    "status": (
+                        "mgc-engine-path"
+                        if lane["dependency_owner"] == "mgc-native"
+                        else "scaffold-only"
+                    ),
+                    "dependency_ownership": catalog_owners(lane),
                     "evidence": "synthetic passing test fixture",
                 }
                 for lane in LANES
@@ -1019,7 +1253,7 @@ class PlatformGreenCounter(unittest.TestCase):
         errors = platform_evidence_errors(
             matrix, "a" * 40, current_tree_clean=True
         )
-        self.assertTrue(any("lib/java lacks complete native package-manager evidence" in error for error in errors))
+        self.assertTrue(any("lib/java declares native-pm-supported without complete package-manager evidence" in error for error in errors))
 
     def test_platform_green_rejects_lane_owner_that_differs_from_source_contract(self):
         matrix = self.green_matrix()
@@ -1031,6 +1265,22 @@ class PlatformGreenCounter(unittest.TestCase):
             matrix, "a" * 40, current_tree_clean=True
         )
         self.assertTrue(any("dependency owner differs from source contract" in error for error in errors))
+
+    def test_failed_required_probe_blocks_without_owner_status_mismatch(self):
+        matrix = self.green_matrix()
+        lane = next(
+            row for row in matrix["lanes"]
+            if row["core"] == "web" and row["language"] == "node"
+        )
+        lane["dimensions"]["test"] = STATUS_FAILED
+        lane["dimensions"]["build"] = STATUS_FAILED
+        lane["verdict"] = "partial"
+        errors = platform_evidence_errors(
+            matrix, "a" * 40, current_tree_clean=True
+        )
+        self.assertTrue(any("non-passing required dimensions" in error and "test=failed" in error for error in errors))
+        self.assertFalse(any("status/owner mismatch for test" in error for error in errors))
+        self.assertFalse(any("status/owner mismatch for build" in error for error in errors))
 
     def test_platform_green_requires_exact_reason_for_every_scoped_out_lane(self):
         matrix = self.green_matrix()

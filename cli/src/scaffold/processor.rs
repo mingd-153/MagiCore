@@ -597,27 +597,67 @@ impl Scaffolder {
         name: &str,
         framework: &str,
     ) -> Result<()> {
-        match Self::resolve_web_template_layers(config) {
+        let write_result = match Self::resolve_web_template_layers(config) {
             Ok(layers) => Self::materialize_web_templates(target, config, &layers),
             Err(err) => {
                 if let Some(files) =
                     crate::scaffold::embedded_kernel::get_embedded_template("web", framework)
                 {
                     Self::ensure_web_fallback_common_files(target, name, framework)?;
-                    return crate::scaffold::embedded_kernel::materialize_embedded(
-                        target, name, &files,
-                    );
-                }
-                // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
-                if effective_web_mode(config) == "backend"
+                    crate::scaffold::embedded_kernel::materialize_embedded(target, name, &files)
+                } else if effective_web_mode(config) == "backend"
                     && let Some(language) = infer_backend_language(framework)
                 {
                     Self::ensure_web_fallback_common_files(target, name, framework)?;
-                    return Self::write_minimal_backend_fallback(target, name, framework, language);
+                    Self::write_minimal_backend_fallback(target, name, framework, language)
+                } else {
+                    return Err(err);
                 }
-                Err(err)
             }
+        };
+        write_result?;
+        Self::ensure_web_test_runner(target, name)
+    }
+
+    fn ensure_web_test_runner(target: &Path, name: &str) -> Result<()> {
+        let package_path = target.join("package.json");
+        let mut manifest = if package_path.is_file() {
+            serde_json::from_slice::<serde_json::Value>(&std::fs::read(&package_path)?)?
+        } else {
+            serde_json::json!({
+                "name": slugify(name),
+                "private": true,
+                "version": "0.1.0"
+            })
+        };
+        let Some(package) = manifest.as_object_mut() else {
+            return Err(crate::error::package_json_root_object());
+        };
+        let scripts = package
+            .entry("scripts")
+            .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+        let Some(scripts) = scripts.as_object_mut() else {
+            return Err(crate::error::package_json_scripts_object());
+        };
+        match scripts.get("test") {
+            Some(serde_json::Value::String(_)) => return Ok(()),
+            Some(_) => return Err(crate::error::package_json_scripts_object()),
+            None => {}
         }
+        scripts.insert(
+            "test".to_string(),
+            serde_json::Value::String("node --test test/scaffold.test.cjs".to_string()),
+        );
+        std::fs::write(&package_path, serde_json::to_vec_pretty(&manifest)?)?;
+
+        let smoke_test = target.join("test/scaffold.test.cjs");
+        if !smoke_test.exists() {
+            Self::write_file(
+                &smoke_test,
+                "const test = require('node:test');\nconst assert = require('node:assert/strict');\nconst fs = require('node:fs');\nconst path = require('node:path');\n\nconst root = path.resolve(__dirname, '..');\nconst htmlPath = path.join(root, 'index.html');\nif (fs.existsSync(htmlPath)) {\n  test('HTML document has valid local script entries', () => {\n    const html = fs.readFileSync(htmlPath, 'utf8');\n    assert.match(html, /<html\\b/i);\n    for (const [, entry] of html.matchAll(/<script[^>]+src=[\\\"']([^\\\"']+)[\\\"']/gi)) {\n      const url = new URL(entry, 'http://magicore.local');\n      if (url.origin !== 'http://magicore.local') continue;\n      const relative = decodeURIComponent(url.pathname).replace(/^\\/+/, '');\n      const localPath = path.resolve(root, relative);\n      assert.ok(localPath === root || localPath.startsWith(root + path.sep), 'script entry escapes project: ' + entry);\n      assert.ok(fs.existsSync(localPath), 'missing local script entry: ' + entry);\n    }\n  });\n} else {\n  const candidates = ['src/server', 'src/index', 'src/main', 'src/app', 'server', 'index', 'main', 'app'].flatMap((base) => ['.js', '.mjs', '.cjs', '.ts', '.mts', '.cts'].map((extension) => base + extension));\n  const entry = candidates.map((file) => path.join(root, file)).find((file) => fs.existsSync(file));\n  test('Node project contains a source entrypoint', () => {\n    assert.ok(entry, 'no Node source entrypoint found');\n    assert.ok(fs.readFileSync(entry, 'utf8').trim().length > 0, 'Node source entrypoint is empty');\n  });\n}\n",
+            )?;
+        }
+        Ok(())
     }
 
     fn ensure_web_fallback_common_files(target: &Path, name: &str, framework: &str) -> Result<()> {
