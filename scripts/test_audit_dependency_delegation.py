@@ -1347,7 +1347,11 @@ class RepoLedgerContract(unittest.TestCase):
             )
         )
         self.assertIsInstance(ledger["dirty_paths_count"], int)
-        self.assertGreater(ledger["dirty_paths_count"], 0)
+        self.assertIsInstance(ledger["working_tree_clean"], bool)
+        if ledger["working_tree_clean"]:
+            self.assertEqual(ledger["dirty_paths_count"], 0)
+        else:
+            self.assertGreater(ledger["dirty_paths_count"], 0)
         self.assertTrue(
             all(
                 item["evidence_kind"]
