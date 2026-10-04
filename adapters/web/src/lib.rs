@@ -169,8 +169,44 @@ fn prune_unreachable_packages(graph: &mut ResolvedGraph) {
 }
 
 fn normalize_resolved_graph(manifest: &Manifest, mut graph: ResolvedGraph) -> ResolvedGraph {
+    // A range can match both the root version and a transitive instance.
+    // Keep one root per name: retain a unique explicit root when available,
+    // otherwise use the highest matching version selected by fresh resolve.
+    // Một range có thể khớp cả bản root lẫn bản transitive. Mỗi tên chỉ có
+    // một root: giữ root tường minh duy nhất, nếu mơ hồ thì chọn bản cao nhất.
+    let mut candidates_by_name: std::collections::HashMap<
+        String,
+        Vec<&mgc_types::adapter::ResolvedPackage>,
+    > = std::collections::HashMap::new();
+    for package in &graph.packages {
+        if is_manifest_root_package(manifest, &package.id) {
+            candidates_by_name
+                .entry(package.id.name_str().to_string())
+                .or_default()
+                .push(package);
+        }
+    }
+    let mut root_ids = std::collections::HashSet::new();
+    for candidates in candidates_by_name.into_values() {
+        let explicit_roots: Vec<_> = candidates
+            .iter()
+            .copied()
+            .filter(|package| package.direct)
+            .collect();
+        let preferred = if explicit_roots.is_empty() {
+            candidates
+        } else {
+            explicit_roots
+        };
+        if let Some(root) = preferred
+            .into_iter()
+            .max_by(|left, right| left.id.version().cmp(right.id.version()))
+        {
+            root_ids.insert(root.id.clone());
+        }
+    }
     for package in &mut graph.packages {
-        package.direct = is_manifest_root_package(manifest, &package.id);
+        package.direct = root_ids.contains(&package.id);
     }
     prune_unreachable_packages(&mut graph);
     graph
@@ -782,7 +818,11 @@ impl WebAdapter {
             && !age_gate_active
             && let Some(lockfile) = read_web_lockfile_checked(Path::new("."))?
             && lockfile_satisfies_manifest(&lockfile, manifest)
-            && let Ok(Some(graph)) = build_graph_from_lockfile(&lockfile, manifest)
+            && let Ok(Some(graph)) = build_graph_from_lockfile(
+                &lockfile,
+                manifest,
+                &crate::lockfile::web_lock_owner_core(Path::new("."))?,
+            )
         {
             let graph = normalize_resolved_graph(manifest, graph);
             profile.mark("lockfile_short_circuit", started_at);

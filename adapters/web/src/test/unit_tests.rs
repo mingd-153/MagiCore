@@ -32,6 +32,9 @@ use crate::profile::*;
 use crate::provider::*;
 use crate::update::*;
 
+#[path = "unit_tests/warm_cache_tests.rs"]
+mod warm_cache_tests;
+
 async fn bind_test_listener() -> Option<TcpListener> {
     match TcpListener::bind("127.0.0.1:0").await {
         Ok(listener) => Some(listener),
@@ -522,6 +525,139 @@ fn web_direct_root_classification_checks_the_manifest_range() {
 }
 
 #[test]
+fn web_root_normalization_collapses_duplicate_direct_versions() {
+    let mut manifest = Manifest::new("demo", mgc_types::ecosystem::Ecosystem::Web);
+    manifest.add_dep(
+        DependencySpec::new(
+            PackageName::new("postcss").unwrap(),
+            mgc_types::VersionRange::parse("^8.5.0").unwrap(),
+        ),
+        false,
+        false,
+        false,
+    );
+    manifest.add_dep(
+        DependencySpec::new(
+            PackageName::new("plugin").unwrap(),
+            mgc_types::VersionRange::parse("^1.0.0").unwrap(),
+        ),
+        false,
+        false,
+        false,
+    );
+
+    let older = PackageId::parse("postcss@8.5.23").unwrap();
+    let newer = PackageId::parse("postcss@8.5.28").unwrap();
+    let plugin = PackageId::parse("plugin@1.0.0").unwrap();
+    let package = |id: PackageId, direct: bool, deps: Vec<PackageId>| ResolvedPackage {
+        id,
+        integrity: String::new(),
+        tarball_url: String::new(),
+        deps,
+        peer_deps: vec![],
+        direct,
+        dev: false,
+    };
+    let graph = normalize_resolved_graph(
+        &manifest,
+        ResolvedGraph {
+            packages: vec![
+                package(older.clone(), true, vec![]),
+                package(newer.clone(), true, vec![]),
+                package(plugin.clone(), true, vec![older.clone()]),
+            ],
+        },
+    );
+    let packages: std::collections::HashMap<_, _> = graph
+        .packages
+        .iter()
+        .map(|package| (package.id.clone(), package))
+        .collect();
+
+    assert!(
+        packages.contains_key(&older),
+        "the transitive version stays installed"
+    );
+    assert!(
+        packages[&newer].direct,
+        "only the latest matching root stays direct"
+    );
+    assert!(!packages[&older].direct);
+    let root_ids: Vec<_> = select_root_packages(&graph)
+        .into_iter()
+        .filter(|package| package.id.name_str() == "postcss")
+        .map(|package| package.id.clone())
+        .collect();
+    assert_eq!(root_ids, vec![newer]);
+}
+
+#[test]
+fn web_root_normalization_preserves_a_unique_locked_root_version() {
+    let mut manifest = Manifest::new("demo", mgc_types::ecosystem::Ecosystem::Web);
+    manifest.add_dep(
+        DependencySpec::new(
+            PackageName::new("postcss").unwrap(),
+            mgc_types::VersionRange::parse("^8.5.0").unwrap(),
+        ),
+        false,
+        false,
+        false,
+    );
+    manifest.add_dep(
+        DependencySpec::new(
+            PackageName::new("plugin").unwrap(),
+            mgc_types::VersionRange::parse("^1.0.0").unwrap(),
+        ),
+        false,
+        false,
+        false,
+    );
+
+    let older = PackageId::parse("postcss@8.5.23").unwrap();
+    let newer = PackageId::parse("postcss@8.5.28").unwrap();
+    let plugin = PackageId::parse("plugin@1.0.0").unwrap();
+    let package = |id: PackageId, direct: bool, deps: Vec<PackageId>| ResolvedPackage {
+        id,
+        integrity: String::new(),
+        tarball_url: String::new(),
+        deps,
+        peer_deps: vec![],
+        direct,
+        dev: false,
+    };
+    let graph = normalize_resolved_graph(
+        &manifest,
+        ResolvedGraph {
+            packages: vec![
+                package(older.clone(), true, vec![]),
+                package(newer.clone(), false, vec![]),
+                package(plugin.clone(), true, vec![newer.clone()]),
+            ],
+        },
+    );
+    let packages: std::collections::HashMap<_, _> = graph
+        .packages
+        .iter()
+        .map(|package| (package.id.clone(), package))
+        .collect();
+
+    assert!(
+        packages[&older].direct,
+        "a unique lock root remains selected"
+    );
+    assert!(
+        !packages[&newer].direct,
+        "the matching transitive version stays nested"
+    );
+    let root_ids: Vec<_> = select_root_packages(&graph)
+        .into_iter()
+        .filter(|package| package.id.name_str() == "postcss")
+        .map(|package| package.id.clone())
+        .collect();
+    assert_eq!(root_ids, vec![older]);
+}
+
+#[test]
 fn web_resolver_prunes_lock_orphans_but_keeps_dependency_and_peer_closure() {
     let package_id = |name: &str, version: &str| {
         PackageId::new(
@@ -645,17 +781,118 @@ fn web_lock_writer_preserves_foreign_ecosystems_and_reads_only_web_pins() {
     manifest.add_dep(
         mgc_types::DependencySpec::new(
             PackageName::new("react").unwrap(),
-            mgc_types::VersionRange::parse("^18.0.0").unwrap(),
+            mgc_types::VersionRange::parse("^19.0.0").unwrap(),
         ),
         false,
         false,
         false,
     );
-    assert!(!lockfile_satisfies_manifest(&written, &manifest));
-    let cached_graph = build_graph_from_lockfile(&written, &manifest)
+    assert!(lockfile_satisfies_manifest(&written, &manifest));
+    let cached_graph = build_graph_from_lockfile(&written, &manifest, "web")
         .unwrap()
         .expect("the Web entry is available even when another ecosystem shares its name");
     assert_eq!(cached_graph.packages[0].id.version().to_string(), "19.0.0");
+}
+
+#[test]
+fn web_lockfile_replay_restores_transitive_exact_version_and_peer_edges() {
+    let root = PackageId::parse("app@1.0.0").unwrap();
+    let scoped = PackageId::parse("@scope/lib@2.0.0").unwrap();
+    let nested_v1 = PackageId::parse("nested@1.0.0").unwrap();
+    let nested_v2 = PackageId::parse("nested@2.0.0").unwrap();
+    let peer = PackageId::parse("peer@1.0.0").unwrap();
+    let mut lock = Lockfile::new();
+    lock.packages = vec![
+        mgc_lockfile::Package {
+            owner_core: Some("web".into()),
+            name: root.name_str().into(),
+            version: root.version().to_string(),
+            dependencies: vec![scoped.to_string()],
+            peers: Some(vec![peer.to_string()]),
+            ecosystem: mgc_lockfile::EcosystemTag::Web,
+            ..Default::default()
+        },
+        mgc_lockfile::Package {
+            owner_core: Some("web".into()),
+            name: scoped.name_str().into(),
+            version: scoped.version().to_string(),
+            dependencies: vec![nested_v2.to_string()],
+            ecosystem: mgc_lockfile::EcosystemTag::Web,
+            ..Default::default()
+        },
+        mgc_lockfile::Package {
+            owner_core: Some("web".into()),
+            name: nested_v1.name_str().into(),
+            version: nested_v1.version().to_string(),
+            ecosystem: mgc_lockfile::EcosystemTag::Web,
+            ..Default::default()
+        },
+        mgc_lockfile::Package {
+            owner_core: Some("web".into()),
+            name: nested_v2.name_str().into(),
+            version: nested_v2.version().to_string(),
+            ecosystem: mgc_lockfile::EcosystemTag::Web,
+            ..Default::default()
+        },
+        mgc_lockfile::Package {
+            owner_core: Some("web".into()),
+            name: peer.name_str().into(),
+            version: peer.version().to_string(),
+            ecosystem: mgc_lockfile::EcosystemTag::Web,
+            ..Default::default()
+        },
+    ];
+    mgc_lockfile::update_owner_root_pins(
+        &mut lock,
+        "web",
+        mgc_lockfile::EcosystemTag::Web,
+        [root.to_string()],
+    );
+
+    let mut manifest = Manifest::new("demo", mgc_types::ecosystem::Ecosystem::Web);
+    manifest.add_dep(
+        DependencySpec::new(
+            PackageName::new("app").unwrap(),
+            mgc_types::VersionRange::parse("^1.0.0").unwrap(),
+        ),
+        false,
+        false,
+        false,
+    );
+    let graph = build_graph_from_lockfile(&lock, &manifest, "web")
+        .unwrap()
+        .expect("the complete lock closure should replay");
+    let packages: std::collections::HashMap<_, _> = graph
+        .packages
+        .iter()
+        .map(|package| (package.id.to_string(), package))
+        .collect();
+
+    assert_eq!(
+        packages.len(),
+        4,
+        "replay the root and all reachable entries"
+    );
+    assert!(!packages.contains_key(&nested_v1.to_string()));
+    assert_eq!(packages[&root.to_string()].deps, vec![scoped.clone()]);
+    assert_eq!(packages[&root.to_string()].peer_deps, vec![peer.clone()]);
+    assert_eq!(packages[&scoped.to_string()].deps, vec![nested_v2.clone()]);
+    assert!(packages[&root.to_string()].direct);
+    assert_eq!(
+        packages.values().filter(|package| package.direct).count(),
+        1
+    );
+
+    let mut incomplete_lock = lock.clone();
+    incomplete_lock
+        .packages
+        .retain(|package| !(package.name == "nested" && package.version == "2.0.0"));
+    assert!(
+        build_graph_from_lockfile(&incomplete_lock, &manifest, "web")
+            .unwrap()
+            .is_none(),
+        "a missing exact-version edge must miss the lock path instead of disappearing"
+    );
 }
 
 #[test]
@@ -3845,6 +4082,26 @@ fn test_known_optional_native_binary_supported_only_matches_current_target() {
     ))
     .unwrap();
     let unsupported = PackageName::new("@esbuild/linux-s390x").unwrap();
+    let typescript_supported = PackageName::new(format!(
+        "@typescript/typescript-{}-{}",
+        NpmDependencyProvider::current_npm_os(),
+        NpmDependencyProvider::current_npm_cpu()
+    ))
+    .unwrap();
+    let typescript_unsupported_target = if format!(
+        "{}-{}",
+        NpmDependencyProvider::current_npm_os(),
+        NpmDependencyProvider::current_npm_cpu()
+    ) == "linux-x64"
+    {
+        "darwin-arm64"
+    } else {
+        "linux-x64"
+    };
+    let typescript_unsupported = PackageName::new(format!(
+        "@typescript/typescript-{typescript_unsupported_target}"
+    ))
+    .unwrap();
     let unknown = PackageName::new("optional-but-not-native").unwrap();
 
     assert_eq!(
@@ -3856,9 +4113,47 @@ fn test_known_optional_native_binary_supported_only_matches_current_target() {
         Some(false)
     );
     assert_eq!(
+        NpmDependencyProvider::known_optional_native_binary_supported(&typescript_supported),
+        Some(true)
+    );
+    assert_eq!(
+        NpmDependencyProvider::known_optional_native_binary_supported(&typescript_unsupported),
+        Some(false)
+    );
+    assert_eq!(
         NpmDependencyProvider::known_optional_native_binary_supported(&unknown),
         None
     );
+}
+
+#[tokio::test]
+async fn test_required_platform_binary_edges_skip_foreign_targets() {
+    let current_target = format!(
+        "{}-{}",
+        NpmDependencyProvider::current_npm_os(),
+        NpmDependencyProvider::current_npm_cpu()
+    );
+    let foreign_target = if current_target == "linux-x64" {
+        "darwin-arm64"
+    } else {
+        "linux-x64"
+    };
+    let provider = NpmDependencyProvider::new("https://registry.example", None, None);
+    let current = mgc_resolver::ResolvedDep {
+        package: PackageName::new(format!("@typescript/typescript-{current_target}")).unwrap(),
+        spec: "7.0.2".to_string(),
+        optional: false,
+        peer: false,
+    };
+    let foreign = mgc_resolver::ResolvedDep {
+        package: PackageName::new(format!("@typescript/typescript-{foreign_target}")).unwrap(),
+        spec: "7.0.2".to_string(),
+        optional: false,
+        peer: false,
+    };
+
+    assert!(provider.should_enqueue(&current).await.unwrap());
+    assert!(!provider.should_enqueue(&foreign).await.unwrap());
 }
 
 #[test]

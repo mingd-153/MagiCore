@@ -169,9 +169,9 @@ for artifact in \
     magicore-web-1.1.0-rc.9-windows-x64.zip; do
     printf '%s' "$artifact" > "$ARTIFACTS/$artifact"
 done
-MAGICORE_REPO_ROOT="$MANIFEST_REPO" "$SCRIPT_DIR/update-manifests.sh" \
+/usr/bin/env -i PATH="$PATH" HOME="${HOME:-}" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-C.UTF-8}" MAGICORE_REPO_ROOT="$MANIFEST_REPO" "$SCRIPT_DIR/update-manifests.sh" \
     --version 1.1.0-rc.9 --artifacts "$ARTIFACTS" >/dev/null
-MAGICORE_REPO_ROOT="$MANIFEST_REPO" "$SCRIPT_DIR/update-manifests.sh" \
+/usr/bin/env -i PATH="$PATH" HOME="${HOME:-}" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-C.UTF-8}" MAGICORE_REPO_ROOT="$MANIFEST_REPO" "$SCRIPT_DIR/update-manifests.sh" \
     --version 1.1.0-rc.9 --artifacts "$ARTIFACTS" --verify-only >/dev/null \
     || fail "complete generated manifests must verify"
 
@@ -191,13 +191,13 @@ text, count = re.subn(
 assert count == 1, "expected a Homebrew SHA256 entry to tamper"
 path.write_text(text, encoding="utf-8")
 PYEOF
-if MAGICORE_REPO_ROOT="$MANIFEST_REPO" "$SCRIPT_DIR/update-manifests.sh" \
+if /usr/bin/env -i PATH="$PATH" HOME="${HOME:-}" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-C.UTF-8}" MAGICORE_REPO_ROOT="$MANIFEST_REPO" "$SCRIPT_DIR/update-manifests.sh" \
     --version 1.1.0-rc.9 --artifacts "$ARTIFACTS" --verify-only >/dev/null 2>&1; then
     fail "verify-only must reject a corrupted web Homebrew hash"
 fi
 echo "ok: verify-only rejects a corrupted web Homebrew hash"
 
-MAGICORE_REPO_ROOT="$MANIFEST_REPO" "$SCRIPT_DIR/update-manifests.sh" \
+/usr/bin/env -i PATH="$PATH" HOME="${HOME:-}" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-C.UTF-8}" MAGICORE_REPO_ROOT="$MANIFEST_REPO" "$SCRIPT_DIR/update-manifests.sh" \
     --version 1.1.0-rc.9 --artifacts "$ARTIFACTS" >/dev/null
 python3 - "$MANIFEST_REPO/packaging/scoop/magicore-web.json" <<'PYEOF'
 import json
@@ -209,13 +209,13 @@ manifest = json.loads(path.read_text(encoding="utf-8"))
 manifest["architecture"]["64bit"]["hash"] = "0" * 64
 path.write_text(json.dumps(manifest), encoding="utf-8")
 PYEOF
-if MAGICORE_REPO_ROOT="$MANIFEST_REPO" "$SCRIPT_DIR/update-manifests.sh" \
+if /usr/bin/env -i PATH="$PATH" HOME="${HOME:-}" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-C.UTF-8}" MAGICORE_REPO_ROOT="$MANIFEST_REPO" "$SCRIPT_DIR/update-manifests.sh" \
     --version 1.1.0-rc.9 --artifacts "$ARTIFACTS" --verify-only >/dev/null 2>&1; then
     fail "verify-only must reject a corrupted web Scoop hash"
 fi
 echo "ok: verify-only rejects a corrupted web Scoop hash"
 
-MAGICORE_REPO_ROOT="$MANIFEST_REPO" "$SCRIPT_DIR/update-manifests.sh" \
+/usr/bin/env -i PATH="$PATH" HOME="${HOME:-}" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-C.UTF-8}" MAGICORE_REPO_ROOT="$MANIFEST_REPO" "$SCRIPT_DIR/update-manifests.sh" \
     --version 1.1.0-rc.9 --artifacts "$ARTIFACTS" >/dev/null
 python3 - "$MANIFEST_REPO/packaging/scoop/magicore.json" <<'PYEOF'
 import json
@@ -230,7 +230,7 @@ manifest["architecture"]["arm64"] = {
 }
 path.write_text(json.dumps(manifest), encoding="utf-8")
 PYEOF
-if MAGICORE_REPO_ROOT="$MANIFEST_REPO" "$SCRIPT_DIR/update-manifests.sh" \
+if /usr/bin/env -i PATH="$PATH" HOME="${HOME:-}" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-C.UTF-8}" MAGICORE_REPO_ROOT="$MANIFEST_REPO" "$SCRIPT_DIR/update-manifests.sh" \
     --version 1.1.0-rc.9 --artifacts "$ARTIFACTS" --verify-only >/dev/null 2>&1; then
     fail "verify-only must reject an architecture without a published artifact"
 fi

@@ -5,7 +5,10 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 BENCH_DIR="adapters/web"
-MATRIX_BIN="cargo run --bin bench_matrix --manifest-path $BENCH_DIR/Cargo.toml --"
+
+run_matrix() {
+  cargo run --bin bench_matrix --manifest-path "$BENCH_DIR/Cargo.toml" -- "$@"
+}
 
 SAVE=false
 COMPARE=""
@@ -20,17 +23,17 @@ done
 
 if [ -n "$COMPARE" ]; then
   echo "── CI PERF: comparing standard vs baseline '$COMPARE' ──"
-  if ! $MATRIX_BIN --compare-baseline "$COMPARE"; then
+  if ! run_matrix --compare-baseline "$COMPARE"; then
     echo "WARN: Standard matrix comparison failed"
   fi
   echo "── CI PERF: comparing heavy vs baseline 'heavy-$COMPARE' ──"
-  if ! $MATRIX_BIN --profile heavy --compare-baseline "heavy-$COMPARE"; then
+  if ! run_matrix --profile heavy --compare-baseline "heavy-$COMPARE"; then
     echo "WARN: Heavy matrix comparison failed"
   fi
 fi
 
 if [ "$SAVE" = true ]; then
   echo "── CI PERF: saving baseline '$COMPARE' ──"
-  $MATRIX_BIN --save-baseline "$COMPARE"
-  $MATRIX_BIN --profile heavy --save-baseline "heavy-$COMPARE"
+  run_matrix --save-baseline "$COMPARE"
+  run_matrix --profile heavy --save-baseline "heavy-$COMPARE"
 fi

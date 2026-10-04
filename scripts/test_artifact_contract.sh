@@ -21,7 +21,7 @@ test_case() {
 
     echo "Testing: $name"
 
-    output=$("$CONTRACT" "$version" "$os" "$arch" "$variant" 2>&1)
+    output=$(/usr/bin/env -i PATH="$PATH" HOME="${HOME:-}" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-C.UTF-8}" "$CONTRACT" "$version" "$os" "$arch" "$variant" 2>&1)
 
     # Extract values / Lấy giá trị
     archive=$(echo "$output" | grep "^ARCHIVE=" | cut -d= -f2)
@@ -123,7 +123,7 @@ test_case "RC version" \
 
 # Test invalid inputs
 echo "Testing: Invalid OS"
-if "$CONTRACT" "1.1.0" "invalid" "x64" "all" 2>/dev/null; then
+if /usr/bin/env -i PATH="$PATH" HOME="${HOME:-}" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-C.UTF-8}" CI="${CI:-}" GITHUB_ACTIONS="${GITHUB_ACTIONS:-}" GITHUB_WORKSPACE="${GITHUB_WORKSPACE:-}" MGC_BIN="${MGC_BIN:-}" MGC_BINARY="${MGC_BINARY:-}" MGC_CACHE_DIR="${MGC_CACHE_DIR:-}" PACKAGE_JSON="${PACKAGE_JSON:-}" MAGICORE_REPO_ROOT="${MAGICORE_REPO_ROOT:-}" TEST_HOME="${TEST_HOME:-}" "$CONTRACT" "1.1.0" "invalid" "x64" "all" 2>/dev/null; then
     echo "  FAIL: Should reject invalid OS"
     FAILED=$((FAILED + 1))
 else
@@ -132,7 +132,7 @@ else
 fi
 
 echo "Testing: Invalid variant"
-if "$CONTRACT" "1.1.0" "linux" "x64" "invalid" 2>/dev/null; then
+if /usr/bin/env -i PATH="$PATH" HOME="${HOME:-}" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-C.UTF-8}" CI="${CI:-}" GITHUB_ACTIONS="${GITHUB_ACTIONS:-}" GITHUB_WORKSPACE="${GITHUB_WORKSPACE:-}" MGC_BIN="${MGC_BIN:-}" MGC_BINARY="${MGC_BINARY:-}" MGC_CACHE_DIR="${MGC_CACHE_DIR:-}" PACKAGE_JSON="${PACKAGE_JSON:-}" MAGICORE_REPO_ROOT="${MAGICORE_REPO_ROOT:-}" TEST_HOME="${TEST_HOME:-}" "$CONTRACT" "1.1.0" "linux" "x64" "invalid" 2>/dev/null; then
     echo "  FAIL: Should reject invalid variant"
     FAILED=$((FAILED + 1))
 else

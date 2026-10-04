@@ -13,7 +13,7 @@ for i in {1..5}; do
   echo "[Run $i/5] Starting $PM_NAME benchmark..."
   
   # Run benchmark with specific workload
-  PACKAGE_JSON="$SCRIPT_DIR/../env/$WORKLOAD" \
+  /usr/bin/env -i PATH="$PATH" HOME="${HOME:-}" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-C.UTF-8}" MGC_BIN="${MGC_BIN:-}" PACKAGE_JSON="$SCRIPT_DIR/../env/$WORKLOAD" \
     "$SCRIPT_DIR/run_benchmark.sh" "$PM_NAME" "$i" || {
     echo "WARN: Run $i failed (exit code $?)"
   }

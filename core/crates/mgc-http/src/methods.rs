@@ -9,7 +9,7 @@ use crate::{
     tls::TlsConfig,
 };
 use anyhow::Result;
-use reqwest::{Client, RequestBuilder, Response, StatusCode, header::HeaderMap};
+use reqwest::{Client, ClientBuilder, RequestBuilder, Response, StatusCode, header::HeaderMap};
 use std::time::Duration;
 
 /// HTTP client with built-in retry, rate limit, cache
@@ -30,12 +30,34 @@ impl HttpClient {
     /// Build an HTTP client with explicit timeout and TLS policy.
     /// Tạo client từ policy rõ ràng để tránh config bảo mật bị giữ nhưng không dùng.
     pub fn with_security(timeout: &TimeoutConfig, tls: &TlsConfig) -> Result<Self> {
-        let builder = apply_timeouts(Client::builder(), timeout);
+        Self::with_builder(Client::builder(), timeout, tls)
+    }
+
+    /// Build a client that refuses redirects for identity and credential requests.
+    /// Tạo client từ chối redirect cho request định danh và credential.
+    pub fn with_security_no_redirects(timeout: &TimeoutConfig, tls: &TlsConfig) -> Result<Self> {
+        Self::with_builder(
+            Client::builder().redirect(reqwest::redirect::Policy::none()),
+            timeout,
+            tls,
+        )
+    }
+
+    fn with_builder(
+        builder: ClientBuilder,
+        timeout: &TimeoutConfig,
+        tls: &TlsConfig,
+    ) -> Result<Self> {
+        let builder = apply_timeouts(builder, timeout);
         let builder = tls.apply(builder)?;
         let client = builder
             .build()
             .map_err(|e| anyhow::anyhow!("build reqwest client: {}", e))?;
-        Ok(Self {
+        Ok(Self::from_client(client))
+    }
+
+    fn from_client(client: Client) -> Self {
+        Self {
             client,
             retry: RetryStrategy::Exponential {
                 base: Duration::from_secs(1),
@@ -44,7 +66,7 @@ impl HttpClient {
             ratelimit: None,
             cache: None,
             auth: None,
-        })
+        }
     }
 
     /// Attach a static auth header (e.g. ("authorization", "Bearer <token>")) to every request
@@ -113,7 +135,14 @@ impl HttpClient {
                         return Err(e.into());
                     }
                     let delay = self.retry.delay(attempt);
-                    tracing::warn!("HTTP error: {} - retry in {:?}", e, delay);
+                    let error_kind = if e.is_timeout() {
+                        "timeout"
+                    } else if e.is_connect() {
+                        "connect"
+                    } else {
+                        "request"
+                    };
+                    tracing::warn!(error_kind, "HTTP request failed; retry in {:?}", delay);
                     tokio::time::sleep(delay).await;
                     attempt += 1;
                     continue;
@@ -134,6 +163,21 @@ impl HttpClient {
     // Convenience methods
     pub async fn get(&self, url: &str) -> Result<Response> {
         self.execute(self.client.get(url)).await
+    }
+
+    /// GET a response while enforcing a hard byte limit on its body.
+    /// Tải GET với giới hạn byte cứng cho response body.
+    pub async fn get_bytes_limited(&self, url: &str, max_bytes: usize) -> Result<(u16, Vec<u8>)> {
+        let mut response = self.execute(self.client.get(url)).await?;
+        let status = response.status().as_u16();
+        let mut body = Vec::new();
+        while let Some(chunk) = response.chunk().await? {
+            if body.len() > max_bytes || chunk.len() > max_bytes - body.len() {
+                return Err(anyhow::anyhow!("HTTP response exceeds byte limit"));
+            }
+            body.extend_from_slice(&chunk);
+        }
+        Ok((status, body))
     }
 
     pub async fn put(&self, url: &str, body: Vec<u8>) -> Result<Response> {

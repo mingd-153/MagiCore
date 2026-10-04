@@ -33,6 +33,98 @@ fn tmp_store_dir(name: &str) -> PathBuf {
     dir
 }
 
+#[test]
+fn batched_cas_import_and_export_preserve_independent_verified_files() {
+    let root = tmp_store_dir("batch-import-export");
+    let store = ContentStore::new(root.clone()).unwrap();
+    let files = [
+        (b"first package file".as_slice(), false),
+        (b"#!/bin/sh\nsecond package file\n".as_slice(), true),
+    ];
+
+    let hashes = store.import_bytes_with_exec_batch(files).unwrap();
+    assert_eq!(hashes.len(), files.len());
+    assert_eq!(hashes[0], IntegrityHash::from_bytes(files[0].0, false));
+    assert_eq!(hashes[1], IntegrityHash::from_bytes(files[1].0, true));
+
+    let first_export = root.join("project/pkg/first.txt");
+    let second_export = root.join("project/pkg/bin/second.sh");
+    store
+        .export_batch_to(vec![
+            (hashes[0].clone(), first_export.clone()),
+            (hashes[1].clone(), second_export.clone()),
+        ])
+        .unwrap();
+
+    assert_eq!(fs::read(&first_export).unwrap(), files[0].0);
+    assert_eq!(fs::read(&second_export).unwrap(), files[1].0);
+    fs::write(&first_export, b"project mutation").unwrap();
+    let stored_hash = store.verify(&hashes[0].cas_path(&root)).unwrap();
+    assert_eq!(stored_hash, hashes[0]);
+    assert_eq!(fs::read(hashes[0].cas_path(&root)).unwrap(), files[0].0);
+}
+
+#[test]
+fn rebuildable_batch_import_preserves_hashes_modes_and_export_validation() {
+    let root = tmp_store_dir("rebuildable-batch-import");
+    let store = ContentStore::new(root.clone()).unwrap();
+    let files = [
+        (b"rebuildable package file".as_slice(), false),
+        (b"#!/bin/sh\nrebuildable executable\n".as_slice(), true),
+    ];
+
+    let hashes = store
+        .import_rebuildable_bytes_with_exec_batch(files)
+        .unwrap();
+
+    assert_eq!(hashes[0], IntegrityHash::from_bytes(files[0].0, false));
+    assert_eq!(hashes[1], IntegrityHash::from_bytes(files[1].0, true));
+    for (hash, (data, _)) in hashes.iter().zip(files) {
+        assert_eq!(fs::read(hash.cas_path(&root)).unwrap(), data);
+    }
+
+    let exported = root.join("project/pkg/executable.sh");
+    store.export_to(&hashes[1], &exported).unwrap();
+    assert_eq!(fs::read(&exported).unwrap(), files[1].0);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_ne!(
+            fs::metadata(exported).unwrap().permissions().mode() & 0o111,
+            0
+        );
+    }
+
+    fs::write(hashes[0].cas_path(&root), b"tampered rebuildable blob").unwrap();
+    let rejected_export = root.join("project/pkg/rejected.txt");
+    assert!(store.export_to(&hashes[0], &rejected_export).is_err());
+    assert!(!rejected_export.exists());
+    assert!(
+        fs::read_dir(root.join("quarantine"))
+            .unwrap()
+            .next()
+            .is_some()
+    );
+}
+
+#[test]
+fn rebuildable_root_batch_export_preserves_integrity_and_independence() {
+    let root = tmp_store_dir("staging-batch-export");
+    let store = ContentStore::new(root.clone()).unwrap();
+    let data = b"verified staging output";
+    let hash = store.import_bytes(data).unwrap();
+    let exported = root.join("staging/package/file.txt");
+
+    store
+        .export_batch_to_rebuildable_root(vec![(hash.clone(), exported.clone())])
+        .unwrap();
+
+    assert_eq!(fs::read(&exported).unwrap(), data);
+    fs::write(&exported, b"mutable staging copy").unwrap();
+    assert_eq!(store.verify(&hash.cas_path(&root)).unwrap(), hash);
+    assert_eq!(fs::read(hash.cas_path(&root)).unwrap(), data);
+}
+
 // === Hash contract (fail-closed, no panic) ===
 
 #[test]
@@ -104,6 +196,48 @@ fn tampered_existing_blob_fails_import_and_is_quarantined() {
     // Sau khi bị cách ly, import lại thành công (tự sửa).
     let repaired = store.import_bytes(&data).unwrap();
     assert_eq!(repaired.as_hex(), hash.as_hex());
+}
+
+#[test]
+fn batched_export_of_tampered_blob_is_rejected_and_quarantined() {
+    let root = tmp_store_dir("batch-export-tampered-source");
+    let store = ContentStore::new(root.clone()).unwrap();
+    let hash = store.import_bytes(b"expected batch export bytes").unwrap();
+    fs::write(hash.cas_path(&root), b"poisoned batch export bytes").unwrap();
+    let exported = root.join("project/pkg/file.txt");
+
+    let result = store.export_batch_to(vec![(hash, exported.clone())]);
+    assert!(result.is_err(), "tampered CAS content must fail closed");
+    assert!(!exported.exists(), "tampered bytes must not be published");
+    let quarantine = fs::read_dir(root.join("quarantine")).unwrap();
+    assert!(
+        quarantine.count() > 0,
+        "corrupt CAS content must be quarantined"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn batched_export_rejects_cas_symlink_even_when_target_bytes_match() {
+    use std::os::unix::fs::symlink;
+
+    let root = tmp_store_dir("batch-export-cas-symlink");
+    let store = ContentStore::new(root.clone()).unwrap();
+    let data = b"matching bytes behind a CAS symlink";
+    let hash = store.import_bytes(data).unwrap();
+    let blob = hash.cas_path(&root);
+    let external_target = root.join("external-target.bin");
+    fs::write(&external_target, data).unwrap();
+    fs::remove_file(&blob).unwrap();
+    symlink(&external_target, &blob).unwrap();
+    let exported = root.join("project/pkg/file.txt");
+
+    let result = store.export_batch_to(vec![(hash, exported.clone())]);
+    assert!(result.is_err(), "CAS symlinks must fail closed");
+    assert!(
+        !exported.exists(),
+        "CAS symlink content must not be published"
+    );
 }
 
 #[test]

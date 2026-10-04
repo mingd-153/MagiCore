@@ -194,7 +194,7 @@ async fn nuget_service_index_probe_and_full_resolve_verify_materialize() {
         .create_async()
         .await;
     let nupkg_mock = server
-        .mock("GET", "/flat/demo.lib/13.0.3/Demo.Lib.13.0.3.nupkg")
+        .mock("GET", "/flat/demo.lib/13.0.3/demo.lib.13.0.3.nupkg")
         .with_status(200)
         .with_body(nupkg.as_slice())
         .create_async()

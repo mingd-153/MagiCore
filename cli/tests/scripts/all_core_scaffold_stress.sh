@@ -34,10 +34,10 @@ cd "$TEST_DIR"
 
 run_test() {
     local name="$1"
-    local command="$2"
+    shift
     TOTAL=$((TOTAL + 1))
     echo "Test $TOTAL: $name"
-    if eval "$command" >/dev/null 2>&1; then
+    if "$@" >/dev/null 2>&1; then
         echo "✓ PASS"
         PASSED=$((PASSED + 1))
         return 0
@@ -45,6 +45,42 @@ run_test() {
         echo "✗ FAIL"
         return 1
     fi
+}
+
+run_test_expect_output() {
+    local name="$1"
+    local expected="$2"
+    shift 2
+    TOTAL=$((TOTAL + 1))
+    echo "Test $TOTAL: $name"
+    local output
+    output=$("$@" 2>&1 || true)
+    if grep -q "$expected" <<<"$output"; then
+        echo "✓ PASS (found: '$expected')"
+        PASSED=$((PASSED + 1))
+        return 0
+    fi
+    echo "✗ FAIL (expected '$expected' not found)"
+    echo "   Output: ${output:0:200}"
+    return 1
+}
+
+run_test_not_expect_output() {
+    local name="$1"
+    local unexpected="$2"
+    shift 2
+    TOTAL=$((TOTAL + 1))
+    echo "Test $TOTAL: $name"
+    local output
+    output=$("$@" 2>&1 || true)
+    if ! grep -q "$unexpected" <<<"$output"; then
+        echo "✓ PASS (did not find: '$unexpected')"
+        PASSED=$((PASSED + 1))
+        return 0
+    fi
+    echo "✗ FAIL (unexpected '$unexpected' found)"
+    echo "   Output: ${output:0:200}"
+    return 1
 }
 
 verify_file() {
@@ -98,7 +134,7 @@ echo
 echo "=== WEB CORE TESTS ==="
 
 run_test "web: create vanilla with TypeScript" \
-    "$MGC_BIN create-web vanilla test-web-vanilla --ts"
+    "$MGC_BIN" create-web vanilla test-web-vanilla --ts
 
 verify_file "web/vanilla: index.html" "test-web-vanilla/index.html"
 verify_file "web/vanilla: mgc.toml" "test-web-vanilla/mgc.toml"
@@ -107,19 +143,19 @@ verify_content "web/vanilla: .mgc.core = web" "test-web-vanilla/.mgc.core" "^web
 verify_content "web/vanilla: index.html contains project name" "test-web-vanilla/index.html" "test-web-vanilla"
 
 # Test typo detection — kiểm tra typo detection
-run_test "web: typo detection (nextjs@laster)" \
-    "$MGC_BIN create-web nextjs@laster test-typo 2>&1 | grep -q 'Did you mean'"
+run_test_expect_output "web: typo detection (nextjs@laster)" "Did you mean" \
+    "$MGC_BIN" create-web nextjs@laster test-typo
 
 # Test framework not found (fallback to error) — framework không tìm thấy
-run_test "web: framework not found (nextjs@latest requires registry)" \
-    "$MGC_BIN create-web nextjs@latest test-nextjs 2>&1 | grep -q 'Required scaffold layers missing'"
+run_test_expect_output "web: framework not found (nextjs@latest requires registry)" "Required scaffold layers missing" \
+    "$MGC_BIN" create-web nextjs@latest test-nextjs
 
 # === AI CORE === — core AI
 echo
 echo "=== AI CORE TESTS ==="
 
 run_test "ai: create python-agent" \
-    "$MGC_BIN create-ai python-agent test-ai-python"
+    "$MGC_BIN" create-ai python-agent test-ai-python
 
 verify_file "ai/python-agent: pyproject.toml" "test-ai-python/pyproject.toml"
 verify_file "ai/python-agent: mgc.toml" "test-ai-python/mgc.toml"
@@ -133,7 +169,7 @@ echo
 echo "=== APP CORE TESTS ==="
 
 run_test "app: create flutter@stable" \
-    "$MGC_BIN create-app flutter@stable test-app-flutter"
+    "$MGC_BIN" create-app flutter@stable test-app-flutter
 
 verify_file "app/flutter: pubspec.yaml" "test-app-flutter/pubspec.yaml"
 verify_file "app/flutter: mgc.toml" "test-app-flutter/mgc.toml"
@@ -142,8 +178,8 @@ verify_content "app/flutter: .mgc.core = app" "test-app-flutter/.mgc.core" "^app
 verify_file "app/flutter: lib/main.dart" "test-app-flutter/lib/main.dart"
 
 # Test @tag parsing (no double @tag bug) — kiểm tra parsing @tag (không bug double @tag)
-run_test "app: @tag parsing (flutter@stable not flutter@stable@latest)" \
-    "$MGC_BIN create-app flutter@stable test-app-stable 2>&1 | grep -qv 'stable@latest'"
+run_test_not_expect_output "app: @tag parsing (flutter@stable not flutter@stable@latest)" "stable@latest" \
+    "$MGC_BIN" create-app flutter@stable test-app-stable
 
 # === LIB CORE === — core lib
 echo
@@ -152,7 +188,7 @@ echo "=== LIB CORE TESTS ==="
 # Note: using rust@1.96.0 because local toolchain is 1.96.0 (< baseline 1.98.0)
 # Ghi chú: dùng rust@1.96.0 vì toolchain local là 1.96.0 (< baseline 1.98.0)
 run_test "lib: create rust@1.96.0 (local toolchain)" \
-    "$MGC_BIN create-lib rust@1.96.0 test-lib-rust"
+    "$MGC_BIN" create-lib rust@1.96.0 test-lib-rust
 
 verify_file "lib/rust: Cargo.toml" "test-lib-rust/Cargo.toml"
 verify_file "lib/rust: src/lib.rs" "test-lib-rust/src/lib.rs"
@@ -164,19 +200,19 @@ verify_content "lib/rust: src/lib.rs has function" "test-lib-rust/src/lib.rs" "p
 
 # Test other lib frameworks (fallback if no embedded) — test framework lib khác (fallback nếu không có embedded)
 run_test "lib: create python (fallback)" \
-    "$MGC_BIN create-lib python test-lib-python"
+    "$MGC_BIN" create-lib python test-lib-python
 
 verify_file "lib/python: mgc.toml" "test-lib-python/mgc.toml"
 verify_file "lib/python: .mgc.core marker" "test-lib-python/.mgc.core"
 
 run_test "lib: create go (fallback)" \
-    "$MGC_BIN create-lib go test-lib-go"
+    "$MGC_BIN" create-lib go test-lib-go
 
 verify_file "lib/go: mgc.toml" "test-lib-go/mgc.toml"
 verify_file "lib/go: .mgc.core marker" "test-lib-go/.mgc.core"
 
 run_test "lib: create ts (fallback)" \
-    "$MGC_BIN create-lib ts test-lib-ts"
+    "$MGC_BIN" create-lib ts test-lib-ts
 
 verify_file "lib/ts: mgc.toml" "test-lib-ts/mgc.toml"
 verify_file "lib/ts: .mgc.core marker" "test-lib-ts/.mgc.core"

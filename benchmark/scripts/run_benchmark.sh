@@ -8,6 +8,7 @@ set -euo pipefail
 # Get script directory for relative paths
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BENCHMARK_ROOT="$(dirname "$SCRIPT_DIR")"
+PROJECT_ROOT="$(cd "$BENCHMARK_ROOT/.." && pwd)"
 
 PM_NAME="${1:-mgc}"
 RUN_NUM="${2:-1}"
@@ -15,8 +16,22 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 RESULTS_DIR="$BENCHMARK_ROOT/results"
 PACKAGE_JSON="${PACKAGE_JSON:-$BENCHMARK_ROOT/env/package.json}"
 
-# Find mgc binary
-MGC_BIN=$(which mgc 2>/dev/null || echo "/opt/homebrew/bin/mgc")
+# Prefer this checkout's binary; callers can override it for a chosen build.
+# (Ưu tiên binary trong checkout; có thể override để chọn bản build.)
+MGC_BIN="${MGC_BIN:-}"
+if [ -z "$MGC_BIN" ] && [ -x "$PROJECT_ROOT/target/release/mgc" ]; then
+  MGC_BIN="$PROJECT_ROOT/target/release/mgc"
+elif [ -z "$MGC_BIN" ] && [ -x "$PROJECT_ROOT/target/debug/mgc" ]; then
+  MGC_BIN="$PROJECT_ROOT/target/debug/mgc"
+elif [ -z "$MGC_BIN" ]; then
+  MGC_BIN="$(command -v mgc || true)"
+fi
+case "$PM_NAME" in
+  mgc) [ -x "$MGC_BIN" ] || { echo "mgc binary not found; set MGC_BIN" >&2; exit 1; } ;;
+  pnpm|bun|npm|yarn) command -v "$PM_NAME" >/dev/null 2>&1 || { echo "$PM_NAME is not installed" >&2; exit 1; } ;;
+  *) echo "Unknown PM: $PM_NAME" >&2; exit 2 ;;
+esac
+command -v jq >/dev/null 2>&1 || { echo "jq is required to record benchmark JSON" >&2; exit 1; }
 
 # Colors for output
 RED='\033[0;31m'
@@ -28,47 +43,73 @@ echo -e "${GREEN}=== MagiCore Benchmark Runner ===${NC}"
 echo "PM: $PM_NAME | Run: $RUN_NUM | Time: $TIMESTAMP"
 echo ""
 
-# Machine spec
+# Machine spec — portable across macOS and Linux.
 echo -e "${YELLOW}[1/6] Collecting machine spec...${NC}"
-MACHINE_SPEC=$(cat <<EOF
-{
-  "cpu": "$(if command -v lscpu &> /dev/null; then lscpu | grep 'Model name' | sed 's/Model name: *//' | xargs; else sysctl -n machdep.cpu.brand_string 2>/dev/null || echo 'Unknown CPU'; fi)",
-  "cores": $(if command -v nproc &> /dev/null; then nproc; else sysctl -n hw.ncpu 2>/dev/null || echo 0; fi),
-  "memory_gb": $(if command -v free &> /dev/null; then free -g | awk '/^Mem:/{print $2}'; else echo $(($(sysctl -n hw.memsize 2>/dev/null || echo 0) / 1024 / 1024 / 1024)); fi),
-  "os": "$(uname -s) $(uname -r)",
-  "node_version": "$(node --version 2>/dev/null || echo 'N/A')",
-  "timestamp": "$TIMESTAMP"
-}
-EOF
-)
+CPU_MODEL="$(sysctl -n machdep.cpu.brand_string 2>/dev/null || (command -v lscpu >/dev/null 2>&1 && lscpu | sed -n 's/^Model name:[[:space:]]*//p' | head -n 1) || uname -m)"
+CPU_CORES="$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 0)"
+# Try the Linux memory utility when present; macOS falls back to sysctl.
+# (Dùng công cụ Linux khi có; macOS sẽ lấy dung lượng qua sysctl.)
+MEMORY_GB=""
+if command -v free >/dev/null 2>&1; then
+  MEMORY_GB="$(free -g 2>/dev/null | awk '/^Mem:/ {print $2; exit}' || true)"
+fi
+if [ -z "$MEMORY_GB" ]; then
+  MEMORY_BYTES="$(sysctl -n hw.memsize 2>/dev/null || echo 0)"
+  MEMORY_GB="$(awk -v bytes="$MEMORY_BYTES" 'BEGIN { printf "%.0f", bytes / 1073741824 }')"
+fi
+MACHINE_SPEC=$(jq -n --arg cpu "$CPU_MODEL" --arg os "$(uname -s) $(uname -r)" \
+  --arg node "$(node --version 2>/dev/null || echo N/A)" --arg timestamp "$TIMESTAMP" \
+  --argjson cores "$CPU_CORES" --argjson memory "$MEMORY_GB" \
+  '{cpu:$cpu,cores:$cores,memory_gb:$memory,os:$os,node_version:$node,timestamp:$timestamp}')
 echo "$MACHINE_SPEC" | jq .
 
-# Setup clean workspace
+# Use disposable workspace and HOME; do not prune the user's package caches.
+# (Dùng workspace và HOME tạm; không dọn cache của người dùng.)
 echo -e "${YELLOW}[2/6] Setting up clean workspace...${NC}"
-WORK_DIR="/tmp/benchmark_${PM_NAME}_${RUN_NUM}_${TIMESTAMP}"
-mkdir -p "$WORK_DIR"
+WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/benchmark_${PM_NAME}_${RUN_NUM}_${TIMESTAMP}.XXXXXX")"
+PM_HOME="$(mktemp -d "${TMPDIR:-/tmp}/benchmark-home_${PM_NAME}_${RUN_NUM}.XXXXXX")"
+mkdir -p "$RESULTS_DIR" "$PM_HOME/.cache" "$PM_HOME/.mgc" "$PM_HOME/pnpm-store"
+export HOME="$PM_HOME"
+export XDG_CACHE_HOME="$PM_HOME/.cache"
+export MGC_CACHE_DIR="$PM_HOME/.mgc"
+export npm_config_cache="$PM_HOME/npm-cache"
+export YARN_CACHE_FOLDER="$PM_HOME/yarn-cache"
+export BUN_INSTALL_CACHE_DIR="$PM_HOME/bun-cache"
+ACTIVE_INSTALL_LOG=""
+cleanup() {
+  local status=$?
+  if [ "$status" -ne 0 ] && [ -n "$ACTIVE_INSTALL_LOG" ] && [ -f "$ACTIVE_INSTALL_LOG" ]; then
+    echo "Install failed; last log lines:" >&2
+    tail -n 30 "$ACTIVE_INSTALL_LOG" >&2
+  fi
+  rm -rf "$WORK_DIR" "$PM_HOME"
+}
+trap cleanup EXIT
 cp "$PACKAGE_JSON" "$WORK_DIR/package.json"
 cd "$WORK_DIR"
 
-# Clean caches
-echo -e "${YELLOW}[3/6] Cleaning PM caches...${NC}"
-case "$PM_NAME" in
-  mgc)
-    rm -rf ~/.magicore/store ~/.magicore/cache || true
-    ;;
-  pnpm)
-    pnpm store prune || true
-    ;;
-  bun)
-    rm -rf ~/.bun/install/cache || true
-    ;;
-  npm)
-    npm cache clean --force || true
-    ;;
-  yarn)
-    yarn cache clean || true
-    ;;
-esac
+echo -e "${YELLOW}[3/6] Preparing isolated package-manager cache...${NC}"
+run_install() {
+  case "$PM_NAME" in
+    mgc) "$MGC_BIN" install ;;
+    pnpm) pnpm install --ignore-scripts --store-dir "$PM_HOME/pnpm-store" ;;
+    bun) bun install --ignore-scripts ;;
+    npm) npm install --ignore-scripts ;;
+    # This benchmark measures install only; match other PMs' warning behavior
+    # for Node engine ranges because no package runtime is executed.
+    # (Chỉ đo install; bỏ engine gate riêng của Yarn vì không chạy package.)
+    yarn) yarn install --ignore-scripts --ignore-engines --non-interactive ;;
+  esac
+}
+now_seconds() {
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import time; print(f"{time.time_ns() / 1_000_000_000:.9f}")'
+  elif command -v gdate >/dev/null 2>&1; then
+    gdate +%s.%N
+  else
+    date +%s
+  fi
+}
 
 # Pre-benchmark sync
 sync
@@ -76,52 +117,12 @@ sleep 2
 
 # Run benchmark (cold install)
 echo -e "${YELLOW}[4/6] Running COLD install with $PM_NAME...${NC}"
-START_TIME=$(date +%s.%N)
+START_TIME=$(now_seconds)
 START_MEMORY=$(if command -v free &> /dev/null; then free -m | awk '/^Mem:/{print $3}'; else echo 0; fi)
+ACTIVE_INSTALL_LOG="$WORK_DIR/install.log"
+run_install > "$ACTIVE_INSTALL_LOG" 2>&1
 
-case "$PM_NAME" in
-  mgc)
-    if command -v gtime &> /dev/null; then
-      gtime -v "$MGC_BIN" install > install.log 2>&1 || true
-    else
-      "$MGC_BIN" install > install.log 2>&1 || true
-    fi
-    ;;
-  pnpm)
-    if command -v gtime &> /dev/null; then
-      gtime -v pnpm install > install.log 2>&1 || true
-    else
-      pnpm install > install.log 2>&1 || true
-    fi
-    ;;
-  bun)
-    if command -v gtime &> /dev/null; then
-      gtime -v bun install > install.log 2>&1 || true
-    else
-      bun install > install.log 2>&1 || true
-    fi
-    ;;
-  npm)
-    if command -v gtime &> /dev/null; then
-      gtime -v npm install > install.log 2>&1 || true
-    else
-      npm install > install.log 2>&1 || true
-    fi
-    ;;
-  yarn)
-    if command -v gtime &> /dev/null; then
-      gtime -v yarn install > install.log 2>&1 || true
-    else
-      yarn install > install.log 2>&1 || true
-    fi
-    ;;
-  *)
-    echo -e "${RED}Unknown PM: $PM_NAME${NC}"
-    exit 1
-    ;;
-esac
-
-END_TIME=$(date +%s.%N)
+END_TIME=$(now_seconds)
 END_MEMORY=$(if command -v free &> /dev/null; then free -m | awk '/^Mem:/{print $3}'; else echo 0; fi)
 
 # Calculate metrics
@@ -140,25 +141,10 @@ rm -rf node_modules
 sync
 sleep 1
 
-WARM_START=$(date +%s.%N)
-case "$PM_NAME" in
-  mgc)
-    "$MGC_BIN" install > install_warm.log 2>&1 || true
-    ;;
-  pnpm)
-    pnpm install > install_warm.log 2>&1 || true
-    ;;
-  bun)
-    bun install > install_warm.log 2>&1 || true
-    ;;
-  npm)
-    npm install > install_warm.log 2>&1 || true
-    ;;
-  yarn)
-    yarn install > install_warm.log 2>&1 || true
-    ;;
-esac
-WARM_END=$(date +%s.%N)
+WARM_START=$(now_seconds)
+ACTIVE_INSTALL_LOG="$WORK_DIR/install_warm.log"
+run_install > "$ACTIVE_INSTALL_LOG" 2>&1
+WARM_END=$(now_seconds)
 WARM_DURATION=$(echo "$WARM_END - $WARM_START" | bc)
 
 echo -e "${GREEN}✓ Warm install complete: ${WARM_DURATION}s${NC}"
@@ -190,8 +176,5 @@ EOF
 
 echo -e "${GREEN}✓ Result saved: $RESULT_FILE${NC}"
 cat "$RESULT_FILE" | jq .
-
-# Cleanup
-rm -rf "$WORK_DIR"
 
 echo -e "${GREEN}=== Benchmark Complete ===${NC}"

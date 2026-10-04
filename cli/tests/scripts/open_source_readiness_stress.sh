@@ -408,7 +408,7 @@ test_case "pms-performance-baseline" "Performance baseline with competitor data"
 COMPETITIVE_BENCH="$PROJECT_ROOT/cli/tests/scripts/competitive_benchmark.sh"
 if [ -f "$COMPETITIVE_BENCH" ]; then
     # Check if it's real implementation or stub
-    if bash "$COMPETITIVE_BENCH" >/dev/null 2>&1; then
+  if /usr/bin/env -i PATH="$PATH" HOME="${HOME:-}" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-C.UTF-8}" CI="${CI:-}" GITHUB_ACTIONS="${GITHUB_ACTIONS:-}" GITHUB_WORKSPACE="${GITHUB_WORKSPACE:-}" MGC_BIN="${MGC_BIN:-}" MGC_CACHE_DIR="${MGC_CACHE_DIR:-}" TEST_HOME="${TEST_HOME:-}" bash "$COMPETITIVE_BENCH" >/dev/null 2>&1; then
         # Exit 0 = real test pass
         pass
     else
@@ -472,7 +472,7 @@ test_case "dist-local-smoke-test" "Local release-binary smoke test"
 # CRITICAL: Must verify installations work on real platforms before public release
 DIST_SMOKE="$PROJECT_ROOT/cli/tests/scripts/distribution_smoke.sh"
 if [ -f "$DIST_SMOKE" ]; then
-    if bash "$DIST_SMOKE" >/dev/null 2>&1; then
+  if /usr/bin/env -i PATH="$PATH" HOME="${HOME:-}" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-C.UTF-8}" CI="${CI:-}" GITHUB_ACTIONS="${GITHUB_ACTIONS:-}" GITHUB_WORKSPACE="${GITHUB_WORKSPACE:-}" MGC_BIN="${MGC_BIN:-}" MGC_CACHE_DIR="${MGC_CACHE_DIR:-}" TEST_HOME="${TEST_HOME:-}" bash "$DIST_SMOKE" >/dev/null 2>&1; then
         pass
     else
         EXIT_CODE=$?
@@ -490,7 +490,7 @@ test_case "local-runtime-dev-e2e" "Local Bun/Deno dev process + env + audit"
 # CRITICAL: Comprehensive E2E - background dev, env verification, audit log
 FULL_E2E="$PROJECT_ROOT/cli/tests/scripts/runtime_full_e2e.sh"
 if [ -f "$FULL_E2E" ]; then
-    if bash "$FULL_E2E" >/dev/null 2>&1; then
+  if /usr/bin/env -i PATH="$PATH" HOME="${HOME:-}" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-C.UTF-8}" CI="${CI:-}" GITHUB_ACTIONS="${GITHUB_ACTIONS:-}" GITHUB_WORKSPACE="${GITHUB_WORKSPACE:-}" MGC_BIN="${MGC_BIN:-}" MGC_CACHE_DIR="${MGC_CACHE_DIR:-}" TEST_HOME="${TEST_HOME:-}" bash "$FULL_E2E" >/dev/null 2>&1; then
         pass
     else
         fail "comprehensive E2E failed (see runtime_full_e2e.sh)"
@@ -503,7 +503,7 @@ test_case "optimizer-bun-env-generation" "Bun optimizer environment generation"
 # CRITICAL: Cannot claim "Bun support" without end-to-end verification
 BUN_E2E="$PROJECT_ROOT/cli/tests/scripts/runtime_bun_e2e.sh"
 if [ -f "$BUN_E2E" ]; then
-    if bash "$BUN_E2E" >/dev/null 2>&1; then
+  if /usr/bin/env -i PATH="$PATH" HOME="${HOME:-}" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-C.UTF-8}" CI="${CI:-}" GITHUB_ACTIONS="${GITHUB_ACTIONS:-}" GITHUB_WORKSPACE="${GITHUB_WORKSPACE:-}" MGC_BIN="${MGC_BIN:-}" MGC_CACHE_DIR="${MGC_CACHE_DIR:-}" TEST_HOME="${TEST_HOME:-}" bash "$BUN_E2E" >/dev/null 2>&1; then
         pass
     else
         EXIT_CODE=$?
@@ -521,7 +521,7 @@ test_case "optimizer-deno-env-generation" "Deno optimizer environment generation
 # CRITICAL: Cannot claim "Deno support" without end-to-end verification
 DENO_E2E="$PROJECT_ROOT/cli/tests/scripts/runtime_deno_e2e.sh"
 if [ -f "$DENO_E2E" ]; then
-    if bash "$DENO_E2E" >/dev/null 2>&1; then
+  if /usr/bin/env -i PATH="$PATH" HOME="${HOME:-}" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-C.UTF-8}" CI="${CI:-}" GITHUB_ACTIONS="${GITHUB_ACTIONS:-}" GITHUB_WORKSPACE="${GITHUB_WORKSPACE:-}" MGC_BIN="${MGC_BIN:-}" MGC_CACHE_DIR="${MGC_CACHE_DIR:-}" TEST_HOME="${TEST_HOME:-}" bash "$DENO_E2E" >/dev/null 2>&1; then
         pass
     else
         EXIT_CODE=$?

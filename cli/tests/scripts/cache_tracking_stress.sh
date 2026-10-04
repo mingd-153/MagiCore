@@ -286,7 +286,7 @@ else
 fi
 
 # Check cache doesn't pollute user HOME — kiểm tra cache không làm bẩn HOME user
-USER_HOME=$(eval echo ~)
+USER_HOME="$HOME"
 if [ -d "$USER_HOME/.mgc" ]; then
     USER_CACHE_SIZE=$(get_dir_size "$USER_HOME/.mgc")
     echo "⚠ User cache exists: $USER_HOME/.mgc ($USER_CACHE_SIZE bytes)"

@@ -12,7 +12,7 @@ for i in {1..10}; do
   echo ""
   echo "[Run $i/10] Starting $PM_NAME benchmark..."
 
-  "$SCRIPT_DIR/run_benchmark.sh" "$PM_NAME" "$i" || {
+  /usr/bin/env -i PATH="$PATH" HOME="${HOME:-}" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-C.UTF-8}" MGC_BIN="${MGC_BIN:-}" PACKAGE_JSON="${PACKAGE_JSON:-}" "$SCRIPT_DIR/run_benchmark.sh" "$PM_NAME" "$i" || {
     echo "WARN: Run $i failed (exit code $?)"
   }
 

@@ -157,14 +157,14 @@ go_version_count="$(grep -c 'go-version: "1.27.1"' "$ALL_CORE")"
 [[ "$go_version_count" -eq 4 ]] || fail "delegated-compatibility matrix must pin Go 1.27.1 for all four core jobs"
 grep -q "actions/setup-go@${setup_go_sha}" "$RELEASE" || fail "release builds must provision pinned Go for esbuild-rs"
 grep -q 'go-version: "1.27.1"' "$RELEASE" || fail "release builds must pin Go 1.27.1"
-go_version_values="$(grep -rhoE 'go-version: "[^"]+"' "$ROOT/.github/workflows" | sort -u)"
+go_version_values=$(grep -rhoE 'go-version: "[^"]+"' "$ROOT/.github/workflows" | sort -u)
 [[ "$go_version_values" == 'go-version: "1.27.1"' ]] || fail "all workflow Go toolchains must use the canonical Go 1.27.1 pin; found: ${go_version_values//$'\n'/, }"
-go_archive_values="$(grep -oE 'go[0-9]+\.[0-9]+\.[0-9]+\.linux-amd64\.tar\.gz' "$RELEASE" | sort -u)"
+go_archive_values=$(grep -oE 'go[0-9]+\.[0-9]+\.[0-9]+\.linux-amd64\.tar\.gz' "$RELEASE" | sort -u)
 [[ "$go_archive_values" == 'go1.27.1.linux-amd64.tar.gz' ]] || fail "release scanner archive must match canonical Go 1.27.1; found: ${go_archive_values//$'\n'/, }"
 grep -q 'GO_SHA256="63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445"' "$RELEASE" \
   || fail "release scanner must pin the official Go 1.27.1 Linux AMD64 archive checksum"
-go_sha_check_line="$(grep -n -m1 'sha256sum --check --strict -' "$RELEASE" | cut -d: -f1 || true)"
-go_extract_line="$(grep -n -m1 'sudo tar -C /usr/local -xzf /tmp/go.tgz' "$RELEASE" | cut -d: -f1 || true)"
+go_sha_check_line=$(grep -n -m1 'sha256sum --check --strict -' "$RELEASE" | cut -d: -f1 || true)
+go_extract_line=$(grep -n -m1 'sudo tar -C /usr/local -xzf /tmp/go.tgz' "$RELEASE" | cut -d: -f1 || true)
 [[ -n "$go_sha_check_line" && -n "$go_extract_line" && "$go_sha_check_line" -lt "$go_extract_line" ]] \
   || fail "release scanner archive must pass SHA-256 verification before extraction"
 
@@ -176,7 +176,7 @@ grep -q 'App: SKIP' "$LOCAL_RUNNER" && fail "local all-core runner must not conv
 grep -q 'ALL CORES LIFECYCLE VERIFIED' "$LOCAL_RUNNER" || fail "local runner summary missing"
 grep -q 'publish=true' "$RELEASE" && fail "release instructions reference the removed publish input"
 
-release_dry_run="$(sed -n '/^  dry-run-summary:/,$p' "$RELEASE")"
+release_dry_run=$(sed -n '/^  dry-run-summary:/,$p' "$RELEASE")
 grep -q 'Ready to publish: YES' <<<"$release_dry_run" && fail "release dry-run must not claim publish readiness without the tag-triggered publish gates"
 grep -q 'Publish readiness: NOT ASSESSED (dry-run does not authorize publishing)' <<<"$release_dry_run" \
   || fail "release dry-run must state that it does not authorize publishing"
@@ -249,7 +249,7 @@ installer_sha="$(sed -n 's/.*MGC_INSTALLER_SHA: &str = "\([0-9a-f][0-9a-f]*\)".*
 [[ -n "$installer_sha" ]] || fail "installer commit pin is missing"
 embedded_sha256="$(grep -A1 'MGC_INSTALLER_SHA256: &str' "$ROOT/cli/src/commands/core/dev/cicd.rs" | sed -n 's/.*"\([0-9a-f][0-9a-f]*\)".*/\1/p' | head -n 1)"
 [[ -n "$embedded_sha256" ]] || fail "installer checksum is not pinned (MGC_INSTALLER_SHA256 empty)"
-expected_sha256="$(git -C "$ROOT" show "${installer_sha}:scripts/install-from-gh.sh" | shasum -a 256 | awk '{print $1}')"
+expected_sha256=$(git -C "$ROOT" show "${installer_sha}:scripts/install-from-gh.sh" | shasum -a 256 | awk '{print $1}')
 [[ "$embedded_sha256" == "$expected_sha256" ]] || fail "installer checksum is stale for the pinned commit"
 
 echo "PASS: CI workflow contract"

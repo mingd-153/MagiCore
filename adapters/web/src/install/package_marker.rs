@@ -67,21 +67,34 @@ pub fn expected_extracted_package_marker_from_path(
     pkg: &ResolvedPackage,
     tarball_path: &Path,
 ) -> MgResult<ExtractedPackageMarker> {
+    let mut marker = expected_extracted_package_marker_fast_from_path(pkg, tarball_path)?;
+    let content = tarball_content_signature_from_path(tarball_path)?;
+    marker.file_count = content.file_count;
+    marker.unpacked_size = content.unpacked_size;
+    marker.file_tree_sha256 = content.file_tree_sha256;
+    Ok(marker)
+}
+
+/// Build identity-only cache metadata without decompressing the tarball.
+/// Dựng metadata định danh cache mà không giải nén tarball.
+pub fn expected_extracted_package_marker_fast_from_path(
+    pkg: &ResolvedPackage,
+    tarball_path: &Path,
+) -> MgResult<ExtractedPackageMarker> {
     let tarball_fingerprint = if pkg.integrity.is_empty() {
         compute_sha256_hex_from_path(tarball_path)?
     } else {
         format!("integrity:{}", pkg.integrity)
     };
-    let content = tarball_content_signature_from_path(tarball_path)?;
     Ok(ExtractedPackageMarker {
         schema_version: 3,
         name: pkg.id.name_str().to_string(),
         version: pkg.id.version().to_string(),
         integrity: (!pkg.integrity.is_empty()).then(|| pkg.integrity.clone()),
         tarball_sha256: tarball_fingerprint,
-        file_count: content.file_count,
-        unpacked_size: content.unpacked_size,
-        file_tree_sha256: content.file_tree_sha256,
+        file_count: 0,
+        unpacked_size: 0,
+        file_tree_sha256: String::new(),
     })
 }
 
@@ -462,7 +475,7 @@ pub fn materialized_package_matches(
 
 /// Hash path, byte length, and file content digest into the package-tree digest.
 /// Hash path, kích thước và digest nội dung vào digest cây package.
-fn update_tree_hasher(
+pub(crate) fn update_tree_hasher(
     hasher: &mut Sha256,
     path: &str,
     size: u64,
@@ -480,23 +493,23 @@ fn update_tree_hasher(
 }
 
 #[cfg(unix)]
-fn mode_is_executable(mode: u32) -> bool {
+pub(crate) fn mode_is_executable(mode: u32) -> bool {
     mode & 0o111 != 0
 }
 
 #[cfg(not(unix))]
-fn mode_is_executable(_mode: u32) -> bool {
+pub(crate) fn mode_is_executable(_mode: u32) -> bool {
     false
 }
 
 #[cfg(unix)]
-fn metadata_is_executable(metadata: &std::fs::Metadata) -> bool {
+pub(crate) fn metadata_is_executable(metadata: &std::fs::Metadata) -> bool {
     use std::os::unix::fs::PermissionsExt;
     metadata.permissions().mode() & 0o111 != 0
 }
 
 #[cfg(not(unix))]
-fn metadata_is_executable(_metadata: &std::fs::Metadata) -> bool {
+pub(crate) fn metadata_is_executable(_metadata: &std::fs::Metadata) -> bool {
     false
 }
 

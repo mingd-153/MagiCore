@@ -23,10 +23,20 @@ pub const STREAM_THRESHOLD: usize = 1024 * 1024; // 1 MB
 /// và rename vào vị trí cuối — fsync giúp rename bền vững, crash không thể
 /// công bố blob CAS nửa vời.
 pub fn write_all_verify_and_set_perms(
+    writer: fs::File,
+    dest: &Path,
+    data: &[u8],
+    executable: bool,
+) -> Result<IntegrityHash, StoreError> {
+    write_all_verify_and_set_perms_mode(writer, dest, data, executable, true)
+}
+
+pub(super) fn write_all_verify_and_set_perms_mode(
     mut writer: fs::File,
     dest: &Path,
     data: &[u8],
     executable: bool,
+    sync_file_data: bool,
 ) -> Result<IntegrityHash, StoreError> {
     let expected = IntegrityHash::from_bytes(data, executable);
 
@@ -34,13 +44,20 @@ pub fn write_all_verify_and_set_perms(
         path: dest.to_path_buf(),
         msg: format!("write failed: {e}"),
     })?;
-    writer
-        .flush()
-        .and_then(|_| writer.sync_all())
-        .map_err(|e| StoreError::Io {
-            path: dest.to_path_buf(),
-            msg: format!("fsync failed: {e}"),
-        })?;
+    let flush_result = if sync_file_data {
+        writer.flush().and_then(|_| writer.sync_all())
+    } else {
+        writer.flush()
+    };
+    let failed_operation = if sync_file_data {
+        "flush/fsync"
+    } else {
+        "flush"
+    };
+    flush_result.map_err(|e| StoreError::Io {
+        path: dest.to_path_buf(),
+        msg: format!("{failed_operation} failed: {e}"),
+    })?;
 
     set_permissions(dest, executable)?;
 
@@ -52,10 +69,20 @@ pub fn write_all_verify_and_set_perms(
 /// Stream data từ reader sang writer trong lúc tính hash. Độ bền (fsync) do
 /// caller đảm nhận qua `finalize_streamed_write`.
 pub fn stream_write_verify_and_set_perms(
+    writer: fs::File,
+    dest: &Path,
+    reader: impl Read,
+    executable: bool,
+) -> Result<IntegrityHash, StoreError> {
+    stream_write_verify_and_set_perms_mode(writer, dest, reader, executable, true)
+}
+
+pub(super) fn stream_write_verify_and_set_perms_mode(
     mut writer: fs::File,
     dest: &Path,
     mut reader: impl Read,
     executable: bool,
+    sync_file_data: bool,
 ) -> Result<IntegrityHash, StoreError> {
     let mut hasher = blake3::Hasher::new();
     let mut buf = [0u8; 65536];
@@ -81,13 +108,20 @@ pub fn stream_write_verify_and_set_perms(
     let integrity = IntegrityHash::from_hash_trusted(&hash, executable)
         .map_err(|e| StoreError::InvalidHash(e.input))?;
 
-    writer
-        .flush()
-        .and_then(|_| writer.sync_all())
-        .map_err(|e| StoreError::Io {
-            path: dest.to_path_buf(),
-            msg: format!("fsync failed: {e}"),
-        })?;
+    let flush_result = if sync_file_data {
+        writer.flush().and_then(|_| writer.sync_all())
+    } else {
+        writer.flush()
+    };
+    let failed_operation = if sync_file_data {
+        "flush/fsync"
+    } else {
+        "flush"
+    };
+    flush_result.map_err(|e| StoreError::Io {
+        path: dest.to_path_buf(),
+        msg: format!("{failed_operation} failed: {e}"),
+    })?;
     set_permissions(dest, executable)?;
 
     Ok(integrity)

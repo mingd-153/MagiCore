@@ -62,8 +62,9 @@ pub fn extract_tarball_from_reader<R: Read>(reader: R, dest: &Path) -> Result<()
 }
 
 /// Extract a gzip-compressed tarball from an arbitrary reader directly into the CAS,
-/// and hardlink the files to the destination directory.
-/// Uses Rayon to perform hashing, CAS writing, and hardlinking in parallel.
+/// and publish independently verified copies under the destination directory.
+/// Hashes and publishes files in parallel; the package cache is validated and rebuilt after a crash.
+/// (Hash và publish file song song; cache package được xác minh và dựng lại sau crash.)
 ///
 /// `claim` registers every imported blob against `project_root` in the store DB
 /// (refcount wiring) — pass `None` when the caller has no database (e.g. tests).
@@ -79,9 +80,100 @@ pub fn extract_tarball_to_cas_and_link<R: Read>(
     store: &mgc_store::ContentStore,
     claim: Option<(&mgc_store::Database, &str, i64)>,
 ) -> Result<()> {
-    use rayon::prelude::*;
-    use std::sync::{Arc, Mutex};
+    extract_tarball_to_cas_and_link_inner(
+        reader,
+        dest,
+        false,
+        store,
+        claim,
+        ExtractionDurability::Durable,
+    )
+    .map(|_| ())
+}
 
+/// Extract a lock-verified tarball into a package cache whose files can be
+/// recreated from that same verified archive. Callers must validate the cache
+/// root before reusing it after a crash.
+/// (Extract tarball đã xác minh theo lock vào cache package có thể dựng lại
+/// từ archive đó. Caller phải xác minh root cache trước khi dùng lại sau crash.)
+pub fn extract_tarball_to_rebuildable_cas_and_link<R: Read>(
+    reader: R,
+    dest: &Path,
+    store: &mgc_store::ContentStore,
+    claim: Option<(&mgc_store::Database, &str, i64)>,
+) -> Result<()> {
+    extract_tarball_to_cas_and_link_inner(
+        reader,
+        dest,
+        false,
+        store,
+        claim,
+        ExtractionDurability::Rebuildable,
+    )
+    .map(|_| ())
+}
+
+/// Import blobs from a standard npm `package/` tarball into CAS and verify
+/// them against an already validated package root without creating a second
+/// extracted tree. Returns `false` for non-standard archive roots so callers
+/// can use the ordinary staging extraction path.
+/// (Nạp blob từ tarball npm chuẩn `package/` vào CAS và xác minh với package
+/// root đã kiểm tra mà không tạo cây extract thứ hai. Trả `false` nếu root
+/// archive không chuẩn để caller dùng đường staging thông thường.)
+pub fn extract_tarball_to_cas_and_verify_existing_root<R: Read>(
+    reader: R,
+    package_root: &Path,
+    store: &mgc_store::ContentStore,
+    claim: Option<(&mgc_store::Database, &str, i64)>,
+) -> Result<bool> {
+    extract_tarball_to_cas_and_link_inner(
+        reader,
+        package_root,
+        true,
+        store,
+        claim,
+        ExtractionDurability::Durable,
+    )
+}
+
+/// Import an integrity-verified tarball into CAS after the caller has already
+/// validated the existing package root's marker and complete file signature.
+/// Missing/corrupt cache files must be detected and rebuilt before reuse.
+/// (Nạp tarball đã xác minh vào CAS sau khi caller đã xác minh marker và chữ
+/// ký đầy đủ của root package hiện có. File cache thiếu/hỏng phải được phát
+/// hiện và dựng lại trước khi sử dụng.)
+pub fn extract_tarball_to_rebuildable_cas_and_verify_existing_root<R: Read>(
+    reader: R,
+    package_root: &Path,
+    store: &mgc_store::ContentStore,
+    claim: Option<(&mgc_store::Database, &str, i64)>,
+) -> Result<bool> {
+    extract_tarball_to_cas_and_link_inner(
+        reader,
+        package_root,
+        true,
+        store,
+        claim,
+        ExtractionDurability::Rebuildable,
+    )
+}
+
+#[derive(Clone, Copy)]
+enum ExtractionDurability {
+    Durable,
+    Rebuildable,
+}
+
+fn extract_tarball_to_cas_and_link_inner<R: Read>(
+    reader: R,
+    dest: &Path,
+    verify_existing_package_root: bool,
+    store: &mgc_store::ContentStore,
+    claim: Option<(&mgc_store::Database, &str, i64)>,
+    durability: ExtractionDurability,
+) -> Result<bool> {
+    let profiling = std::env::var_os("MAGICORE_FETCHER_PROFILE").is_some();
+    let total_started = std::time::Instant::now();
     let decoder = GzDecoder::new(reader);
     let mut archive = Archive::new(decoder);
 
@@ -94,27 +186,41 @@ pub fn extract_tarball_to_cas_and_link<R: Read>(
         executable: bool,
     }
     let mut files_map = std::collections::HashMap::new();
+    let mut directories = Vec::new();
+    let archive_read_started = std::time::Instant::now();
 
     for entry in archive.entries()? {
         let mut entry = entry?;
         let rel_path = sanitize_archive_path(entry.path()?.as_ref())?;
-        let target = dest_root.join(rel_path);
+        let entry_type = entry.header().entry_type();
+        if matches!(entry_type.as_byte(), b'g' | b'x') {
+            continue;
+        }
+        let mapped_rel_path = if verify_existing_package_root {
+            let mut components = rel_path.components();
+            if !matches!(components.next(), Some(Component::Normal(part)) if part == "package") {
+                return Ok(false);
+            }
+            let remainder: PathBuf = components.collect();
+            if remainder.as_os_str().is_empty() && !entry_type.is_dir() {
+                return Ok(false);
+            }
+            remainder
+        } else {
+            rel_path
+        };
+        let target = dest_root.join(mapped_rel_path);
 
         if !target.starts_with(&dest_root) {
             bail!("tar entry escapes destination: {}", target.display());
         }
 
-        let entry_type = entry.header().entry_type();
         if entry_type.is_symlink() || entry_type.is_hard_link() {
             bail!("tar links are not allowed: {}", target.display());
         }
 
         if entry_type.is_dir() {
-            std::fs::create_dir_all(&target)?;
-            continue;
-        }
-
-        if matches!(entry_type.as_byte(), b'g' | b'x') {
+            directories.push(target);
             continue;
         }
 
@@ -139,6 +245,12 @@ pub fn extract_tarball_to_cas_and_link<R: Read>(
     }
 
     let files: Vec<_> = files_map.into_values().collect();
+    let file_count = files.len();
+    let archive_read_ms = archive_read_started.elapsed().as_millis() as u64;
+
+    for dir in directories {
+        std::fs::create_dir_all(dir)?;
+    }
 
     let mut dirs: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
     for file in &files {
@@ -152,52 +264,64 @@ pub fn extract_tarball_to_cas_and_link<R: Read>(
         std::fs::create_dir_all(dir)?;
     }
 
-    // Process all files in parallel: Hash (Blake3) -> Save to CAS -> Hardlink
-    let imported: Arc<Mutex<std::collections::HashSet<String>>> =
-        Arc::new(Mutex::new(std::collections::HashSet::new()));
+    // The rebuildable mode is used only for verified package archives; ordinary
+    // extractor entry points retain durable CAS writes and directory syncs.
+    // (Chế độ có thể dựng lại chỉ dùng với archive package đã xác minh; API
+    // extractor thông thường vẫn ghi CAS bền vững và sync thư mục.)
     let has_claim = claim.is_some();
-    files.into_par_iter().try_for_each(|file| -> Result<()> {
-        let hash = store
-            .import_bytes_with_exec(&file.data, file.executable)
-            .map_err(|e| anyhow::anyhow!("failed to import to CAS: {}", e))?;
+    let cas_import_started = std::time::Instant::now();
+    let import_result = match durability {
+        ExtractionDurability::Durable => store.import_bytes_with_exec_batch(
+            files
+                .iter()
+                .map(|file| (file.data.as_slice(), file.executable)),
+        ),
+        ExtractionDurability::Rebuildable => store.import_rebuildable_bytes_with_exec_batch(
+            files
+                .iter()
+                .map(|file| (file.data.as_slice(), file.executable)),
+        ),
+    };
+    let hashes = import_result.map_err(|e| anyhow::anyhow!("failed to import to CAS: {}", e))?;
+    let cas_import_ms = cas_import_started.elapsed().as_millis();
 
-        store
-            .export_to(&hash, &file.path)
-            .map_err(|e| anyhow::anyhow!("failed to hardlink from CAS: {}", e))?;
+    let mut imported = std::collections::HashSet::new();
+    if has_claim {
+        // Refcount keys use bare BLAKE3 hex; executable state stays in CAS address.
+        // (Khóa refcount dùng BLAKE3 hex thuần; trạng thái executable nằm trong địa chỉ CAS.)
+        imported.extend(hashes.iter().map(|hash| hash.as_hex().to_string()));
+    }
 
-        if has_claim {
-            // Refcount key = blake3 hex (exec suffix ".exec" stripped by
-            // prune_cas_blobs_under(), so claim the bare hex).
-            // (Khóa refcount = blake3 hex — prune strip đuôi .exec nên claim
-            //  đúng hex thuần. Accessor as_hex() — field private P0-1.)
-            imported
-                .lock()
-                .map_err(|_| anyhow::anyhow!("imported-set lock poisoned"))?
-                .insert(hash.as_hex().to_string());
-        }
-
-        Ok(())
-    })?;
+    let file_export_started = std::time::Instant::now();
+    let export_result = match durability {
+        ExtractionDurability::Durable => store.export_batch_to(
+            files
+                .into_iter()
+                .zip(hashes.iter().cloned())
+                .map(|(file, hash)| (hash, file.path)),
+        ),
+        ExtractionDurability::Rebuildable => store.export_batch_to_rebuildable_root(
+            files
+                .into_iter()
+                .zip(hashes.iter().cloned())
+                .map(|(file, hash)| (hash, file.path)),
+        ),
+    };
+    export_result.map_err(|e| anyhow::anyhow!("failed to export from CAS: {}", e))?;
+    let file_export_ms = file_export_started.elapsed().as_millis();
 
     // Test-only failpoint (Gate 11-B.2): park after every blob is imported
-    // into the CAS and hardlinked, but BEFORE any refcount claim is filed —
+    // into the CAS and exported, but BEFORE any refcount claim is filed —
     // a kill here leaves the staging generation claim-less (STALE) while
     // the blobs sit unclaimed (unreferenced, never counted by the doctor).
     // (Failpoint chỉ-cho-test: đỗ sau khi mọi blob đã import vào CAS và
-    // hardlink, nhưng TRƯỚC khi ghi claim refcount nào — kill ở đây để
+    // export, nhưng TRƯỚC khi ghi claim refcount nào — kill ở đây để
     // staging generation không claim (STALE) trong khi blob nằm chưa tham
     // chiếu (unreferenced, doctor không bao giờ đếm).)
     mgc_store::failpoint::hit("after-cas-publish");
 
     if let Some((db, project_root, generation)) = claim {
-        let mut conn = std::collections::HashSet::new();
-        std::mem::swap(
-            &mut conn,
-            &mut *imported.lock().map_err(|_| {
-                anyhow::anyhow!("imported-set lock poisoned — refusing partial refcount claims")
-            })?,
-        );
-        let mut hashes: Vec<String> = conn.into_iter().collect();
+        let mut hashes: Vec<String> = imported.into_iter().collect();
         hashes.sort_unstable();
         let hash_refs: Vec<&str> = hashes.iter().map(String::as_str).collect();
         if !hashes.is_empty() {
@@ -236,7 +360,18 @@ pub fn extract_tarball_to_cas_and_link<R: Read>(
         }
     }
 
-    Ok(())
+    if profiling {
+        eprintln!(
+            "[magicore:fetcher-profile] files={} archive_read_ms={} cas_import_batch_ms={} file_export_batch_ms={} total_ms={}",
+            file_count,
+            archive_read_ms,
+            cas_import_ms,
+            file_export_ms,
+            total_started.elapsed().as_millis()
+        );
+    }
+
+    Ok(true)
 }
 
 fn sanitize_archive_path(path: &Path) -> Result<PathBuf> {

@@ -1623,7 +1623,7 @@ impl HermeticNuget {
             server
                 .mock(
                     "GET",
-                    "/flat/newtonsoft.json/13.0.3/Newtonsoft.Json.13.0.3.nupkg",
+                    "/flat/newtonsoft.json/13.0.3/newtonsoft.json.13.0.3.nupkg",
                 )
                 .expect_at_least(1)
                 .with_status(200)

@@ -91,6 +91,7 @@ pub async fn run(
                 cwd: Some(root.clone()),
                 log_path: Some(root.join(".magicore").join("exec.log")),
                 clean_env: true,
+                execution_scope: Some(mgc_exec::allowlist::ExecutionScope::DevServer),
                 ..Default::default()
             };
             info(&format!(
@@ -116,6 +117,7 @@ pub async fn run(
                 cwd: Some(root.clone()),
                 log_path: Some(root.join(".magicore").join("exec.log")),
                 clean_env: true,
+                execution_scope: Some(mgc_exec::allowlist::ExecutionScope::DeviceControl),
                 ..Default::default()
             };
             info(&format!("IoT dev: running `{} {}`...", cmd, args.join(" ")));

@@ -61,7 +61,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export MAGICORE_REPO_ROOT="$MANIFEST_DIR"
 
 echo "Running manifest updater..."
-"$SCRIPT_DIR/update-manifests.sh" --version "$VERSION" --artifacts "$ARTIFACTS_DIR"
+/usr/bin/env -i PATH="$PATH" HOME="${HOME:-}" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-C.UTF-8}" CI="${CI:-}" GITHUB_ACTIONS="${GITHUB_ACTIONS:-}" GITHUB_WORKSPACE="${GITHUB_WORKSPACE:-}" MGC_BIN="${MGC_BIN:-}" MGC_BINARY="${MGC_BINARY:-}" MGC_CACHE_DIR="${MGC_CACHE_DIR:-}" PACKAGE_JSON="${PACKAGE_JSON:-}" MAGICORE_REPO_ROOT="${MAGICORE_REPO_ROOT:-}" TEST_HOME="${TEST_HOME:-}" "$SCRIPT_DIR/update-manifests.sh" --version "$VERSION" --artifacts "$ARTIFACTS_DIR"
 
 echo ""
 echo "=== Verification ==="
@@ -160,7 +160,7 @@ echo "✓ Test 10 PASS: No old naming patterns"
 # Test 11: Run verify mode
 echo ""
 echo "Testing verify mode..."
-if ! "$SCRIPT_DIR/update-manifests.sh" --version "$VERSION" --artifacts "$ARTIFACTS_DIR" --verify-only; then
+if ! /usr/bin/env -i PATH="$PATH" HOME="${HOME:-}" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-C.UTF-8}" CI="${CI:-}" GITHUB_ACTIONS="${GITHUB_ACTIONS:-}" GITHUB_WORKSPACE="${GITHUB_WORKSPACE:-}" MGC_BIN="${MGC_BIN:-}" MGC_BINARY="${MGC_BINARY:-}" MGC_CACHE_DIR="${MGC_CACHE_DIR:-}" PACKAGE_JSON="${PACKAGE_JSON:-}" MAGICORE_REPO_ROOT="${MAGICORE_REPO_ROOT:-}" TEST_HOME="${TEST_HOME:-}" "$SCRIPT_DIR/update-manifests.sh" --version "$VERSION" --artifacts "$ARTIFACTS_DIR" --verify-only; then
   echo "Test 11 FAIL: Verify mode failed"
   exit 1
 fi
@@ -170,7 +170,7 @@ echo "✓ Test 11 PASS: Verify mode succeeded"
 echo ""
 echo "Testing verify detects incorrect hash..."
 sed -i.bak "s/$HASH_MACOS/0000000000000000000000000000000000000000000000000000000000000000/" "$MANIFEST_DIR/packaging/homebrew/magicore.rb"
-if "$SCRIPT_DIR/update-manifests.sh" --version "$VERSION" --artifacts "$ARTIFACTS_DIR" --verify-only 2>/dev/null; then
+if /usr/bin/env -i PATH="$PATH" HOME="${HOME:-}" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-C.UTF-8}" CI="${CI:-}" GITHUB_ACTIONS="${GITHUB_ACTIONS:-}" GITHUB_WORKSPACE="${GITHUB_WORKSPACE:-}" MGC_BIN="${MGC_BIN:-}" MGC_BINARY="${MGC_BINARY:-}" MGC_CACHE_DIR="${MGC_CACHE_DIR:-}" PACKAGE_JSON="${PACKAGE_JSON:-}" MAGICORE_REPO_ROOT="${MAGICORE_REPO_ROOT:-}" TEST_HOME="${TEST_HOME:-}" "$SCRIPT_DIR/update-manifests.sh" --version "$VERSION" --artifacts "$ARTIFACTS_DIR" --verify-only 2>/dev/null; then
   echo "Test 12 FAIL: Verify should have failed with wrong hash"
   exit 1
 fi

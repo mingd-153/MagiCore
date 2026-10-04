@@ -172,3 +172,5 @@ panic = "abort"          # Smaller binary (no unwind) (T5.4)
 
 [profile.test]
 opt-level = 1
+debug = 0
+incremental = false

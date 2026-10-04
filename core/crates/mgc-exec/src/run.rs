@@ -13,6 +13,10 @@ use std::time::{Duration, Instant};
 const DEFAULT_EXEC_TIMEOUT_SECS: u64 = 1800;
 const EXEC_TIMEOUT_ENV: &str = "MGC_EXEC_TIMEOUT_SECS";
 const WAIT_POLL_INTERVAL_MS: u64 = 20;
+/// Retry a missing-root snapshot for 100 ms before treating it as unverifiable.
+/// Thử lại snapshot thiếu root trong 100 ms trước khi xem là không thể xác minh.
+#[cfg(unix)]
+const ROOT_VISIBILITY_RETRIES: usize = 5;
 /// Retry for at most 500 ms of sleep while refreshing Windows child metadata.
 /// Chờ tối đa 500 ms tổng thời gian ngủ và liên tục làm mới metadata tiến trình con.
 #[cfg(any(windows, test))]
@@ -58,21 +62,34 @@ const MAX_CAPTURE_LINES: usize = 40;
 /// Bound retries when a generated shim directory name collides.
 /// Giới hạn retry khi tên thư mục shim sinh ra bị trùng.
 const MAX_SHADOW_PATH_ATTEMPTS: usize = 16;
-#[cfg(unix)]
-const PROCESS_TABLE_INSPECTOR: &str = "/bin/ps";
-
 static SHADOW_PATH_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+#[cfg(unix)]
+const PROCESS_TREE_TRACKING_ENV: &str = "MGC_EXEC_PROCESS_TREE_ID";
+#[cfg(unix)]
+static PROCESS_TREE_TRACKING_SEQUENCE: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+#[cfg(unix)]
+fn process_tree_tracking_token() -> String {
+    let sequence =
+        PROCESS_TREE_TRACKING_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos());
+    format!("{:x}-{sequence:x}-{timestamp:x}", std::process::id())
+}
 
 /// Report whether process-tree kill is active on this platform.
 /// Unix: the child runs in its own process group and the timeout signals
-/// the WHOLE group. Windows: the kill uses `taskkill /T` (native tree
-/// kill). Both platforms can reap grandchildren; the old /proc walk
+/// the WHOLE group. Windows: a Job Object owns the suspended-at-start child
+/// tree and terminates it when the guard closes. Both platforms can reap
+/// grandchildren; the old /proc walk
 /// matched nothing on macOS (no /proc) and only ever killed the direct
 /// child (P0-3, 2026-09-15).
 /// Báo rõ nền tảng hiện tại có guard kill process-tree thật hay không.
 /// Unix: child chạy trong process group riêng và timeout signal CẢ group.
-/// Windows: kill qua `taskkill /T` (kill cây native). Cả hai nền tảng
-/// đều dọn được grandchild; walk /proc cũ trên macOS không khớp gì
+/// Windows: Job Object giữ cả cây process và dọn cây khi guard đóng.
+/// Cả hai nền tảng đều dọn được grandchild; walk /proc cũ trên macOS không khớp gì
 /// (không có /proc) và chỉ giết được child trực tiếp.
 pub fn process_tree_guard_available() -> bool {
     cfg!(any(unix, windows))
@@ -197,7 +214,7 @@ fn find_windows_command(
 /// bằng node_modules/.bin), không phải env của process cha: resolve theo
 /// PATH sai làm mọi shim local của project (tsc.cmd, vite.cmd…) không
 /// spawn được (bắt được bởi lane E2E Windows).
-#[cfg(not(unix))]
+#[cfg(windows)]
 fn resolve_windows_shim(cmd: &str, search_path: Option<&std::ffi::OsStr>) -> std::ffi::OsString {
     use std::ffi::OsString;
 
@@ -224,8 +241,10 @@ pub fn run(cmd: &str, args: &[String], opts: &ExecOptions) -> Result<ExecReport>
     execute_command(cmd, args, opts, OutputMode::Capture)
 }
 
-/// Run an allowlisted tool while inheriting stdio for interactive/streaming commands.
-/// Chạy tool allowlist với stdio trực tiếp cho build/dev mà vẫn giữ guard chung.
+/// Run an allowlisted tool with inherited stdio for streaming commands.
+/// On Unix, the private session intentionally does not inherit `/dev/tty` or job control.
+/// Chạy tool allowlist với stdio trực tiếp cho lệnh streaming.
+/// Trên Unix, session riêng không kế thừa `/dev/tty` hoặc job control.
 pub fn run_inherited(cmd: &str, args: &[String], opts: &ExecOptions) -> Result<ExecReport> {
     let scope = opts
         .execution_scope
@@ -712,56 +731,41 @@ fn execute_command(
     // by the task runner) so project-local shims resolve too.
     // PATH caller truyền (opts.env PATH — task runner mở rộng bằng
     // node_modules/.bin) để shim local của project cũng resolve được.
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     let path_var: Option<std::ffi::OsString> = opts
         .env
         .iter()
         .rev()
         .find(|(key, _)| is_path_env_key(key))
         .map(|(_, value)| std::ffi::OsString::from(value));
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     let resolved_cmd = resolve_windows_shim(cmd, path_var.as_deref());
     #[cfg(unix)]
     let resolved_cmd: &str = cmd;
+    #[cfg(all(not(unix), not(windows)))]
+    let resolved_cmd: &str = cmd;
 
     // Windows: If resolved_cmd is .cmd/.bat, spawn via cmd.exe to avoid "not a valid Win32 application"
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     let mut command = {
         let resolved_str = resolved_cmd.to_string_lossy();
         let is_script = resolved_str.to_ascii_lowercase().ends_with(".cmd")
             || resolved_str.to_ascii_lowercase().ends_with(".bat");
 
         if is_script {
-            // Spawn via cmd.exe /D /S /C "script.bat" args...
-            let mut cmd_exe = Command::new("cmd.exe");
-            cmd_exe.arg("/D").arg("/S").arg("/C");
-            // Pass the raw path as one argument. Command performs the Windows
-            // argument quoting; pre-quoting here turns quotes into literal
-            // backslash-escaped characters for cmd.exe.
-            // Truyền path thô thành một arg. Command tự quote Windows; quote
-            // trước ở đây biến quote thành ký tự literal cho cmd.exe.
-            // `canonicalize()` may yield an extended-length `\\?\C:\...` path.
-            // That path is valid for Win32 APIs but cmd.exe does not accept it.
-            // Keep canonical paths for validation, but normalize only the value
-            // handed to the command interpreter.
-            // `canonicalize()` có thể trả về `\\?\C:\...`; Win32 chấp nhận nhưng
-            // cmd.exe không chấp nhận. Chỉ normalize khi giao cho cmd.exe.
-            let cmd_path = if let Some(unc) = resolved_str.strip_prefix(r"\\?\UNC\") {
-                format!(r"\\{unc}")
-            } else if let Some(local) = resolved_str.strip_prefix(r"\\?\") {
-                local.to_string()
-            } else {
-                resolved_str.into_owned()
-            };
-            cmd_exe.arg(cmd_path);
-            cmd_exe.args(args);
-            cmd_exe.current_dir(&cwd);
-            cmd_exe
+            windows_batch_command(&resolved_str, args, &cwd)?
         } else {
             let mut cmd = Command::new(&resolved_cmd); // Borrow instead of move
             cmd.args(args).current_dir(&cwd);
             cmd
         }
+    };
+
+    #[cfg(all(not(unix), not(windows)))]
+    let mut command = {
+        let mut cmd = Command::new(resolved_cmd);
+        cmd.args(args).current_dir(&cwd);
+        cmd
     };
 
     #[cfg(unix)]
@@ -784,14 +788,9 @@ fn execute_command(
                 .stderr(std::process::Stdio::inherit());
         }
     }
-    // Process-group isolation applies to EVERY spawn (not only clean_env):
-    // the timeout must be able to signal the WHOLE tree for any tool
-    // (P0-3, 2026-09-15). Windows: no-op here — the tree kill uses
-    // `taskkill /T` which walks children natively.
-    // Cô lập process-group áp cho MỌI lần spawn (không chỉ clean_env):
-    // timeout phải signal được CẢ CÂY cho mọi tool (P0-3, 2026-09-15).
-    // Windows: no-op tại đây — kill cây dùng `taskkill /T` tự duyệt con.
-    configure_process_isolation(&mut command);
+    // Isolation applies to EVERY spawn (not only clean_env): timeout must control the WHOLE tree.
+    // Cô lập áp dụng cho MỌI lần spawn (không chỉ clean_env): timeout phải kiểm soát CẢ CÂY.
+    let process_tree_guard = configure_process_isolation(&mut command)?;
 
     let shadow_path = ShadowPath::create(scoped_exempt)?;
     let path_env = guarded_path_env(shadow_path.path(), &opts.env)?;
@@ -833,24 +832,37 @@ fn execute_command(
         command.env("PATH", path_env);
     }
 
-    ensure_process_inspection_available(opts.clean_env, cfg!(any(unix, windows)))?;
-    let child = command
+    let monitor_forbidden_children = true;
+    ensure_process_inspection_available(monitor_forbidden_children, cfg!(any(unix, windows)))?;
+    #[cfg(unix)]
+    let process_tree_tracking_token = process_tree_tracking_token();
+    #[cfg(unix)]
+    command.env(PROCESS_TREE_TRACKING_ENV, &process_tree_tracking_token);
+    #[cfg_attr(not(windows), allow(unused_mut))]
+    let mut child = command
         .spawn()
         .map_err(|e| anyhow::anyhow!("failed to spawn '{cmd}': {e}"))?;
+    #[cfg(windows)]
+    if let Err(error) = process_tree_guard.activate(&child) {
+        let _ = process_tree_guard.terminate();
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(error);
+    }
 
     let timeout = if opts.disable_timeout {
         None
     } else {
         Some(opts.timeout.unwrap_or_else(default_timeout))
     };
-    let outcome = wait_with_timeout(
-        child,
-        timeout,
-        opts.clean_env,
-        scoped_exempt,
-        shadow_path.path(),
-        mode,
-    )?;
+    let process_monitor = ProcessMonitor {
+        enabled: monitor_forbidden_children,
+        exempt: scoped_exempt,
+        shadow_dir: shadow_path.path(),
+        #[cfg(unix)]
+        tracking_token: &process_tree_tracking_token,
+    };
+    let outcome = wait_with_timeout(child, timeout, process_monitor, process_tree_guard, mode)?;
     let duration_ms = start.elapsed().as_millis() as u64;
     let exit_code = outcome.status.code().unwrap_or(-1);
 
@@ -1093,15 +1105,26 @@ fn default_timeout() -> Duration {
         .unwrap_or(Duration::from_secs(DEFAULT_EXEC_TIMEOUT_SECS))
 }
 
+struct ProcessMonitor<'a> {
+    enabled: bool,
+    exempt: &'a [&'a str],
+    shadow_dir: &'a Path,
+    #[cfg(unix)]
+    tracking_token: &'a str,
+}
+
 fn wait_with_timeout(
     mut child: std::process::Child,
     timeout: Option<Duration>,
-    monitor_forbidden_children: bool,
-    exempt: &[&str],
-    shadow_dir: &Path,
+    process_monitor: ProcessMonitor<'_>,
+    _process_tree_guard: ProcessTreeGuard,
     mode: OutputMode,
 ) -> Result<ExecOutcome> {
     let started = Instant::now();
+    #[cfg(unix)]
+    let mut observed_process_groups = std::collections::HashSet::from([child.id()]);
+    #[cfg(unix)]
+    let mut root_reaped = false;
     #[cfg(windows)]
     let mut process_ancestry = WindowsProcessAncestry::default();
 
@@ -1155,38 +1178,176 @@ fn wait_with_timeout(
     // join (send xong ⇒ bytes là của ta); ở đường bounded thread còn kẹt
     // sẽ chết theo process — nó không giữ state ta cần và chặn nó sẽ
     // tái tạo cái treo.)
-    let collect = |rx: &std::sync::mpsc::Receiver<Vec<u8>>, bounded: Option<Duration>| -> Vec<u8> {
-        match bounded {
-            Some(deadline) => rx.recv_timeout(deadline).unwrap_or_default(),
-            None => rx.recv().unwrap_or_default(),
-        }
-    };
-    let drain = |child: &mut std::process::Child, bounded: Option<Duration>| -> ExecOutcome {
-        let stdout = collect(&stdout_rx, bounded);
-        let stderr = collect(&stderr_rx, bounded);
-        let status = child.wait().unwrap_or_default();
-        ExecOutcome {
-            status,
-            stdout,
-            stderr,
-        }
-    };
+    let drain =
+        |child: &mut std::process::Child, bounded: Option<Duration>| -> (ExecOutcome, bool) {
+            let deadline = bounded.map(|duration| Instant::now() + duration);
+            let collect = |rx: &std::sync::mpsc::Receiver<Vec<u8>>| match deadline {
+                Some(deadline) => {
+                    match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+                        Ok(bytes) => (bytes, true),
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => (Vec::new(), false),
+                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => (Vec::new(), true),
+                    }
+                }
+                None => (rx.recv().unwrap_or_default(), true),
+            };
+            let (stdout, stdout_complete) = collect(&stdout_rx);
+            let (stderr, stderr_complete) = collect(&stderr_rx);
+            let status = child.wait().unwrap_or_default();
+            (
+                ExecOutcome {
+                    status,
+                    stdout,
+                    stderr,
+                },
+                stdout_complete && stderr_complete,
+            )
+        };
     let _ = mode;
-
     loop {
+        #[cfg(unix)]
+        let process_scan = if process_monitor.enabled {
+            find_forbidden_descendant_tracking(
+                child.id(),
+                process_monitor.exempt,
+                process_monitor.shadow_dir,
+                process_monitor.tracking_token,
+                &mut observed_process_groups,
+            )
+        } else {
+            Ok(None)
+        };
+        #[cfg(unix)]
+        if let Ok(Some(found)) = &process_scan {
+            terminate_process_tree_tracked(
+                child.id(),
+                &mut observed_process_groups,
+                process_monitor.tracking_token,
+                process_monitor.exempt,
+                process_monitor.shadow_dir,
+                root_reaped,
+            );
+            let (out, _) = drain(&mut child, Some(Duration::from_millis(POST_KILL_DRAIN_MS)));
+            return Err(forbidden_child_error(
+                found,
+                out.status,
+                &out.stderr,
+                &out.stdout,
+            ));
+        }
+
         if let Some(_status) = child.try_wait()? {
+            #[cfg(unix)]
+            {
+                root_reaped = true;
+            }
             // Child exited — pipes may still hold buffered bytes; the
             // reader threads hit EOF (child end closed) and return them.
             // Child đã thoát — pipe có thể còn byte; thread đọc gặp EOF
             // (đầu child đã đóng) và trả về chúng.
-            return Ok(drain(&mut child, None));
+            #[cfg(windows)]
+            {
+                if process_monitor.enabled {
+                    return finish_monitored_root_exit(
+                        &mut child,
+                        _process_tree_guard,
+                        process_monitor.exempt,
+                        &drain,
+                    );
+                }
+                // Close the job so grandchildren cannot outlive a completed root command.
+                // Đóng job để tiến trình cháu không thể sống sau khi lệnh gốc đã xong.
+                drop(_process_tree_guard);
+                return Ok(drain(&mut child, Some(Duration::from_millis(POST_KILL_DRAIN_MS))).0);
+            }
+            #[cfg(unix)]
+            {
+                if process_monitor.enabled {
+                    match process_scan {
+                        Ok(Some(found)) => {
+                            terminate_process_tree_tracked(
+                                child.id(),
+                                &mut observed_process_groups,
+                                process_monitor.tracking_token,
+                                process_monitor.exempt,
+                                process_monitor.shadow_dir,
+                                root_reaped,
+                            );
+                            let (out, _) =
+                                drain(&mut child, Some(Duration::from_millis(POST_KILL_DRAIN_MS)));
+                            return Err(forbidden_child_error(
+                                &found,
+                                out.status,
+                                &out.stderr,
+                                &out.stdout,
+                            ));
+                        }
+                        Err(error) if error.downcast_ref::<MonitoredRootNotVisible>().is_some() => {
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            terminate_process_tree_tracked(
+                                child.id(),
+                                &mut observed_process_groups,
+                                process_monitor.tracking_token,
+                                process_monitor.exempt,
+                                process_monitor.shadow_dir,
+                                root_reaped,
+                            );
+                            let (out, _) =
+                                drain(&mut child, Some(Duration::from_millis(POST_KILL_DRAIN_MS)));
+                            return Err(anyhow::anyhow!(
+                                "cannot verify child process tree after command exit; descendants were terminated (status: {}): {error}",
+                                out.status
+                            ));
+                        }
+                    }
+                    if process_groups_have_descendants(&observed_process_groups, child.id()) {
+                        terminate_process_tree_tracked(
+                            child.id(),
+                            &mut observed_process_groups,
+                            process_monitor.tracking_token,
+                            process_monitor.exempt,
+                            process_monitor.shadow_dir,
+                            root_reaped,
+                        );
+                        let (out, _) =
+                            drain(&mut child, Some(Duration::from_millis(POST_KILL_DRAIN_MS)));
+                        return Err(anyhow::anyhow!(
+                            "command root exited while child processes remained in its process group; the process tree was terminated (status: {})",
+                            out.status
+                        ));
+                    }
+                }
+                if let Some(timeout) = timeout {
+                    let remaining = timeout.saturating_sub(started.elapsed());
+                    let (out, complete) = drain(&mut child, Some(remaining));
+                    if complete {
+                        return Ok(out);
+                    }
+                    terminate_process_tree_tracked(
+                        child.id(),
+                        &mut observed_process_groups,
+                        process_monitor.tracking_token,
+                        process_monitor.exempt,
+                        process_monitor.shadow_dir,
+                        root_reaped,
+                    );
+                    let (out, _) =
+                        drain(&mut child, Some(Duration::from_millis(POST_KILL_DRAIN_MS)));
+                    return Err(timeout_error(timeout, out.status, &out.stderr, &out.stdout));
+                }
+                return Ok(drain(&mut child, None).0);
+            }
+            #[cfg(not(any(unix, windows)))]
+            return Ok(drain(&mut child, None).0);
         }
-        if monitor_forbidden_children {
+        if process_monitor.enabled {
             #[cfg(windows)]
             let process_scan = find_forbidden_descendant_with_timeout(
                 child.id(),
-                exempt,
-                shadow_dir,
+                process_monitor.exempt,
+                process_monitor.shadow_dir,
                 started,
                 timeout,
                 &mut process_ancestry,
@@ -1196,7 +1357,14 @@ fn wait_with_timeout(
             let process_scan = match process_scan {
                 Ok(WindowsProcessScan::Clean) | Ok(WindowsProcessScan::DeadlineReached) => Ok(None),
                 Ok(WindowsProcessScan::Forbidden(found)) => Ok(Some(found)),
-                Ok(WindowsProcessScan::ChildExited) => return Ok(drain(&mut child, None)),
+                Ok(WindowsProcessScan::ChildExited) => {
+                    return finish_monitored_root_exit(
+                        &mut child,
+                        _process_tree_guard,
+                        process_monitor.exempt,
+                        &drain,
+                    );
+                }
                 Ok(WindowsProcessScan::MissingCommandLine { .. }) => {
                     unreachable!("retry controller must resolve missing command-line metadata")
                 }
@@ -1208,14 +1376,126 @@ fn wait_with_timeout(
                 }
                 Err(error) => Err(error),
             };
-            #[cfg(not(windows))]
-            let process_scan = find_forbidden_descendant(child.id(), exempt, shadow_dir);
+            #[cfg(unix)]
+            let mut process_scan = process_scan;
+            #[cfg(not(any(unix, windows)))]
+            let mut process_scan: Result<Option<ForbiddenProcess>> =
+                Err(process_inspection_unavailable_error());
+
+            #[cfg(unix)]
+            let root_was_missing = process_scan
+                .as_ref()
+                .err()
+                .is_some_and(|error| error.downcast_ref::<MonitoredRootNotVisible>().is_some());
+            #[cfg(unix)]
+            if root_was_missing {
+                for _ in 0..ROOT_VISIBILITY_RETRIES {
+                    match child.try_wait() {
+                        Ok(Some(_)) => {
+                            root_reaped = true;
+                            match find_forbidden_descendant_tracking(
+                                child.id(),
+                                process_monitor.exempt,
+                                process_monitor.shadow_dir,
+                                process_monitor.tracking_token,
+                                &mut observed_process_groups,
+                            ) {
+                                Ok(scan) => {
+                                    process_scan = Ok(scan);
+                                    break;
+                                }
+                                Err(error)
+                                    if error
+                                        .downcast_ref::<MonitoredRootNotVisible>()
+                                        .is_some() =>
+                                {
+                                    process_scan = Ok(None);
+                                    break;
+                                }
+                                Err(error) => {
+                                    process_scan = Err(error);
+                                    break;
+                                }
+                            }
+                        }
+                        Ok(None) => {
+                            std::thread::sleep(Duration::from_millis(WAIT_POLL_INTERVAL_MS));
+                            match find_forbidden_descendant_tracking(
+                                child.id(),
+                                process_monitor.exempt,
+                                process_monitor.shadow_dir,
+                                process_monitor.tracking_token,
+                                &mut observed_process_groups,
+                            ) {
+                                Ok(scan) => {
+                                    process_scan = Ok(scan);
+                                    break;
+                                }
+                                Err(error)
+                                    if error
+                                        .downcast_ref::<MonitoredRootNotVisible>()
+                                        .is_some() =>
+                                {
+                                    continue;
+                                }
+                                Err(error) => {
+                                    process_scan = Err(error);
+                                    break;
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            process_scan = Err(anyhow::Error::from(error));
+                            break;
+                        }
+                    }
+                }
+            }
+
+            #[cfg(unix)]
+            if process_scan
+                .as_ref()
+                .err()
+                .is_some_and(|error| error.downcast_ref::<MonitoredRootNotVisible>().is_some())
+                && matches!(child.try_wait(), Ok(Some(_)))
+            {
+                root_reaped = true;
+                // Re-scan the isolated group after observing exit to close the final status race.
+                // Quét lại process group cô lập sau khi thấy child thoát để khép race status cuối.
+                process_scan = match find_forbidden_descendant_tracking(
+                    child.id(),
+                    process_monitor.exempt,
+                    process_monitor.shadow_dir,
+                    process_monitor.tracking_token,
+                    &mut observed_process_groups,
+                ) {
+                    Ok(scan) => Ok(scan),
+                    Err(error) if error.downcast_ref::<MonitoredRootNotVisible>().is_some() => {
+                        Ok(None)
+                    }
+                    Err(error) => Err(error),
+                };
+            }
 
             match process_scan {
                 Ok(Some(found)) => {
-                    terminate_process_tree(child.id());
+                    #[cfg(unix)]
+                    terminate_process_tree_tracked(
+                        child.id(),
+                        &mut observed_process_groups,
+                        process_monitor.tracking_token,
+                        process_monitor.exempt,
+                        process_monitor.shadow_dir,
+                        root_reaped,
+                    );
+                    #[cfg(windows)]
+                    {
+                        let _ = _process_tree_guard.terminate();
+                        drop(_process_tree_guard);
+                    }
                     let _ = child.kill();
-                    let out = drain(&mut child, Some(Duration::from_millis(POST_KILL_DRAIN_MS)));
+                    let (out, _) =
+                        drain(&mut child, Some(Duration::from_millis(POST_KILL_DRAIN_MS)));
                     return Err(forbidden_child_error(
                         &found,
                         out.status,
@@ -1225,9 +1505,23 @@ fn wait_with_timeout(
                 }
                 Ok(None) => {}
                 Err(error) => {
-                    terminate_process_tree(child.id());
+                    #[cfg(unix)]
+                    terminate_process_tree_tracked(
+                        child.id(),
+                        &mut observed_process_groups,
+                        process_monitor.tracking_token,
+                        process_monitor.exempt,
+                        process_monitor.shadow_dir,
+                        root_reaped,
+                    );
+                    #[cfg(windows)]
+                    {
+                        let _ = _process_tree_guard.terminate();
+                        drop(_process_tree_guard);
+                    }
                     let _ = child.kill();
-                    let out = drain(&mut child, Some(Duration::from_millis(POST_KILL_DRAIN_MS)));
+                    let (out, _) =
+                        drain(&mut child, Some(Duration::from_millis(POST_KILL_DRAIN_MS)));
                     return Err(anyhow::anyhow!(
                         "cannot verify child process tree; command was terminated fail-closed (status after kill: {}): {error}",
                         out.status
@@ -1236,9 +1530,22 @@ fn wait_with_timeout(
             }
         }
         if timeout.is_some_and(|timeout| started.elapsed() >= timeout) {
-            terminate_process_tree(child.id());
+            #[cfg(unix)]
+            terminate_process_tree_tracked(
+                child.id(),
+                &mut observed_process_groups,
+                process_monitor.tracking_token,
+                process_monitor.exempt,
+                process_monitor.shadow_dir,
+                root_reaped,
+            );
+            #[cfg(windows)]
+            {
+                let _ = _process_tree_guard.terminate();
+                drop(_process_tree_guard);
+            }
             let _ = child.kill();
-            let out = drain(&mut child, Some(Duration::from_millis(POST_KILL_DRAIN_MS)));
+            let (out, _) = drain(&mut child, Some(Duration::from_millis(POST_KILL_DRAIN_MS)));
             return Err(timeout_error(
                 timeout.expect("timeout checked above"),
                 out.status,
@@ -1250,105 +1557,663 @@ fn wait_with_timeout(
     }
 }
 
+#[cfg(windows)]
+fn finish_monitored_root_exit(
+    child: &mut std::process::Child,
+    guard: ProcessTreeGuard,
+    exempt: &[&str],
+    drain: impl Fn(&mut std::process::Child, Option<Duration>) -> (ExecOutcome, bool),
+) -> Result<ExecOutcome> {
+    let survivors = windows_job_descendants(&guard, child.id(), exempt)?;
+    if survivors.is_empty() {
+        drop(guard);
+        return Ok(drain(child, Some(Duration::from_millis(POST_KILL_DRAIN_MS))).0);
+    }
+
+    let termination = guard.terminate();
+    drop(guard);
+    let (out, _) = drain(child, Some(Duration::from_millis(POST_KILL_DRAIN_MS)));
+    if let Some((pid, Some(name))) = survivors.iter().find(|(_, forbidden)| forbidden.is_some()) {
+        return Err(forbidden_child_error(
+            &ForbiddenProcess {
+                pid: *pid,
+                name: name.clone(),
+            },
+            out.status,
+            &out.stderr,
+            &out.stdout,
+        ));
+    }
+    if let Err(error) = termination {
+        return Err(error.context("failed to terminate surviving Windows child processes"));
+    }
+    let child_ids = survivors
+        .iter()
+        .map(|(pid, _)| pid.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    bail!(
+        "command root exited while child process(es) {child_ids} remained in its Windows job; the process tree was terminated"
+    )
+}
+
 struct ExecOutcome {
     status: ExitStatus,
     stdout: Vec<u8>,
     stderr: Vec<u8>,
 }
 
-// Process-group isolation (unix): the child becomes its own group leader so
-// the timeout can signal the WHOLE tree with `kill(-pgid)`. The no-op below
-// covers Windows, where the tree kill uses `taskkill /T` instead
-// (CI Windows compile fix 2026-09-11 — keep the cfg gates paired).
-// Cô lập process-group (unix): child thành group leader riêng để timeout
-// signal CẢ CÂY bằng `kill(-pgid)`. No-op dưới đây phủ Windows — kill cây
-// dùng `taskkill /T` (fix compile CI Windows 2026-09-11 — giữ cặp cfg gate).
+// Process guard state; Unix uses a process group, Windows owns a Job Object.
+// Trạng thái guard: Unix dùng session riêng; Windows quản lý bằng Job Object.
 #[cfg(unix)]
-fn configure_process_isolation(command: &mut Command) {
+struct ProcessTreeGuard;
+
+#[cfg(windows)]
+struct WindowsOwnedHandle(windows_sys::Win32::Foundation::HANDLE);
+
+#[cfg(windows)]
+impl Drop for WindowsOwnedHandle {
+    #[allow(unsafe_code)]
+    fn drop(&mut self) {
+        unsafe {
+            windows_sys::Win32::Foundation::CloseHandle(self.0);
+        }
+    }
+}
+
+#[cfg(windows)]
+/// Closing this job handle kills its assigned process tree by OS policy.
+/// Đóng handle job sẽ dừng cây tiến trình đã gắn theo chính sách của OS.
+/// Source: https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects
+/// Nguồn: tài liệu Microsoft xác nhận KILL_ON_JOB_CLOSE kết thúc toàn bộ job.
+struct ProcessTreeGuard {
+    job: WindowsOwnedHandle,
+}
+
+#[cfg(not(any(unix, windows)))]
+struct ProcessTreeGuard;
+
+#[cfg(unix)]
+fn configure_process_isolation(command: &mut Command) -> Result<ProcessTreeGuard> {
     use std::os::unix::process::CommandExt;
 
-    command.process_group(0);
+    // A private session prevents descendants from joining caller-owned groups.
+    // Session riêng ngăn descendant nhập process group thuộc caller.
+    // SAFETY: the pre-exec closure only calls async-signal-safe `setsid` after fork.
+    // AN TOÀN: closure pre-exec chỉ gọi `setsid` async-signal-safe sau fork.
+    #[allow(unsafe_code)]
+    unsafe {
+        command.pre_exec(|| {
+            // SAFETY: `setsid` changes only the child process's session before exec.
+            // AN TOÀN: `setsid` chỉ đổi session của child trước khi exec.
+            let session_id = libc::setsid();
+            if session_id == -1 {
+                Err(std::io::Error::last_os_error())
+            } else {
+                Ok(())
+            }
+        });
+    }
+    Ok(ProcessTreeGuard)
 }
 
-#[cfg(not(unix))]
-fn configure_process_isolation(_command: &mut Command) {}
+#[cfg(windows)]
+fn configure_process_isolation(command: &mut Command) -> Result<ProcessTreeGuard> {
+    use std::os::windows::process::CommandExt;
+    use windows_sys::Win32::System::Threading::CREATE_SUSPENDED;
+
+    // Keep the primary thread paused until its process is assigned to the job.
+    // Tiến trình con chưa chạy cho tới khi đã được gắn vào job quản lý cây.
+    // Source: https://learn.microsoft.com/en-us/windows/win32/procthread/process-creation-flags
+    // Nguồn: tài liệu Microsoft mô tả CREATE_SUSPENDED giữ thread chính trước khi chạy.
+    command.creation_flags(CREATE_SUSPENDED);
+    ProcessTreeGuard::new()
+}
+
+#[cfg(not(any(unix, windows)))]
+fn configure_process_isolation(_command: &mut Command) -> Result<ProcessTreeGuard> {
+    Ok(ProcessTreeGuard)
+}
+
+#[cfg(windows)]
+#[allow(unsafe_code)]
+fn windows_last_error() -> u32 {
+    unsafe { windows_sys::Win32::Foundation::GetLastError() }
+}
+
+#[cfg(windows)]
+impl ProcessTreeGuard {
+    #[allow(unsafe_code)]
+    fn new() -> Result<Self> {
+        use windows_sys::Win32::System::JobObjects::{
+            CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+            SetInformationJobObject,
+        };
+
+        let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+        if handle.is_null() {
+            bail!(
+                "failed to create Windows process job (error {})",
+                windows_last_error()
+            );
+        }
+        let guard = Self {
+            job: WindowsOwnedHandle(handle),
+        };
+        let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        let configured = unsafe {
+            SetInformationJobObject(
+                guard.job.0,
+                JobObjectExtendedLimitInformation,
+                std::ptr::from_ref(&limits).cast(),
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            )
+        };
+        if configured == 0 {
+            bail!(
+                "failed to configure Windows process job (error {})",
+                windows_last_error()
+            );
+        }
+        Ok(guard)
+    }
+
+    #[allow(unsafe_code)]
+    fn activate(&self, child: &std::process::Child) -> Result<()> {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::System::JobObjects::AssignProcessToJobObject;
+
+        let assigned =
+            unsafe { AssignProcessToJobObject(self.job.0, child.as_raw_handle().cast()) };
+        if assigned == 0 {
+            bail!(
+                "failed to assign suspended child to Windows process job (error {})",
+                windows_last_error()
+            );
+        }
+        self.resume_primary_thread(child.id())
+    }
+
+    #[allow(unsafe_code)]
+    fn resume_primary_thread(&self, process_id: u32) -> Result<()> {
+        use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
+        };
+        use windows_sys::Win32::System::Threading::{
+            OpenThread, ResumeThread, THREAD_SUSPEND_RESUME,
+        };
+
+        let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) };
+        if snapshot == windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE {
+            bail!(
+                "failed to inspect suspended Windows child thread (error {})",
+                windows_last_error()
+            );
+        }
+        let snapshot = WindowsOwnedHandle(snapshot);
+        let mut entry = THREADENTRY32 {
+            dwSize: std::mem::size_of::<THREADENTRY32>() as u32,
+            ..Default::default()
+        };
+        let mut found_thread = None;
+        let mut has_entry = unsafe { Thread32First(snapshot.0, &mut entry) } != 0;
+        while has_entry {
+            if entry.th32OwnerProcessID == process_id {
+                found_thread = Some(entry.th32ThreadID);
+                break;
+            }
+            has_entry = unsafe { Thread32Next(snapshot.0, &mut entry) } != 0;
+        }
+        let thread_id = found_thread.ok_or_else(|| {
+            anyhow::anyhow!("suspended Windows child has no discoverable primary thread")
+        })?;
+        let thread = unsafe { OpenThread(THREAD_SUSPEND_RESUME, 0, thread_id) };
+        if thread.is_null() {
+            bail!(
+                "failed to open suspended Windows child thread (error {})",
+                windows_last_error()
+            );
+        }
+        let thread = WindowsOwnedHandle(thread);
+        let previous_suspend_count = unsafe { ResumeThread(thread.0) };
+        if previous_suspend_count == u32::MAX {
+            bail!(
+                "failed to resume Windows child thread (error {})",
+                windows_last_error()
+            );
+        }
+        if previous_suspend_count != 1 {
+            bail!("Windows child thread had an unexpected suspend count: {previous_suspend_count}");
+        }
+        Ok(())
+    }
+
+    #[allow(unsafe_code)]
+    fn terminate(&self) -> Result<()> {
+        use windows_sys::Win32::System::JobObjects::TerminateJobObject;
+
+        let terminated = unsafe { TerminateJobObject(self.job.0, 1) };
+        if terminated == 0 {
+            bail!(
+                "failed to terminate Windows process job (error {})",
+                windows_last_error()
+            );
+        }
+        Ok(())
+    }
+
+    #[allow(unsafe_code)]
+    fn active_process_ids(&self) -> Result<Vec<u32>> {
+        use windows_sys::Win32::System::JobObjects::{
+            JobObjectBasicProcessIdList, QueryInformationJobObject,
+        };
+
+        #[repr(C)]
+        struct ProcessIdListBuffer {
+            assigned: u32,
+            listed: u32,
+            process_ids: [usize; 1],
+        }
+
+        let mut capacity = 32usize;
+        for _ in 0..4 {
+            let word_count = 2usize.saturating_add(capacity);
+            let mut buffer = vec![0usize; word_count];
+            let list = buffer.as_mut_ptr().cast::<ProcessIdListBuffer>();
+            let byte_len = std::mem::size_of::<u32>()
+                .saturating_mul(2)
+                .saturating_add(capacity.saturating_mul(std::mem::size_of::<usize>()));
+            let byte_len = u32::try_from(byte_len)
+                .context("Windows job process ID buffer exceeds API size limit")?;
+            // SAFETY: `buffer` is aligned for usize, reserves the fixed two-u32 header plus
+            // `capacity` process IDs, and stays alive for the synchronous Windows API call.
+            // AN TOÀN: `buffer` căn chỉnh theo usize, đủ header hai u32 và `capacity` PID,
+            // tồn tại suốt lời gọi Windows đồng bộ.
+            let queried = unsafe {
+                QueryInformationJobObject(
+                    self.job.0,
+                    JobObjectBasicProcessIdList,
+                    list.cast(),
+                    byte_len,
+                    std::ptr::null_mut(),
+                )
+            };
+            if queried == 0 {
+                let error = windows_last_error();
+                if error == 234 {
+                    capacity = capacity.saturating_mul(2);
+                    continue;
+                }
+                bail!("failed to inspect Windows job process IDs (error {error})");
+            }
+
+            // SAFETY: the successful query wrote the documented header into this aligned buffer.
+            // AN TOÀN: truy vấn thành công đã ghi header theo tài liệu vào buffer được căn chỉnh.
+            let (assigned, listed) =
+                unsafe { ((*list).assigned as usize, (*list).listed as usize) };
+            if listed > capacity {
+                bail!("Windows job returned an invalid process ID count");
+            }
+            if assigned > listed {
+                capacity = assigned.max(capacity.saturating_mul(2));
+                continue;
+            }
+
+            // SAFETY: `process_ids` begins immediately after the two-u32 header and `listed`
+            // was checked against the allocated capacity above.
+            // AN TOÀN: `process_ids` nằm ngay sau header hai u32; `listed` đã được kiểm tra.
+            let ids = unsafe {
+                std::slice::from_raw_parts(
+                    std::ptr::addr_of!((*list).process_ids).cast::<usize>(),
+                    listed,
+                )
+            };
+            return ids
+                .iter()
+                .map(|pid| {
+                    u32::try_from(*pid)
+                        .map_err(|_| anyhow::anyhow!("Windows job returned an invalid process ID"))
+                })
+                .collect();
+        }
+        bail!("Windows job process ID list remained incomplete after bounded retries")
+    }
+
+    #[allow(unsafe_code)]
+    fn contains_process(&self, process_id: u32) -> Result<bool> {
+        use windows_sys::Win32::System::JobObjects::IsProcessInJob;
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+
+        // SAFETY: this opens only the PID returned by our private Job Object query and requests
+        // query-only access; an invalid PID means that process exited during the snapshot.
+        // AN TOÀN: chỉ mở PID do Job Object riêng trả về với quyền query; PID sai nghĩa là process
+        // đã thoát trong lúc chụp trạng thái.
+        let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process_id) };
+        if process.is_null() {
+            let error = windows_last_error();
+            if error == 87 {
+                return Ok(false);
+            }
+            bail!("failed to open Windows job child PID {process_id} (error {error})");
+        }
+        let process = WindowsOwnedHandle(process);
+        let mut is_member = 0;
+        // SAFETY: both handles are live and `is_member` points to writable BOOL storage.
+        // AN TOÀN: cả hai handle còn sống và `is_member` trỏ tới vùng BOOL có thể ghi.
+        let queried = unsafe { IsProcessInJob(process.0, self.job.0, &mut is_member) };
+        if queried == 0 {
+            bail!(
+                "failed to verify Windows job child PID {process_id} membership (error {})",
+                windows_last_error()
+            );
+        }
+        Ok(is_member != 0)
+    }
+}
+
+#[cfg(windows)]
+fn windows_job_descendants(
+    guard: &ProcessTreeGuard,
+    root_pid: u32,
+    exempt: &[&str],
+) -> Result<Vec<(u32, Option<String>)>> {
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+
+    let process_ids = guard.active_process_ids()?;
+    if process_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut system = System::new();
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::nothing().with_cmd(UpdateKind::Always),
+    );
+
+    let mut descendants = Vec::new();
+    for process_id in process_ids.into_iter().filter(|pid| *pid != root_pid) {
+        if !guard.contains_process(process_id)? {
+            continue;
+        }
+        let Some(process) = system.process(Pid::from_u32(process_id)) else {
+            if guard.contains_process(process_id)? {
+                bail!("cannot inspect live Windows job child PID {process_id}");
+            }
+            continue;
+        };
+        let command_line = process
+            .cmd()
+            .iter()
+            .map(|arg| arg.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join(" ");
+        let image_name = process.name().to_string_lossy().into_owned();
+        if command_line.is_empty() {
+            validate_monitored_child_command_line(&image_name, &[], process_id)?;
+        }
+        descendants.push((
+            process_id,
+            forbidden_process_name(&image_name, &command_line, exempt),
+        ));
+    }
+    Ok(descendants)
+}
+
+#[cfg(all(unix, test))]
+fn terminate_process_tree(root_pid: u32, observed_process_groups: &std::collections::HashSet<u32>) {
+    let mut groups = observed_process_groups.clone();
+    groups.insert(root_pid);
+    signal_process_group_ids(&groups, libc::SIGTERM);
+    std::thread::sleep(Duration::from_millis(TERM_TO_KILL_GRACE_MS));
+    signal_process_group_ids(&groups, libc::SIGKILL);
+}
 
 #[cfg(unix)]
-fn terminate_process_tree(root_pid: u32) {
-    // P0-3 (Tech Lead 2026-09-15): kill the WHOLE process GROUP.
-    //
-    // The child is spawned with `process_group(0)` (see
-    // configure_process_isolation), so its PID *is* its PGID and every
-    // descendant — grandchildren included — inherits that group. One group
-    // signal therefore reaches the entire tree, with no /proc walk: the old
-    // walk matched NOTHING on macOS (no /proc) and silently degraded to
-    // "kill the direct child only", leaving the grandchild holding the
-    // stdout pipe and hanging the drain.
-    //
-    // The group is derived from the PID we spawned ourselves (never looked
-    // up), so it can never resolve to the CI job's own group — the failure
-    // mode the old comment warned about.
-    //
-    // (P0-3: kill CẢ process GROUP. Child spawn với `process_group(0)` nên
-    // PID CHÍNH LÀ PGID và mọi con cháu thừa hưởng group đó. Một group
-    // signal tới cả cây, không cần walk /proc: walk cũ trên macOS không
-    // khớp gì (không có /proc) và lặng lẽ thoái hóa thành "chỉ giết child
-    // trực tiếp", để grandchild giữ pipe stdout và treo drain. Group suy
-    // từ PID do chính ta spawn (không tra cứu), nên không bao giờ trỏ vào
-    // group của job CI — đúng chế độ hỏng mà comment cũ cảnh báo.)
-    let group = -(root_pid as i32);
-    // SAFETY: the negative pid is the process group of a child this process
-    // spawned itself (process_group(0) made it its own group leader), so the
-    // signal targets a private group we created — it can never resolve to the
-    // caller's own group. Worst case the target already exited: kill()
-    // returns ESRCH and no foreign process is ever addressed.
-    // (An toàn: pid âm là process group của child do chính tiến trình này
-    // spawn (process_group(0) khiến nó tự làm group leader), signal chỉ nhắm
-    // group riêng do ta tạo ra — không bao giờ trùng group của caller. Xấu
-    // nhất target đã thoát: kill() trả ESRCH, không trúng tiến trình lạ.)
-    #[allow(unsafe_code)]
-    unsafe {
-        libc::kill(group, libc::SIGTERM);
+struct ProcessSignalPlan {
+    process_groups: std::collections::HashSet<u32>,
+    signal_root_directly: bool,
+}
+
+#[cfg(unix)]
+fn process_signal_plan(
+    root_pid: u32,
+    observed_process_groups: &std::collections::HashSet<u32>,
+    live_process_groups: &std::collections::HashSet<u32>,
+    root_group_id: Option<u32>,
+    root_reaped: bool,
+) -> ProcessSignalPlan {
+    let mut process_groups = observed_process_groups
+        .intersection(live_process_groups)
+        .copied()
+        .collect::<std::collections::HashSet<_>>();
+    if !root_reaped {
+        for group in [Some(root_pid), root_group_id].into_iter().flatten() {
+            if live_process_groups.contains(&group) {
+                process_groups.insert(group);
+            }
+        }
     }
-    // Short grace: a well-behaved tool flushes and exits on TERM before the
-    // hammer lands. (Cửa nghiêng ngắn: tool tử tế kịp flush rồi thoát.)
-    std::thread::sleep(Duration::from_millis(TERM_TO_KILL_GRACE_MS));
-    // SAFETY: same provenance as the SIGTERM shot above — the negative pid
-    // is the private group of our own spawned child and the direct pid is
-    // that same child; neither id is looked up, so a foreign process can
-    // never be addressed. If the target already exited, kill() returns ESRCH.
-    // (An toàn: cùng nguồn gốc như phát SIGTERM trên — pid âm là group riêng
-    // của child do ta spawn, pid dương là chính child đó; không id nào được
-    // tra cứu ngoài, nên không bao giờ trúng tiến trình lạ. Target đã thoát
-    // thì kill() trả ESRCH.)
-    #[allow(unsafe_code)]
-    unsafe {
-        libc::kill(group, libc::SIGKILL);
-        // Belt-and-braces: also signal the root directly in case the tool
-        // called setsid() and left our target group. Escaped descendants
-        // are out of reach for a group signal — the bounded post-kill drain
-        // is what keeps that case from hanging the caller.
-        // (Dự phòng: signal luôn root trực tiếp phòng khi tool gọi setsid()
-        // và rời group. Con cháu đã thoát group nằm ngoài tầm group signal —
-        // drain bounded sau kill chính là thứ giữ ca đó không treo caller.)
-        libc::kill(root_pid as i32, libc::SIGKILL);
+    ProcessSignalPlan {
+        process_groups,
+        signal_root_directly: !root_reaped
+            && root_group_id.is_none_or(|group| !live_process_groups.contains(&group)),
     }
 }
 
-#[cfg(not(unix))]
-fn terminate_process_tree(root_pid: u32) {
-    // Windows: no Job-Object API in std and no new dependency is allowed, so
-    // use the OS-native tree kill — taskkill /T walks the child tree and /F
-    // forces it. Best-effort: a process that already exited returns non-zero
-    // and that is fine.
-    // (Windows: std không có Job-Object API và không được thêm dependency,
-    // nên dùng kill cây native của OS — taskkill /T duyệt cây con, /F ép
-    // buộc. Best-effort: process đã thoát trả non-zero, không sao.)
-    let _ = Command::new("taskkill")
-        .args(["/F", "/T", "/PID", &root_pid.to_string()])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
+#[cfg(unix)]
+fn terminate_process_tree_tracked(
+    root_pid: u32,
+    observed_process_groups: &mut std::collections::HashSet<u32>,
+    tracking_token: &str,
+    exempt: &[&str],
+    shadow_dir: &Path,
+    root_reaped: bool,
+) {
+    signal_process_groups(
+        root_pid,
+        observed_process_groups,
+        libc::SIGTERM,
+        root_reaped,
+    );
+    let mut term_signaled_groups = observed_process_groups.clone();
+    let term_deadline = Instant::now() + Duration::from_millis(TERM_TO_KILL_GRACE_MS);
+    loop {
+        let previous_groups = observed_process_groups.len();
+        let _ = find_forbidden_descendant_tracking(
+            root_pid,
+            exempt,
+            shadow_dir,
+            tracking_token,
+            observed_process_groups,
+        );
+        let new_groups = observed_process_groups
+            .difference(&term_signaled_groups)
+            .copied()
+            .collect::<std::collections::HashSet<_>>();
+        signal_process_group_ids(&new_groups, libc::SIGTERM);
+        term_signaled_groups.extend(new_groups);
+        if Instant::now() >= term_deadline {
+            break;
+        }
+        let sleep_for = if observed_process_groups.len() != previous_groups {
+            Duration::from_millis(1)
+        } else {
+            Duration::from_millis(10)
+        };
+        std::thread::sleep(sleep_for.min(term_deadline.saturating_duration_since(Instant::now())));
+    }
+
+    signal_process_groups(
+        root_pid,
+        observed_process_groups,
+        libc::SIGKILL,
+        root_reaped,
+    );
+    let kill_deadline = Instant::now() + Duration::from_millis(TERM_TO_KILL_GRACE_MS);
+    loop {
+        let _ = find_forbidden_descendant_tracking(
+            root_pid,
+            exempt,
+            shadow_dir,
+            tracking_token,
+            observed_process_groups,
+        );
+        signal_process_groups(
+            root_pid,
+            observed_process_groups,
+            libc::SIGKILL,
+            root_reaped,
+        );
+        if !process_groups_have_descendants(observed_process_groups, root_pid)
+            || Instant::now() >= kill_deadline
+        {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[cfg(unix)]
+fn signal_process_groups(
+    root_pid: u32,
+    process_groups: &std::collections::HashSet<u32>,
+    signal: libc::c_int,
+    root_reaped: bool,
+) {
+    let mut candidate_groups = process_groups.clone();
+    let root_group_id = if root_reaped {
+        None
+    } else {
+        process_group_id(root_pid)
+    };
+    if !root_reaped {
+        candidate_groups.insert(root_pid);
+        if let Some(root_group_id) = root_group_id {
+            candidate_groups.insert(root_group_id);
+        }
+    }
+    let live_process_groups = candidate_groups
+        .iter()
+        .copied()
+        .filter(|group| process_group_is_live(*group))
+        .collect::<std::collections::HashSet<_>>();
+    let plan = process_signal_plan(
+        root_pid,
+        process_groups,
+        &live_process_groups,
+        root_group_id,
+        root_reaped,
+    );
+    signal_process_group_ids(&plan.process_groups, signal);
+    if plan.signal_root_directly {
+        // The root PID remains reserved until `Child::wait` reaps it.
+        // PID root chưa thể được tái sử dụng cho đến khi `Child::wait` reap.
+        // SAFETY: this PID belongs to our unreaped direct child.
+        // AN TOÀN: PID này thuộc child trực tiếp do runner spawn và chưa reap.
+        #[allow(unsafe_code)]
+        unsafe {
+            if let Ok(root_pid) = libc::pid_t::try_from(root_pid) {
+                libc::kill(root_pid, signal);
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+fn signal_process_group_ids(groups: &std::collections::HashSet<u32>, signal: libc::c_int) {
+    let groups = groups
+        .iter()
+        .copied()
+        .filter(|group| process_group_is_live(*group))
+        .filter_map(|group| libc::pid_t::try_from(group).ok())
+        .collect::<Vec<_>>();
+    // Every target is a process group previously observed under this runner.
+    // Mọi đích đều là process group riêng đã quan sát dưới runner này.
+    // SAFETY: negative PIDs target only process groups observed under this runner.
+    // AN TOÀN: PID âm chỉ nhắm các process group đã được quan sát thuộc runner này.
+    #[allow(unsafe_code)]
+    unsafe {
+        for group in groups {
+            libc::kill(-group, signal);
+        }
+    }
+}
+
+#[cfg(unix)]
+fn process_group_is_live(group: u32) -> bool {
+    let Ok(group) = libc::pid_t::try_from(group) else {
+        return false;
+    };
+    // Recheck that the numeric PGID still names a live group before signaling it.
+    // Kiểm tra PGID bằng số vẫn còn là group sống ngay trước khi gửi signal.
+    // SAFETY: signal zero only probes existence and permission; it changes no process state.
+    // AN TOÀN: signal 0 chỉ dò tồn tại và quyền truy cập, không đổi trạng thái process.
+    #[allow(unsafe_code)]
+    let result = unsafe { libc::kill(-group, 0) };
+    result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+#[cfg(any(windows, test))]
+/// Keep untrusted batch arguments outside cmd.exe's expansion and operator syntax.
+/// Chặn args không tin cậy khỏi cú pháp expansion/toán tử của cmd.exe.
+fn validate_windows_batch_invocation(script_path: &str, args: &[String]) -> Result<()> {
+    let contains_cmd_metacharacter = |value: &str| {
+        value.chars().any(|character| {
+            matches!(
+                character,
+                '"' | '%' | '!' | '&' | '|' | '<' | '>' | '^' | '(' | ')' | '\n' | '\r'
+            )
+        })
+    };
+    if contains_cmd_metacharacter(script_path)
+        || args.iter().any(|arg| contains_cmd_metacharacter(arg))
+    {
+        bail!("batch-script command contains unsupported shell metacharacters");
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn windows_system_tool_path(name: &str) -> Result<PathBuf> {
+    let system_root = std::env::var_os("SystemRoot")
+        .ok_or_else(|| anyhow::anyhow!("SystemRoot is unavailable"))?;
+    let path = PathBuf::from(system_root).join("System32").join(name);
+    if !path.is_absolute() || !path.is_file() {
+        bail!("Windows system tool is unavailable");
+    }
+    Ok(path)
+}
+
+#[cfg(windows)]
+fn windows_batch_command(script_path: &str, args: &[String], cwd: &Path) -> Result<Command> {
+    // Normalize only the interpreter argument; keep canonical paths for validation.
+    // Chỉ chuẩn hóa path đưa vào shell; giữ canonical path cho bước kiểm tra.
+    // `cmd.exe` does not accept the extended-length prefix produced by canonicalize().
+    // `cmd.exe` không nhận prefix extended-length mà canonicalize() có thể trả về.
+    let cmd_path = if let Some(unc) = script_path.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{unc}")
+    } else if let Some(local) = script_path.strip_prefix(r"\\?\") {
+        local.to_string()
+    } else {
+        script_path.to_string()
+    };
+    validate_windows_batch_invocation(&cmd_path, args)?;
+
+    // Use the fixed system interpreter path, never a caller-controlled PATH lookup.
+    // Dùng đường dẫn interpreter cố định của hệ thống, không dò PATH từ caller.
+    let mut command = Command::new(windows_system_tool_path("cmd.exe")?);
+    command
+        .arg("/D")
+        .arg("/S")
+        .arg("/C")
+        .arg(cmd_path)
+        .args(args)
+        .current_dir(cwd);
+    Ok(command)
 }
 
 #[derive(Debug, Clone)]
@@ -1358,20 +2223,213 @@ struct ForbiddenProcess {
 }
 
 #[cfg(unix)]
+#[derive(Debug)]
+struct MonitoredRootNotVisible(u32);
+
+#[cfg(unix)]
+impl std::fmt::Display for MonitoredRootNotVisible {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "process table did not contain monitored root PID {}",
+            self.0
+        )
+    }
+}
+
+#[cfg(unix)]
+impl std::error::Error for MonitoredRootNotVisible {}
+
+#[cfg(all(unix, test))]
 fn find_forbidden_descendant(
     root_pid: u32,
     exempt: &[&str],
     shadow_dir: &Path,
 ) -> Result<Option<ForbiddenProcess>> {
-    find_forbidden_descendant_with_program(
+    let mut observed_process_groups = std::collections::HashSet::from([root_pid]);
+    find_forbidden_descendant_tracking(
         root_pid,
         exempt,
         shadow_dir,
-        Path::new(PROCESS_TABLE_INSPECTOR),
+        "",
+        &mut observed_process_groups,
     )
 }
 
 #[cfg(unix)]
+fn find_forbidden_descendant_tracking(
+    root_pid: u32,
+    exempt: &[&str],
+    shadow_dir: &Path,
+    tracking_token: &str,
+    observed_process_groups: &mut std::collections::HashSet<u32>,
+) -> Result<Option<ForbiddenProcess>> {
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessStatus, ProcessesToUpdate, System, UpdateKind};
+
+    let mut system = System::new();
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::nothing().with_cmd(UpdateKind::Always),
+    );
+    let root = Pid::from_u32(root_pid);
+    let live_process_groups = system
+        .processes()
+        .keys()
+        .filter_map(|pid| process_group_id(pid.as_u32()))
+        .collect::<std::collections::HashSet<_>>();
+    observed_process_groups.retain(|process_group| live_process_groups.contains(process_group));
+    let root_is_visible = system
+        .process(root)
+        .is_some_and(|process| process.status() != ProcessStatus::Zombie);
+    if !root_is_visible {
+        system.refresh_processes_specifics(
+            ProcessesToUpdate::All,
+            true,
+            ProcessRefreshKind::nothing()
+                .with_cmd(UpdateKind::Always)
+                .with_environ(UpdateKind::Always),
+        );
+        // Reparented children may move into a new session; inspect every group observed
+        // while the root was still visible, plus this invocation's inherited marker.
+        // Rà group descendant đã ghi nhận và dấu nhận diện kế thừa từ lượt chạy này.
+        let mut first_forbidden = None;
+        let mut live_descendant_found = false;
+        let known_groups = observed_process_groups.clone();
+        for (pid, process) in system.processes() {
+            if pid.as_u32() == root_pid {
+                continue;
+            }
+            let Some(process_group) = process_group_id(pid.as_u32()) else {
+                continue;
+            };
+            let carries_tracking_token = process.environ().iter().any(|entry| {
+                entry == &OsString::from(format!("{PROCESS_TREE_TRACKING_ENV}={tracking_token}"))
+            });
+            if !known_groups.contains(&process_group) && !carries_tracking_token {
+                continue;
+            }
+            live_descendant_found = true;
+            observed_process_groups.insert(process_group);
+            if first_forbidden.is_none() {
+                first_forbidden = forbidden_process_entry(pid, process, exempt).filter(|found| {
+                    !is_shadow_npm_version_probe(
+                        process.name().to_string_lossy().as_bytes(),
+                        process
+                            .cmd()
+                            .iter()
+                            .map(|arg| arg.to_string_lossy())
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                            .as_bytes(),
+                        shadow_dir,
+                    ) || found.name != "npm"
+                });
+            }
+        }
+        if let Some(found) = first_forbidden {
+            return Ok(Some(found));
+        }
+        if live_descendant_found {
+            return Ok(None);
+        }
+        return Err(anyhow::Error::new(MonitoredRootNotVisible(root_pid)));
+    }
+
+    observed_process_groups.insert(root_pid);
+    // Traverse native process metadata in-process so inspection cannot spawn a shell or ps.
+    // Duyệt metadata process native ngay trong process để không cần spawn shell hay ps.
+    let mut frontier = vec![root];
+    let mut seen = std::collections::HashSet::new();
+    let mut first_forbidden = None;
+    while let Some(parent_pid) = frontier.pop() {
+        if !seen.insert(parent_pid) {
+            continue;
+        }
+        for (pid, process) in system
+            .processes()
+            .iter()
+            .filter(|(_, process)| process.parent() == Some(parent_pid))
+        {
+            if let Some(process_group) = process_group_id(pid.as_u32()) {
+                observed_process_groups.insert(process_group);
+            }
+            if first_forbidden.is_none() {
+                first_forbidden = forbidden_process_entry(pid, process, exempt).filter(|found| {
+                    let command_line = process
+                        .cmd()
+                        .iter()
+                        .map(|arg| arg.to_string_lossy())
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    found.name != "npm"
+                        || !is_shadow_npm_version_probe(
+                            process.name().to_string_lossy().as_bytes(),
+                            command_line.as_bytes(),
+                            shadow_dir,
+                        )
+                });
+            }
+            frontier.push(*pid);
+        }
+    }
+    Ok(first_forbidden)
+}
+
+#[cfg(unix)]
+fn process_group_id(pid: u32) -> Option<u32> {
+    let Ok(pid) = libc::pid_t::try_from(pid) else {
+        return None;
+    };
+    // SAFETY: `pid` comes from the OS process table; getpgid only reads its group membership.
+    // AN TOÀN: `pid` lấy từ process table của OS; getpgid chỉ đọc process group của PID đó.
+    #[allow(unsafe_code)]
+    let process_group = unsafe { libc::getpgid(pid) };
+    u32::try_from(process_group).ok()
+}
+
+#[cfg(all(unix, test))]
+fn process_group_matches(pid: &sysinfo::Pid, group_leader_pid: u32) -> bool {
+    process_group_id(pid.as_u32()) == Some(group_leader_pid)
+}
+
+#[cfg(unix)]
+fn process_groups_have_descendants(
+    observed_process_groups: &std::collections::HashSet<u32>,
+    root_pid: u32,
+) -> bool {
+    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
+
+    let mut system = System::new();
+    system.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());
+    system.processes().iter().any(|(pid, _)| {
+        pid.as_u32() != root_pid
+            && process_group_id(pid.as_u32())
+                .is_some_and(|group| observed_process_groups.contains(&group))
+    })
+}
+
+#[cfg(unix)]
+fn forbidden_process_entry(
+    pid: &sysinfo::Pid,
+    process: &sysinfo::Process,
+    exempt: &[&str],
+) -> Option<ForbiddenProcess> {
+    let image_name = process.name().to_string_lossy().into_owned();
+    let command_line = process
+        .cmd()
+        .iter()
+        .map(|arg| arg.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join(" ");
+    forbidden_process_name(&image_name, &command_line, exempt).map(|name| ForbiddenProcess {
+        pid: pid.as_u32(),
+        name,
+    })
+}
+
+#[cfg(unix)]
+#[cfg(test)]
 fn find_forbidden_descendant_with_program(
     root_pid: u32,
     exempt: &[&str],
@@ -1399,6 +2457,7 @@ fn find_forbidden_descendant_with_program(
 }
 
 #[cfg(unix)]
+#[cfg(test)]
 fn inspect_forbidden_process_table(
     root_pid: u32,
     output: std::process::Output,
@@ -1462,6 +2521,7 @@ fn inspect_forbidden_process_table(
 }
 
 #[cfg(unix)]
+#[cfg(test)]
 fn next_process_table_field(line: &[u8]) -> Option<(&[u8], &[u8])> {
     let start = line.iter().position(|byte| !byte.is_ascii_whitespace())?;
     let line = &line[start..];

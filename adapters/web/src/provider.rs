@@ -403,6 +403,7 @@ impl NpmDependencyProvider {
             .strip_prefix("@esbuild/")
             .or_else(|| name.strip_prefix("@next/swc-"))
             .or_else(|| name.strip_prefix("@swc/core-"))
+            .or_else(|| name.strip_prefix("@typescript/typescript-"))
             .or_else(|| name.strip_prefix("@rollup/rollup-"))
             .or_else(|| name.strip_prefix("@tailwindcss/oxide-"))
             .or_else(|| name.strip_prefix("lightningcss-"))
@@ -592,18 +593,20 @@ impl DependencyProvider for NpmDependencyProvider {
     }
 
     async fn should_enqueue(&self, dep: &ResolvedDep) -> Result<bool, DependencyError> {
-        if !dep.optional {
-            return Ok(true);
-        }
-
         let cache_key = Self::optional_enqueue_key(dep);
         if let Some(cached) = self.optional_enqueue_cache.get(&cache_key) {
             return Ok(*cached);
         }
 
+        // Platform-targeted native packages may appear as required edges; keep only the host build.
+        // (Gói native theo nền tảng đôi khi được khai báo bắt buộc; chỉ giữ bản cho host.)
         if let Some(supported) = Self::known_optional_native_binary_supported(&dep.package) {
             self.optional_enqueue_cache.insert(cache_key, supported);
             return Ok(supported);
+        }
+
+        if !dep.optional {
+            return Ok(true);
         }
 
         let meta = self.metadata(&dep.package).await?;

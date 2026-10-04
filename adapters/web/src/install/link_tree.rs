@@ -159,22 +159,36 @@ pub fn hardlink_tree_with_profile(
 
     directories.sort_by_key(|path| path.components().count());
     for target in directories {
-        std::fs::create_dir_all(&target).map_err(|err| {
-            MgError::Other(format!(
-                "failed to create directory '{}' while cloning '{}': {}",
-                target.display(),
-                source_root.display(),
-                err
-            ))
-        })?;
+        // Parents are already present because entries are depth-sorted; avoid
+        // rechecking the full ancestor chain for every new directory.
+        // Cha đã tồn tại do đường dẫn được sắp theo độ sâu; tránh kiểm tra lại
+        // toàn bộ chuỗi thư mục cha cho mỗi thư mục mới.
+        if let Err(err) = std::fs::create_dir(&target) {
+            if err.kind() != std::io::ErrorKind::AlreadyExists {
+                return Err(MgError::Other(format!(
+                    "failed to create directory '{}' while cloning '{}': {}",
+                    target.display(),
+                    source_root.display(),
+                    err
+                )));
+            }
+            std::fs::create_dir_all(&target).map_err(|err| {
+                MgError::Other(format!(
+                    "failed to create directory '{}' while cloning '{}': {}",
+                    target.display(),
+                    source_root.display(),
+                    err
+                ))
+            })?;
+        }
     }
 
-    // Avoid entering a second Rayon pool while package materialization already runs
-    // in an outer pool; nested pool recursion can overflow a worker stack.
-    // Tránh vào pool Rayon thứ hai khi materialize package đang chạy trong pool ngoài;
-    // recursion giữa hai pool có thể làm tràn stack worker.
+    // Reuse the current Rayon pool for files when packages are already being
+    // materialized in parallel; only use the dedicated pool from non-Rayon callers.
+    // Dùng lại pool Rayon hiện tại để xử lý file khi package đã chạy song song;
+    // chỉ dùng pool riêng khi caller không nằm trong Rayon.
     if rayon::current_thread_index().is_some() {
-        files.into_iter().try_for_each(|(path, target)| {
+        files.into_par_iter().try_for_each(|(path, target)| {
             backing_link_file(&path, &target, profile, reflink_enabled)
         })?;
     } else {

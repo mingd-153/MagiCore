@@ -20,10 +20,17 @@ serde_json = { workspace = true }
 # Chỉ unix để build Windows không link thêm gì.)
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
+sysinfo = { version = "0.38.4", default-features = false, features = ["system"] }
 
 [target.'cfg(windows)'.dependencies]
 sysinfo = { version = "0.38.4", default-features = false, features = ["system"] }
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Threading"] }
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
 
 [dev-dependencies]
 tempfile = { workspace = true }

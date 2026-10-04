@@ -32,10 +32,10 @@ cd "$TEST_DIR"
 
 run_test() {
     local name="$1"
-    local command="$2"
+    shift
     TOTAL=$((TOTAL + 1))
     echo "Test $TOTAL: $name"
-    if eval "$command" >/dev/null 2>&1; then
+    if "$@" >/dev/null 2>&1; then
         echo "✓ PASS"
         PASSED=$((PASSED + 1))
         return 0
@@ -47,12 +47,12 @@ run_test() {
 
 run_test_expect_output() {
     local name="$1"
-    local command="$2"
-    local expected="$3"
+    local expected="$2"
+    shift 2
     TOTAL=$((TOTAL + 1))
     echo "Test $TOTAL: $name"
     local output
-    output=$($command 2>&1 || true)
+    output=$("$@" 2>&1 || true)
     if echo "$output" | grep -q "$expected"; then
         echo "✓ PASS (found: '$expected')"
         PASSED=$((PASSED + 1))
@@ -80,25 +80,25 @@ run_test_file_exists() {
 }
 
 # Test 1: Binary executes
-run_test "Binary version check" "$MGC_BIN --version"
+run_test "Binary version check" "$MGC_BIN" --version
 
 # Test 2: Typo detection
 run_test_expect_output \
     "Spec parser typo detection (nextjs@laster)" \
-    "$MGC_BIN create-web nextjs@laster test-typo" \
-    "Did you mean"
+    "Did you mean" \
+    "$MGC_BIN" create-web nextjs@laster test-typo
 
 # Test 3: All-core spec parsing (no double @tag bug) — now passes with embedded
 run_test_expect_output \
     "All-core spec parsing (no @stable@latest)" \
-    "$MGC_BIN create-app flutter@stable test-app" \
-    "Created app project"
+    "Created app project" \
+    "$MGC_BIN" create-app flutter@stable test-app
 
 # Test 4: Registry-first error message
 run_test_expect_output \
     "Registry-first error message" \
-    "$MGC_BIN create-web nextjs@latest test-nextjs" \
-    "Required scaffold layers missing"
+    "Required scaffold layers missing" \
+    "$MGC_BIN" create-web nextjs@latest test-nextjs
 
 # Test 5: Binary independence (no workspace templates/)
 TOTAL=$((TOTAL + 1))

@@ -745,6 +745,18 @@ class NativePackageManagerVerdict(unittest.TestCase):
         self.assertLess(dimensions_assignment, owner_status_check)
         self.assertIn('if not isinstance(dimensions, dict):', workflow)
 
+    def test_lifecycle_workflow_enforces_matrix_on_every_operating_system(self):
+        workflow = (
+            Path(__file__).resolve().parent.parent
+            / ".github"
+            / "workflows"
+            / "lifecycle-matrix.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("os: [ubuntu-latest, macos-latest, windows-latest]", workflow)
+        self.assertIn("shell: ${{ matrix.python_cmd }} {0}", workflow)
+        self.assertNotIn("if: matrix.os != 'windows-latest'", workflow)
+        self.assertNotIn("windows-evidence-promotion:", workflow)
+
     def test_native_verdict_requires_every_user_dependency_operation(self):
         expected = {
             "install", "add", "remove", "update", "list",

@@ -82,7 +82,13 @@ pub fn select_root_packages(graph: &ResolvedGraph) -> Vec<&ResolvedPackage> {
         return graph
             .packages
             .iter()
-            .filter(|pkg| pkg.direct || single_version_names.contains(pkg.id.name_str()))
+            .filter(|pkg| {
+                let name = pkg.id.name_str();
+                let is_selected_version = selected
+                    .get(name)
+                    .is_some_and(|selected| selected.id == pkg.id);
+                is_selected_version && (pkg.direct || single_version_names.contains(name))
+            })
             .collect();
     }
 

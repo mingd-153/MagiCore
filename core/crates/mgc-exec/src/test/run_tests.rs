@@ -78,6 +78,40 @@ fn native_windows_path_lookup_does_not_search_a_different_path_entry()
 }
 
 #[test]
+fn windows_batch_invocation_accepts_regular_paths_and_arguments() {
+    // Spaces stay usable for common Windows installs and CLI values.
+    // Vẫn cho phép khoảng trắng thường gặp trong đường dẫn và giá trị CLI.
+    let args = vec!["--output".to_string(), "release bundle.zip".to_string()];
+    assert!(
+        super::validate_windows_batch_invocation(r"C:\Program Files\MagiCore\tool.cmd", &args)
+            .is_ok()
+    );
+}
+
+#[test]
+fn windows_batch_invocation_rejects_cmd_expansion_and_operators() {
+    // Every cmd.exe expansion/operator character must be rejected in either input.
+    // Mọi ký tự expansion/toán tử của cmd.exe phải bị chặn ở cả hai đầu vào.
+    for character in ['"', '%', '!', '&', '|', '<', '>', '^', '(', ')', '\n', '\r'] {
+        let argument = format!("value{character}payload");
+        assert!(
+            super::validate_windows_batch_invocation(
+                r"C:\tools\tool.cmd",
+                std::slice::from_ref(&argument)
+            )
+            .is_err(),
+            "argument containing {character:?} must be rejected"
+        );
+
+        let path = format!(r"C:\tools\bad{character}name.cmd");
+        assert!(
+            super::validate_windows_batch_invocation(&path, &[]).is_err(),
+            "script path containing {character:?} must be rejected"
+        );
+    }
+}
+
+#[test]
 #[cfg(unix)]
 fn shadow_directory_creation_refuses_a_preexisting_symlink()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -183,6 +217,127 @@ fn incomplete_process_table_is_an_error_not_a_clean_process_tree() {
 }
 
 #[cfg(unix)]
+#[test]
+fn process_group_scan_detects_forbidden_child_after_root_exits()
+-> Result<(), Box<dyn std::error::Error>> {
+    use std::os::unix::{fs::PermissionsExt, process::CommandExt};
+
+    let root = tempfile::tempdir()?;
+    let bin = root.path().join("bin");
+    fs::create_dir(&bin)?;
+    let npm = bin.join("npm");
+    let ready = root.path().join("npm-started");
+    fs::write(
+        &npm,
+        "#!/bin/sh\n/bin/echo started > \"$MGC_TEST_READY\"\n/bin/sleep 5\n",
+    )?;
+    fs::set_permissions(&npm, fs::Permissions::from_mode(0o700))?;
+
+    let mut command = std::process::Command::new("/bin/sh");
+    command
+        .args([
+            "-c",
+            "npm & i=0; while [ ! -f \"$MGC_TEST_READY\" ] && [ \"$i\" -lt 100 ]; do /bin/sleep 0.01; i=$((i + 1)); done; [ -f \"$MGC_TEST_READY\" ]",
+        ])
+        .env("PATH", &bin)
+        .env("MGC_TEST_READY", ready);
+    let mut child = command.process_group(0).spawn()?;
+    let root_pid = child.id();
+    assert!(
+        child.wait()?.success(),
+        "shell root should exit successfully"
+    );
+
+    let mut system = sysinfo::System::new();
+    system.refresh_processes_specifics(
+        sysinfo::ProcessesToUpdate::All,
+        true,
+        sysinfo::ProcessRefreshKind::nothing().with_cmd(sysinfo::UpdateKind::Always),
+    );
+    let group_has_forbidden_process = system.processes().iter().any(|(pid, process)| {
+        super::process_group_matches(pid, root_pid)
+            && super::forbidden_process_entry(pid, process, &[]).is_some()
+    });
+    let scan = super::find_forbidden_descendant(root_pid, &[], root.path());
+    super::terminate_process_tree(root_pid, &std::collections::HashSet::from([root_pid]));
+    assert!(
+        group_has_forbidden_process,
+        "the test npm child must remain visible in the isolated PGID"
+    );
+    let found = scan?.expect("forbidden npm descendant must remain visible in its process group");
+    assert_eq!(found.name, "npm");
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn unix_session_prevents_descendants_from_joining_callers_process_group()
+-> Result<(), Box<dyn std::error::Error>> {
+    const TARGET_GROUP_ENV: &str = "MGC_EXEC_TEST_TARGET_GROUP";
+    const ATTEMPT_JOIN_ENV: &str = "MGC_EXEC_TEST_ATTEMPT_JOIN";
+
+    if let Ok(target_group) = std::env::var(TARGET_GROUP_ENV) {
+        if std::env::var_os(ATTEMPT_JOIN_ENV).is_some() {
+            // A descendant in the isolated session must not join the caller's process group.
+            // Descendant trong session cô lập không được nhập process group của caller.
+            // SAFETY: this reads the test-only group id passed by the parent test.
+            // AN TOÀN: đây là group id chỉ dành cho test do test cha truyền vào.
+            #[allow(unsafe_code)]
+            let result = unsafe {
+                libc::setpgid(
+                    0,
+                    target_group.parse().expect("valid caller process-group id"),
+                )
+            };
+            assert_eq!(result, -1);
+            assert_eq!(
+                std::io::Error::last_os_error().raw_os_error(),
+                Some(libc::EPERM)
+            );
+            return Ok(());
+        }
+
+        let output = std::process::Command::new(std::env::current_exe()?)
+            .args([
+                "--exact",
+                "run::tests::unix_session_prevents_descendants_from_joining_callers_process_group",
+                "--nocapture",
+            ])
+            .env(ATTEMPT_JOIN_ENV, "1")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "nested descendant failed to verify session isolation: stdout={}, stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return Ok(());
+    }
+
+    // SAFETY: getpgrp only reads the current test process's group id.
+    // AN TOÀN: getpgrp chỉ đọc group id của process test hiện tại.
+    #[allow(unsafe_code)]
+    let caller_group = unsafe { libc::getpgrp() };
+    let mut command = std::process::Command::new(std::env::current_exe()?);
+    command
+        .args([
+            "--exact",
+            "run::tests::unix_session_prevents_descendants_from_joining_callers_process_group",
+            "--nocapture",
+        ])
+        .env(TARGET_GROUP_ENV, caller_group.to_string());
+    super::configure_process_isolation(&mut command)?;
+    let output = command.output()?;
+    assert!(
+        output.status.success(),
+        "isolated test session failed to prevent process-group escape: stdout={}, stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
 fn process_table_with_child(command: &str, command_line: &str) -> std::process::Output {
     process_table_with_raw_child(command.as_bytes(), command_line.as_bytes())
 }
@@ -255,6 +410,42 @@ fn process_table_rejects_a_real_npm_command_with_a_fake_shim_suffix() {
         matches!(result, Ok(Some(_))),
         "a real npm invocation must remain forbidden: {result:?}"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn process_signal_plan_avoids_duplicate_signal_to_root_group() {
+    let observed = std::collections::HashSet::from([4242, 4300]);
+    let live = std::collections::HashSet::from([4242, 4300]);
+
+    let plan = super::process_signal_plan(4242, &observed, &live, Some(4242), false);
+
+    assert_eq!(plan.process_groups, live);
+    assert!(!plan.signal_root_directly);
+}
+
+#[cfg(unix)]
+#[test]
+fn process_signal_plan_skips_reaped_root_and_recycled_groups() {
+    let observed = std::collections::HashSet::from([4242, 4300, 4400]);
+    let live = std::collections::HashSet::from([4300]);
+
+    let plan = super::process_signal_plan(4242, &observed, &live, None, true);
+
+    assert_eq!(plan.process_groups, live);
+    assert!(!plan.signal_root_directly);
+}
+
+#[cfg(unix)]
+#[test]
+fn process_signal_plan_directly_targets_live_root_when_its_group_is_unverifiable() {
+    let observed = std::collections::HashSet::from([4242, 4300]);
+    let live = std::collections::HashSet::from([4300]);
+
+    let plan = super::process_signal_plan(4242, &observed, &live, Some(4500), false);
+
+    assert_eq!(plan.process_groups, live);
+    assert!(plan.signal_root_directly);
 }
 
 #[test]
@@ -498,7 +689,10 @@ fn windows_native_inspector_detects_forbidden_descendant() -> Result<(), Box<dyn
         &mut ancestry,
         || Ok(false),
     );
-    super::terminate_process_tree(child.id());
+    let taskkill = super::windows_system_tool_path("taskkill.exe")?;
+    let _ = std::process::Command::new(taskkill)
+        .args(["/F", "/T", "/PID", &child.id().to_string()])
+        .status();
     let _ = child.kill();
     let _ = child.wait();
     let super::WindowsProcessScan::Forbidden(found) = found? else {
@@ -897,4 +1091,57 @@ fn windows_metadata_retry_respects_command_deadline() {
         1,
         "do not start another scan after timeout"
     );
+}
+
+#[cfg(windows)]
+#[test]
+fn root_exit_completion_inspects_and_terminates_a_forbidden_job_child()
+-> Result<(), Box<dyn std::error::Error>> {
+    use super::{ExecOutcome, ProcessTreeGuard, finish_monitored_root_exit};
+    use std::os::windows::process::CommandExt;
+    use std::process::Command;
+    use std::time::Duration;
+    use windows_sys::Win32::System::Threading::CREATE_SUSPENDED;
+
+    let temp = tempfile::tempdir()?;
+    let comspec = std::env::var_os("COMSPEC").ok_or("Windows must expose COMSPEC")?;
+    let forbidden_exe = temp.path().join("npm.exe");
+    std::fs::copy(&comspec, &forbidden_exe)?;
+
+    let guard = ProcessTreeGuard::new()?;
+    let mut forbidden_command = Command::new(&forbidden_exe);
+    forbidden_command
+        .args(["/D", "/S", "/C", "ping -n 30 127.0.0.1 > NUL"])
+        .creation_flags(CREATE_SUSPENDED);
+    let forbidden_child = forbidden_command.spawn()?;
+    guard.activate(&forbidden_child)?;
+    std::thread::sleep(Duration::from_millis(150));
+
+    let mut root_command = Command::new(comspec);
+    root_command
+        .args(["/D", "/S", "/C", "exit /b 0"])
+        .creation_flags(CREATE_SUSPENDED);
+    let mut root = root_command.spawn()?;
+    guard.activate(&root)?;
+    assert!(
+        root.wait()?.success(),
+        "test root command must exit successfully"
+    );
+
+    let result = finish_monitored_root_exit(&mut root, guard, &[], |child, _| ExecOutcome {
+        status: child
+            .wait()
+            .expect("root process status must remain readable"),
+        stdout: Vec::new(),
+        stderr: Vec::new(),
+    });
+    let error = match result {
+        Ok(_) => return Err("root-exit completion accepted a forbidden child".into()),
+        Err(error) => error.to_string(),
+    };
+    assert!(
+        error.contains("forbidden package manager 'npm' spawned"),
+        "root-exit helper did not inspect the surviving job child: {error}"
+    );
+    Ok(())
 }

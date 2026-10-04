@@ -49,11 +49,15 @@ pub(crate) fn run_tool_with_env(
     args: &[String],
     env: Option<Vec<(String, String)>>,
 ) -> Result<()> {
+    if !matches!(cmd, "xcodebuild" | "swift" | "flutter" | "gradle") {
+        bail!("unsupported app development tool");
+    }
     let opts = mgc_exec::prelude::ExecOptions {
         cwd: Some(root.to_path_buf()),
         log_path: Some(root.join(".magicore").join("exec.log")),
         env: env.unwrap_or_default(),
         clean_env: false,
+        execution_scope: Some(mgc_exec::allowlist::ExecutionScope::DevServer),
         ..Default::default()
     };
     mgc_exec::prelude::run_inherited(cmd, args, &opts)

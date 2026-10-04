@@ -2,15 +2,17 @@
 //! (Lấy token OIDC CI — GitHub Actions + env/file chung.)
 
 use crate::error::OidcError;
+use mgc_http::{HttpClient, TlsConfig, timeout::TimeoutConfig};
 use std::time::Duration;
+use url::Url;
 
 /// Shared request limits — giới hạn chung cho request định danh.
 pub const REQUEST_TIMEOUT_SECS: u64 = 15;
 pub const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 
 /// HTTPS only, without URL credentials — chỉ HTTPS, không nhận credential trong URL.
-pub(crate) fn secure_url(raw: &str) -> Result<reqwest::Url, OidcError> {
-    let url = reqwest::Url::parse(raw)
+pub(crate) fn secure_url(raw: &str) -> Result<Url, OidcError> {
+    let url = Url::parse(raw)
         .map_err(|_| OidcError::FetchFailed("invalid identity endpoint URL".into()))?;
     if url.scheme() != "https"
         || !url.username().is_empty()
@@ -27,40 +29,33 @@ pub(crate) fn secure_url(raw: &str) -> Result<reqwest::Url, OidcError> {
 /// Bound time, redirects and response size; never expose endpoint URLs in errors.
 /// Giới hạn thời gian, redirect, kích thước; không đưa URL nhạy cảm vào lỗi.
 pub(crate) async fn fetch_json(
-    url: reqwest::Url,
+    url: Url,
     bearer: Option<&str>,
 ) -> Result<serde_json::Value, OidcError> {
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
-        .build()
+    let timeout = TimeoutConfig {
+        connect: Duration::from_secs(REQUEST_TIMEOUT_SECS),
+        request: Duration::from_secs(REQUEST_TIMEOUT_SECS),
+        ..TimeoutConfig::default()
+    };
+    let client = HttpClient::with_security_no_redirects(&timeout, &TlsConfig::default())
         .map_err(|_| OidcError::FetchFailed("cannot initialize identity client".into()))?;
-    let mut request = client.get(url);
-    if let Some(token) = bearer {
-        request = request.bearer_auth(token);
-    }
-    let mut response = request
-        .send()
-        .await
-        .map_err(|_| OidcError::FetchFailed("identity request failed".into()))?;
-    if !response.status().is_success() {
+    let client = if let Some(token) = bearer {
+        client.with_auth("authorization", format!("Bearer {token}"))
+    } else {
+        client
+    };
+    let response = tokio::time::timeout(
+        Duration::from_secs(REQUEST_TIMEOUT_SECS),
+        client.get_bytes_limited(url.as_str(), MAX_RESPONSE_BYTES),
+    )
+    .await
+    .map_err(|_| OidcError::FetchFailed("identity request timed out".into()))?
+    .map_err(|_| OidcError::FetchFailed("identity request failed".into()))?;
+    let (status, body) = response;
+    if !(200..300).contains(&status) {
         return Err(OidcError::FetchFailed(format!(
-            "identity endpoint returned {}",
-            response.status()
+            "identity endpoint returned {status}"
         )));
-    }
-    let mut body = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|_| OidcError::FetchFailed("identity response read failed".into()))?
-    {
-        if chunk.len() > MAX_RESPONSE_BYTES.saturating_sub(body.len()) {
-            return Err(OidcError::FetchFailed(
-                "identity response exceeds size limit".into(),
-            ));
-        }
-        body.extend_from_slice(&chunk);
     }
     serde_json::from_slice(&body)
         .map_err(|_| OidcError::FetchFailed("invalid identity JSON response".into()))

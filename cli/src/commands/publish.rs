@@ -19,6 +19,7 @@ use mgc_ui::info;
 
 /// Default registry (hardcode warning — OK: default const, overrideable via config/env)
 const DEFAULT_REGISTRY: &str = "https://registry.npmjs.org/";
+const NPM_PROTOCOL: &str = "npm";
 const DEFAULT_PUBLISH_LIFECYCLE_TIMEOUT_SECS: u64 = 300;
 const MAX_TRUSTED_EXCHANGE_RESPONSE_BYTES: usize = 4 * 1024;
 const OCI_UPLOAD_CHUNK_BYTES: usize = 1024 * 1024;
@@ -319,7 +320,7 @@ async fn publish_project(args: &PublishArgs, project_root: &Path) -> Result<()> 
         let session = trusted_publish_session(
             &registry_url,
             &publish_name,
-            "npm",
+            NPM_PROTOCOL,
             args.trusted_audience.as_deref(),
         )
         .await?;

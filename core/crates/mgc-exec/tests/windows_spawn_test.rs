@@ -129,6 +129,156 @@ fn test_project_bat_executes_through_mgc_exec() {
 
 #[cfg(windows)]
 #[test]
+fn test_project_bat_rejects_shell_operator_arguments_before_execution()
+-> Result<(), Box<dyn std::error::Error>> {
+    use mgc_exec::prelude::{ExecOptions, run_project_binary};
+    use std::io::Write;
+
+    let root = tempfile::tempdir()?;
+    let mut bat_file = tempfile::Builder::new()
+        .prefix("mgc-safe-")
+        .suffix(".bat")
+        .tempfile_in(root.path())?;
+    writeln!(bat_file, "@echo off")?;
+    bat_file.flush()?;
+    let (file, bat_path) = bat_file.keep()?;
+    drop(file);
+
+    let marker = root.path().join("batch-injected.txt");
+    let result = run_project_binary(
+        &bat_path,
+        &["& echo PWNED > batch-injected.txt".to_string()],
+        &ExecOptions {
+            cwd: Some(root.path().to_path_buf()),
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        result.is_err(),
+        "batch execution must reject shell operators before starting cmd.exe"
+    );
+    assert!(
+        !marker.exists(),
+        "rejected input must not create a command-injection marker"
+    );
+    Ok(())
+}
+
+#[cfg(windows)]
+#[test]
+fn test_job_object_terminates_forbidden_descendant_tree() -> Result<(), Box<dyn std::error::Error>>
+{
+    use mgc_exec::prelude::{ExecOptions, run_project_binary};
+    use std::time::{Duration, Instant};
+
+    let root = tempfile::tempdir()?;
+    let comspec = std::env::var_os("COMSPEC").ok_or("Windows must expose COMSPEC")?;
+    let forbidden_exe = root.path().join("npm.exe");
+    std::fs::copy(comspec, &forbidden_exe)?;
+    let batch = root.path().join("job-tree.bat");
+    std::fs::write(
+        &batch,
+        "@echo off\r\nstart \"\" /B \"%MGC_JOB_NPM_EXE%\" /D /S /C \"ping -n 30 127.0.0.1 > NUL\"\r\nping -n 30 127.0.0.1 > NUL\r\n",
+    )?;
+
+    let started = Instant::now();
+    let error = run_project_binary(
+        &batch,
+        &[],
+        &ExecOptions {
+            cwd: Some(root.path().to_path_buf()),
+            clean_env: true,
+            env: vec![(
+                "MGC_JOB_NPM_EXE".to_string(),
+                forbidden_exe.display().to_string(),
+            )],
+            timeout: Some(Duration::from_secs(10)),
+            ..Default::default()
+        },
+    )
+    .expect_err("the forbidden descendant must be detected and terminated")
+    .to_string();
+    assert!(
+        error.contains("forbidden package manager 'npm' spawned"),
+        "Job Object startup or forbidden-child detection failed: {error}"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "the process tree did not stop promptly"
+    );
+
+    let process_id = error
+        .split("child process ")
+        .nth(1)
+        .and_then(|tail| tail.split_whitespace().next())
+        .ok_or("forbidden-child error must contain its PID")?
+        .parse::<u32>()?;
+    let mut system = sysinfo::System::new();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut still_running = true;
+    while Instant::now() < deadline {
+        system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+        if system.process(sysinfo::Pid::from_u32(process_id)).is_none() {
+            still_running = false;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        !still_running,
+        "forbidden process {process_id} survived after the Job Object guard closed"
+    );
+    Ok(())
+}
+
+#[cfg(windows)]
+#[test]
+fn test_job_object_detects_forbidden_child_after_root_exits()
+-> Result<(), Box<dyn std::error::Error>> {
+    use mgc_exec::prelude::{ExecOptions, run_project_binary};
+    use std::time::{Duration, Instant};
+
+    let root = tempfile::tempdir()?;
+    let comspec = std::env::var_os("COMSPEC").ok_or("Windows must expose COMSPEC")?;
+    let forbidden_exe = root.path().join("npm.exe");
+    std::fs::copy(comspec, &forbidden_exe)?;
+    let batch = root.path().join("job-root-exit.bat");
+    std::fs::write(
+        &batch,
+        "@echo off\r\nstart \"\" /B \"%MGC_JOB_NPM_EXE%\" /D /S /C \"ping -n 30 127.0.0.1 > NUL\"\r\nexit /b 0\r\n",
+    )?;
+
+    let started = Instant::now();
+    let error = run_project_binary(
+        &batch,
+        &[],
+        &ExecOptions {
+            cwd: Some(root.path().to_path_buf()),
+            clean_env: true,
+            env: vec![(
+                "MGC_JOB_NPM_EXE".to_string(),
+                forbidden_exe.display().to_string(),
+            )],
+            timeout: Some(Duration::from_secs(10)),
+            ..Default::default()
+        },
+    )
+    .expect_err("a forbidden process must not outlive a successful root command")
+    .to_string();
+    assert!(
+        error.contains("forbidden package manager 'npm' spawned"),
+        "root-exit job inspection missed the forbidden child: {error}"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "the process tree did not stop promptly after the root exited"
+    );
+    Ok(())
+}
+
+#[cfg(windows)]
+#[test]
 fn test_clean_env_preserves_windows_runtime_variables() {
     use mgc_exec::prelude::{ExecOptions, run_project_binary};
     use std::path::PathBuf;

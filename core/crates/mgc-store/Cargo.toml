@@ -32,6 +32,7 @@ async-trait = { workspace = true }
 # Concurrency
 dashmap = { workspace = true }
 parking_lot = { workspace = true }
+rayon = { workspace = true }
 
 # Serialization
 serde = { workspace = true }

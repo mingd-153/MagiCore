@@ -319,6 +319,11 @@ ALLOWLIST = {
     ("adapters/cloud/src/scaffold/mod.rs", "scaffold_pulumi"): (
         {"manifest-file-write"}, "creation-only writer",
     ),
+    # --- atomic new-project staging (exclusive claim + final rename) ---
+    ("cli/src/scaffold/processor.rs", "ensure_web_test_runner"): (
+        {"manifest-file-write"},
+        "new project only: exclusively claimed staging dir, published by same-filesystem atomic rename",
+    ),
 }
 
 # No duplicate keys: a shadowed entry silently loses its sinks (caught

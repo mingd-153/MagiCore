@@ -3198,12 +3198,13 @@ version = "1.1.0-rc.9"
 dependencies = [
  "base64 0.22.1",
  "jsonwebtoken",
- "reqwest 0.12.28",
+ "mgc-http",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
+ "url",
 ]
 
 [[package]]
@@ -3392,6 +3393,7 @@ dependencies = [
  "mgc-types",
  "parking_lot",
  "pretty_assertions",
+ "rayon",
  "rmp-serde",
  "rusqlite",
  "serde",
@@ -3476,6 +3478,7 @@ dependencies = [
  "pretty_assertions",
  "rayon",
  "reqwest 0.12.28",
+ "rustix 1.1.4",
  "semver",
  "serde",
  "serde_json",

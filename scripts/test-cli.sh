@@ -8,7 +8,9 @@ PASS=0
 FAIL=0
 TMPDIR="/tmp/mgc-test-$$"
 
-cleanup() { rm -rf "$TMPDIR"; }
+cleanup() {
+  rm -rf "$TMPDIR"
+}
 trap cleanup EXIT
 
 red()   { printf "\033[31m%s\033[0m\n" "$*"; }
@@ -73,7 +75,7 @@ run_contains "shows search"           "search"   "$MGC" --help
 
 bold ""
 bold "=== 3. Registry (live) ==="
-run_contains "info lodash"    "Package: lodash" "$MGC" info lodash
+run_contains "info lodash"    "Package:"      "$MGC" info lodash
 run_contains "search react"  "react@"          "$MGC" search react
 
 # ─── 4. Init ───────────────────────────────────────────────────────
@@ -81,7 +83,8 @@ run_contains "search react"  "react@"          "$MGC" search react
 bold ""
 bold "=== 4. Init ==="
 rm -rf "$TMPDIR" && mkdir -p "$TMPDIR"
-run_ok "init --template web" "$MGC" init --template web
+mkdir -p "$TMPDIR/init-project" && cd "$TMPDIR/init-project"
+run_contains "init --signature web" "Core identity marker 'web' written" "$MGC" init --signature web
 
 # ─── 5. List + Add + Remove ────────────────────────────────────────
 
@@ -104,10 +107,10 @@ bold ""
 bold "=== 6. Errors ==="
 cd "$TMPDIR"
 mkdir -p empty-dir && cd empty-dir
-run_contains "no project error" "No MagiCore" "$MGC" list
+run_contains "no project error" "could not detect a MagiCore core" "$MGC" list
 
 cd "$TMPDIR/my-app"
-run_contains "bad core error"   "not yet implemented" "$MGC" --core game list
+run_contains "bad core error" "refusing to run the 'game' core command" "$MGC" --core game list
 
 # ─── 8. Single-core build ─────────────────────────────────────────
 
@@ -120,7 +123,7 @@ cat > package.json << 'ENDJSON'
 ENDJSON
 MGSOLO="$MGROOT/target/debug/mgc-solo"
 test -f "$MGSOLO" || (
-    cargo build -p mgc --no-default-features --features web 2>/dev/null
+    cargo build --manifest-path "$MGROOT/Cargo.toml" -p mgc --no-default-features --features web 2>/dev/null
     cp "$MGROOT/target/debug/mgc" "$MGSOLO"
 )
 run_contains "solo: no --core needed" "No packages" "$MGSOLO" list

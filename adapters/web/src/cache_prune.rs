@@ -36,9 +36,20 @@ pub fn shared_cache_prune_stamp_path(root: &Path) -> PathBuf {
     root.join(".gc-stamp")
 }
 
+pub fn project_cache_prune_stamp_path(root: &Path) -> PathBuf {
+    root.join(".project-gc-stamp")
+}
+
 pub fn shared_cache_prune_due(root: &Path) -> bool {
-    let stamp = shared_cache_prune_stamp_path(root);
-    let Ok(metadata) = std::fs::metadata(&stamp) else {
+    prune_stamp_due(&shared_cache_prune_stamp_path(root))
+}
+
+pub fn project_cache_prune_due(root: &Path) -> bool {
+    prune_stamp_due(&project_cache_prune_stamp_path(root))
+}
+
+fn prune_stamp_due(stamp: &Path) -> bool {
+    let Ok(metadata) = std::fs::metadata(stamp) else {
         return true;
     };
     let Ok(modified) = metadata.modified() else {
@@ -51,17 +62,28 @@ pub fn shared_cache_prune_due(root: &Path) -> bool {
 }
 
 pub fn write_shared_cache_prune_stamp(root: &Path) -> MgResult<()> {
-    let stamp = shared_cache_prune_stamp_path(root);
+    write_prune_stamp(&shared_cache_prune_stamp_path(root))
+}
+
+pub fn write_project_cache_prune_stamp(root: &Path) -> MgResult<()> {
+    write_prune_stamp(&project_cache_prune_stamp_path(root))
+}
+
+fn write_prune_stamp(stamp: &Path) -> MgResult<()> {
     let data = current_unix_secs().to_string();
-    atomic_write(&stamp, data.as_bytes())?;
+    atomic_write(stamp, data.as_bytes())?;
     Ok(())
 }
 
 pub fn prune_project_local_cache(layout: &Layout) {
+    if !project_cache_prune_due(layout.root()) {
+        return;
+    }
     let max_age = std::time::Duration::from_secs(shared_cache_max_age_secs());
     let _ = prune_old_files_under(&layout.cache_dir(), max_age);
     let _ = prune_unlinked_old_cas_files_under(&layout.cas_dir(), max_age);
     let _ = prune_old_files_under(&layout.root().join("resolutions"), max_age);
+    let _ = write_project_cache_prune_stamp(layout.root());
 }
 
 pub fn prune_unlinked_old_cas_files_under(
@@ -366,4 +388,20 @@ pub fn path_to_cache_ref_string(path: &Path) -> String {
 
 pub fn canonical_or_original(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{project_cache_prune_due, shared_cache_prune_due, write_project_cache_prune_stamp};
+
+    #[test]
+    fn prune_stamp_skips_redundant_cache_walks() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        assert!(project_cache_prune_due(temp.path()));
+
+        write_project_cache_prune_stamp(temp.path()).expect("write prune stamp");
+
+        assert!(!project_cache_prune_due(temp.path()));
+        assert!(shared_cache_prune_due(temp.path()));
+    }
 }

@@ -221,6 +221,7 @@ fn run_framework_build_if_supported(
             env,
             clean_env: true,
             compat_runtime,
+            execution_scope: Some(mgc_exec::allowlist::ExecutionScope::BuildRunner),
             ..Default::default()
         };
         mgc_exec::prelude::run_inherited(&program.to_string_lossy(), &args, &opts)
@@ -631,6 +632,7 @@ pub(crate) fn run_allowlisted_tool_with_env(
         log_path: Some(root.join(".magicore").join("exec.log")),
         env: env.unwrap_or_default(),
         clean_env: false, // Preserve env when custom env provided
+        execution_scope: Some(mgc_exec::allowlist::ExecutionScope::BuildRunner),
         ..Default::default()
     };
     let args = args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();

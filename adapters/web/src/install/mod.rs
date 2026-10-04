@@ -610,10 +610,39 @@ pub async fn run_install(
             installed_package_matches(&node_modules.join(pkg.id.name().as_str()), &pkg.id)
         });
 
+    // The optional install profiler reports why a candidate no-op misses,
+    // without adding filesystem work to normal installs.
+    // Profiler tùy chọn ghi lý do fast path no-op bị trượt,
+    // không thêm thao tác filesystem vào install thường.
+    if profile.enabled && !all_root_matched {
+        let missing: Vec<_> = root_packages
+            .par_iter()
+            .filter(|pkg| {
+                !installed_package_matches(&node_modules.join(pkg.id.name().as_str()), &pkg.id)
+            })
+            .map(|pkg| pkg.id.to_string())
+            .collect();
+        eprintln!("[magicore:web:noop-profile] root_matched=false missing={missing:?}");
+    }
+
     if all_root_matched && opts.force_install.is_empty() && !graph.packages.is_empty() {
         let all_vstore_matched = graph.packages.par_iter().all(|pkg| {
             installed_package_matches(&strict_vstore_package_dir(&node_modules, &pkg.id), &pkg.id)
         });
+        if profile.enabled && !all_vstore_matched {
+            let missing: Vec<_> = graph
+                .packages
+                .par_iter()
+                .filter(|pkg| {
+                    !installed_package_matches(
+                        &strict_vstore_package_dir(&node_modules, &pkg.id),
+                        &pkg.id,
+                    )
+                })
+                .map(|pkg| pkg.id.to_string())
+                .collect();
+            eprintln!("[magicore:web:noop-profile] vstore_matched=false missing={missing:?}");
+        }
         if all_vstore_matched {
             // Even a content no-op must reconcile the lock to the graph the
             // caller actually accepted. Otherwise an orphan/tampered lock row

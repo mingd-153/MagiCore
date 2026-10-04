@@ -9,12 +9,14 @@ use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use rayon::prelude::*;
+
 use super::integrity::{IntegrityHash, TarballEntry, validate_blake3_hex};
 use super::lifecycle::{ensure_cas_dirs, set_cas_root_permissions, validate_cas_root};
 use super::security::check_symlink_ancestors;
 use super::write::{
-    STREAM_THRESHOLD, stream_write_verify_and_set_perms, sync_parent_dir, unique_tmp_path,
-    write_all_verify_and_set_perms,
+    STREAM_THRESHOLD, stream_write_verify_and_set_perms, stream_write_verify_and_set_perms_mode,
+    sync_parent_dir, unique_tmp_path, write_all_verify_and_set_perms_mode,
 };
 use crate::cas::integrity;
 
@@ -413,11 +415,11 @@ impl ContentStore {
                 }
                 Err(e) if dest.exists() => {
                     // Lost the race: the winner is content-addressed and was
-                    // fully written+fsynced before its rename — verify it and
-                    // drop our temp (same semantics as write_bytes_with_hash).
-                    // (Thua race: winner là content-addressed đã ghi xong +
-                    // fsync trước khi rename — verify winner rồi bỏ temp
-                    // (cùng semantics với write_bytes_with_hash).)
+                    // hash-checked before its atomic rename under the selected
+                    // durability mode; verify it again before reuse.
+                    // (Thua race: winner content-addressed đã được kiểm hash
+                    // trước rename nguyên tử theo durability mode đã chọn;
+                    // verify lại trước khi dùng.)
                     let _ = e;
                     fs::remove_file(&tmp)?;
                     self.verify_stored_blob(&hash)?;
@@ -455,7 +457,90 @@ impl ContentStore {
         executable: bool,
     ) -> Result<IntegrityHash, StoreError> {
         let hash = IntegrityHash::from_bytes(data, executable);
-        self.write_bytes_with_hash(data, &hash, executable)
+        self.write_generated_bytes_with_hash_mode(data, &hash, executable, true, true)
+    }
+
+    /// Import independent blobs concurrently, then sync each CAS shard once.
+    /// File contents are still fsynced and verified before their atomic publish.
+    /// (Nạp blob độc lập song song, rồi sync mỗi shard CAS một lần; dữ liệu
+    /// từng file vẫn được fsync và xác minh trước khi publish nguyên tử.)
+    pub fn import_bytes_with_exec_batch<'a, I>(
+        &self,
+        items: I,
+    ) -> Result<Vec<IntegrityHash>, StoreError>
+    where
+        I: IntoIterator<Item = (&'a [u8], bool)>,
+    {
+        self.import_bytes_with_exec_batch_mode(items, true, true)
+    }
+
+    /// Import package-file blobs whose source archive and extracted package
+    /// can be recreated and integrity-checked after a crash. Hashing, temp-file
+    /// isolation, atomic rename, and later read-time verification remain active;
+    /// callers must retain the verified archive needed to rebuild missing blobs.
+    /// (Nạp blob file package có thể dựng lại và xác minh integrity từ archive
+    /// sau crash. Vẫn hash, cách ly temp, rename nguyên tử và verify lúc đọc;
+    /// caller phải giữ archive đã xác minh để dựng lại blob thiếu.)
+    pub fn import_rebuildable_bytes_with_exec_batch<'a, I>(
+        &self,
+        items: I,
+    ) -> Result<Vec<IntegrityHash>, StoreError>
+    where
+        I: IntoIterator<Item = (&'a [u8], bool)>,
+    {
+        self.import_bytes_with_exec_batch_mode(items, false, false)
+    }
+
+    fn import_bytes_with_exec_batch_mode<'a, I>(
+        &self,
+        items: I,
+        sync_file_data: bool,
+        sync_cas_directories: bool,
+    ) -> Result<Vec<IntegrityHash>, StoreError>
+    where
+        I: IntoIterator<Item = (&'a [u8], bool)>,
+    {
+        let prepared: Vec<_> = items
+            .into_iter()
+            .map(|(data, executable)| {
+                (
+                    IntegrityHash::from_bytes(data, executable),
+                    data,
+                    executable,
+                )
+            })
+            .collect();
+        let sync_dirs: std::collections::BTreeSet<PathBuf> = if sync_cas_directories {
+            prepared
+                .iter()
+                .filter_map(|(hash, _, _)| {
+                    hash.cas_path(&self.root).parent().map(Path::to_path_buf)
+                })
+                .collect()
+        } else {
+            std::collections::BTreeSet::new()
+        };
+
+        let imported: Result<Vec<_>, _> = prepared
+            .par_iter()
+            .map(|(hash, data, executable)| {
+                self.write_generated_bytes_with_hash_mode(
+                    data,
+                    hash,
+                    *executable,
+                    false,
+                    sync_file_data,
+                )
+            })
+            .collect();
+
+        let sync_result = if sync_cas_directories {
+            sync_parent_directories(sync_dirs)
+        } else {
+            Ok(())
+        };
+        sync_result?;
+        imported
     }
 
     pub fn import_bytes_with_hash(
@@ -473,6 +558,16 @@ impl ContentStore {
         data: &[u8],
         hash: &IntegrityHash,
         executable: bool,
+    ) -> Result<IntegrityHash, StoreError> {
+        self.write_bytes_with_hash_mode(data, hash, executable, true)
+    }
+
+    fn write_bytes_with_hash_mode(
+        &self,
+        data: &[u8],
+        hash: &IntegrityHash,
+        executable: bool,
+        sync_parent_directory: bool,
     ) -> Result<IntegrityHash, StoreError> {
         // ADVERSARIAL GATE (vòng-2 review finding R3): the declared hash must
         // match the actual bytes BEFORE any cache-hit shortcut. Without this
@@ -494,6 +589,27 @@ impl ContentStore {
             });
         }
 
+        self.write_generated_bytes_with_hash_mode(
+            data,
+            hash,
+            executable,
+            sync_parent_directory,
+            sync_parent_directory,
+        )
+    }
+
+    // The caller generated `hash` from these exact bytes; the writer still
+    // verifies bytes as it persists them before any atomic publish.
+    // (Caller đã tạo `hash` từ đúng bytes này; bộ ghi vẫn xác minh bytes
+    // trong lúc lưu trước khi publish nguyên tử.)
+    fn write_generated_bytes_with_hash_mode(
+        &self,
+        data: &[u8],
+        hash: &IntegrityHash,
+        executable: bool,
+        sync_parent_directory: bool,
+        sync_file_data: bool,
+    ) -> Result<IntegrityHash, StoreError> {
         let dest = hash.cas_path(&self.root);
         if dest.exists() {
             // Existing content wins (dedup) but ONLY after re-hashing it.
@@ -523,9 +639,9 @@ impl ContentStore {
         let written = if data.len() >= STREAM_THRESHOLD {
             let cursor = std::io::Cursor::new(data);
             let reader = BufReader::new(cursor);
-            stream_write_verify_and_set_perms(writer, &tmp, reader, executable)
+            stream_write_verify_and_set_perms_mode(writer, &tmp, reader, executable, sync_file_data)
         } else {
-            write_all_verify_and_set_perms(writer, &tmp, data, executable)
+            write_all_verify_and_set_perms_mode(writer, &tmp, data, executable, sync_file_data)
         }?;
         if written.as_hex() != hash.as_hex() {
             let _ = fs::remove_file(&tmp);
@@ -540,11 +656,11 @@ impl ContentStore {
             && let Err(e) = fs::rename(&tmp, &dest)
         {
             // Lost the race: another writer moved it first — the winner is
-            // content-addressed and was fully written+fsynced before its
-            // rename, so verify the winner instead of failing blindly.
-            // Thua race: writer khác move trước — winner là content-addressed
-            // đã ghi xong + fsync trước khi rename, nên verify winner thay vì
-            // fail mù.
+            // content-addressed and hash-checked before its atomic rename
+            // under the selected durability mode; verify before reuse.
+            // Thua race: writer khác move trước — winner content-addressed
+            // được kiểm hash trước rename nguyên tử theo durability mode;
+            // verify lại trước khi dùng.
             if !dest.exists() {
                 let _ = fs::remove_file(&tmp);
                 return Err(StoreError::Io {
@@ -556,13 +672,13 @@ impl ContentStore {
         }
         let _ = fs::remove_file(&tmp);
 
-        // Crash-durable publish: fsync the CAS parent dir after the rename
-        // (audit vòng-3 P1-7 — without it the rename survives process crash
-        // but not power loss).
-        // (Publish bền vững khi crash: fsync thư mục cha CAS sau rename
-        // (P1-7 audit vòng-3 — thiếu nó rename sống qua process crash
-        // nhưng không qua mất điện).)
-        if let Some(parent) = dest.parent() {
+        // Durable imports fsync the CAS parent dir after rename. Rebuildable
+        // package-cache imports omit this sync and must be verified/rebuilt
+        // before reuse after a crash.
+        // (Import cần durability fsync thư mục CAS sau rename. Import cache
+        // package có thể dựng lại bỏ sync này và phải verify/dựng lại trước
+        // khi dùng sau crash.)
+        if sync_parent_directory && let Some(parent) = dest.parent() {
             sync_parent_dir(parent)?;
         }
 
@@ -762,6 +878,74 @@ impl ContentStore {
     /// (nhanh mà vẫn độc lập), fallback copy thường; kết quả được rehash
     /// sau khi staging — copy hỏng bị xóa và báo lỗi.
     pub fn export_to(&self, hash: &IntegrityHash, dest: &Path) -> Result<(), StoreError> {
+        self.export_to_mode(hash, dest, true, true)
+    }
+
+    /// Export independent files concurrently and sync each changed directory once.
+    /// Existing single-file integrity, symlink, mode, and atomic-rename checks remain active.
+    /// (Xuất các bản sao độc lập song song và sync mỗi thư mục thay đổi một lần;
+    /// toàn bộ kiểm tra integrity, symlink, mode và atomic rename vẫn được giữ.)
+    pub fn export_batch_to<I>(&self, items: I) -> Result<(), StoreError>
+    where
+        I: IntoIterator<Item = (IntegrityHash, PathBuf)>,
+    {
+        self.export_batch_to_mode(items, true)
+    }
+
+    /// Export verified files into a rebuildable package-cache root.
+    /// Per-file validation and atomic publication remain active, but destination
+    /// directories are not synced. Callers must validate and rebuild the root
+    /// from its verified archive before reuse after a crash.
+    /// (Xuất file đã xác minh vào root cache package có thể dựng lại. Vẫn giữ
+    /// kiểm tra từng file và publish nguyên tử nhưng không sync thư mục đích.
+    /// Caller phải xác minh và dựng lại root từ archive đã xác minh trước khi
+    /// dùng lại sau crash.)
+    pub fn export_batch_to_rebuildable_root<I>(&self, items: I) -> Result<(), StoreError>
+    where
+        I: IntoIterator<Item = (IntegrityHash, PathBuf)>,
+    {
+        self.export_batch_to_mode(items, false)
+    }
+
+    fn export_batch_to_mode<I>(
+        &self,
+        items: I,
+        sync_destination_directories: bool,
+    ) -> Result<(), StoreError>
+    where
+        I: IntoIterator<Item = (IntegrityHash, PathBuf)>,
+    {
+        let items: Vec<_> = items.into_iter().collect();
+        let sync_dirs: std::collections::BTreeSet<PathBuf> = if sync_destination_directories {
+            items
+                .iter()
+                .filter(|(_, dest)| !dest.exists())
+                .filter_map(|(_, dest)| dest.parent().map(Path::to_path_buf))
+                .collect()
+        } else {
+            std::collections::BTreeSet::new()
+        };
+
+        let exported: Result<(), _> = items
+            .into_par_iter()
+            .try_for_each(|(hash, dest)| self.export_to_mode(&hash, &dest, false, false));
+
+        let sync_result = if sync_destination_directories {
+            sync_parent_directories(sync_dirs)
+        } else {
+            Ok(())
+        };
+        sync_result?;
+        exported
+    }
+
+    fn export_to_mode(
+        &self,
+        hash: &IntegrityHash,
+        dest: &Path,
+        sync_parent_directory: bool,
+        verify_source_first: bool,
+    ) -> Result<(), StoreError> {
         let parent = dest.parent().ok_or_else(|| StoreError::Io {
             path: dest.to_path_buf(),
             msg: "export destination has no parent directory".to_string(),
@@ -774,6 +958,13 @@ impl ContentStore {
         let src = hash.cas_path(&self.root);
         if !src.exists() {
             return Err(StoreError::NotFound(hash.as_hex().to_string()));
+        }
+        let source_metadata = fs::symlink_metadata(&src)?;
+        if source_metadata.file_type().is_symlink() || !source_metadata.is_file() {
+            return Err(StoreError::Io {
+                path: src,
+                msg: "CAS blob path is not a regular file".to_string(),
+            });
         }
 
         if dest.exists() {
@@ -798,13 +989,9 @@ impl ContentStore {
             });
         }
 
-        // Fail-closed gate BEFORE staging: the source blob must verify
-        // (first touch rehashes; memo holds while the file identity stands).
-        // This is the mutation check that protects every downstream reader.
-        // Cổng fail-closed TRƯỚC staging: blob nguồn phải verify (lần chạm
-        // đầu rehash; memo hiệu lực khi file identity còn đúng). Đây là
-        // check sửa đổi bảo vệ mọi reader phía sau.
-        self.verify_stored_blob(hash)?;
+        if verify_source_first {
+            self.verify_stored_blob(hash)?;
+        }
 
         // P0-2: stage INSIDE the destination filesystem — never the CAS tmp
         // dir — so the final rename cannot hit EXDEV on cross-volume setups.
@@ -817,25 +1004,18 @@ impl ContentStore {
         // COW trước, copy thường dự phòng — cả hai đều ra file độc lập.
         stage_export_bytes(&src, &tmp)?;
 
-        // Vòng-3 audit P0-3: FULL HASH of the staged bytes before publish.
-        // A length check proves nothing about content — two different files
-        // can share a length, and fs::copy/clonefile are not content-
-        // integrity transactions (the source could be swapped mid-copy).
-        // The staged artifact is hashed end-to-end and must equal the
-        // declared digest, or the export fails closed and nothing is
-        // published. Correctness outranks the saved re-read.
+        // P0-3: the staged copy is the fail-closed integrity gate before publish.
+        // Hashing it validates the exact bytes consumers will receive and avoids
+        // a redundant source read; a mismatch re-verifies/quarantines the source.
         //
-        // (P0-3 audit vòng-3: HASH ĐẦY ĐỦ bytes staged trước khi publish. Check
-        // độ dài không chứng minh gì về nội dung — 2 file khác nhau có thể
-        // cùng độ dài, và fs::copy/clonefile không phải transaction
-        // content-integrity (nguồn có thể bị đổi giữa lúc copy). Artifact
-        // staged được hash end-to-end và phải bằng digest khai, không thì
-        // export fail cứng và không publish gì cả. Correctness đứng trên
-        // phần đọc lặp tiết kiệm được.)
+        // (P0-3: bản staged là cổng integrity fail-closed trước publish.
+        // Hash bản này xác minh đúng bytes người dùng sẽ nhận và bỏ một lượt
+        // đọc nguồn dư; nếu lệch, verify/quarantine lại blob nguồn.)
         let staged_hash = hash_file(&tmp)?;
         if staged_hash != hash.as_hex() {
             drop(export_guard);
             let _ = fs::remove_file(&tmp);
+            self.verify_stored_blob(hash)?;
             return Err(StoreError::HashMismatch {
                 expected: hash.as_hex().to_string(),
                 actual: staged_hash,
@@ -854,7 +1034,9 @@ impl ContentStore {
         }
         drop(export_guard);
         set_exported_permissions(dest, hash.is_executable())?;
-        sync_parent_dir(parent)?;
+        if sync_parent_directory {
+            sync_parent_dir(parent)?;
+        }
 
         Ok(())
     }
@@ -1247,6 +1429,20 @@ fn hash_file(path: &Path) -> Result<String, StoreError> {
         hasher.update(&buf[..n]);
     }
     Ok(hasher.finalize().to_hex().to_string())
+}
+
+fn sync_parent_directories(
+    directories: std::collections::BTreeSet<PathBuf>,
+) -> Result<(), StoreError> {
+    let mut first_error = None;
+    for directory in directories {
+        if let Err(error) = sync_parent_dir(&directory)
+            && first_error.is_none()
+        {
+            first_error = Some(error);
+        }
+    }
+    first_error.map_or(Ok(()), Err)
 }
 
 /// Set permissions on an exported (project-side) file. Exported files are

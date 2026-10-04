@@ -6,7 +6,9 @@
 #![allow(clippy::too_many_arguments)]
 use flate2::Compression;
 use flate2::write::GzEncoder;
-use mgc_fetcher::extract::extract_tarball_to_cas_and_link;
+use mgc_fetcher::extract::{
+    extract_tarball_to_cas_and_link, extract_tarball_to_rebuildable_cas_and_link,
+};
 use mgc_store::{ContentStore, Database};
 use tar::{Builder, Header};
 
@@ -131,6 +133,37 @@ fn cas_claim_registers_imported_blobs() {
             });
         assert!(present, "claimed blob {} must exist in CAS", hash);
     }
+}
+
+#[test]
+fn rebuildable_extraction_imports_and_claims_package_files() {
+    let temp = CanonicalTemp::new();
+    let root = temp.path().join("store");
+    let store = ContentStore::new(root.join("cas")).unwrap();
+    let db = Database::open(&root.join("store.db")).unwrap();
+    let project_key = root.to_string_lossy().into_owned();
+    let token = db.begin_cas_generation(&project_key).unwrap();
+    let tarball = temp.path().join("verified-pkg.tgz");
+    write_test_tarball(
+        &tarball,
+        &[("package/index.js", b"export const ready = true;")],
+    );
+
+    let dest = temp.path().join("rebuildable-out");
+    let file = std::fs::File::open(&tarball).unwrap();
+    extract_tarball_to_rebuildable_cas_and_link(
+        file,
+        &dest,
+        &store,
+        Some((&db, &project_key, token)),
+    )
+    .unwrap();
+
+    assert_eq!(
+        std::fs::read(dest.join("package/index.js")).unwrap(),
+        b"export const ready = true;"
+    );
+    assert_eq!(db.list_cas_live_refs().unwrap().len(), 1);
 }
 
 #[test]

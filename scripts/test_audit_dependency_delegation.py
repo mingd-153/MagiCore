@@ -40,6 +40,18 @@ def scan_snippet(rel_path, snippet):
 class NewToolDetection(unittest.TestCase):
     """New package-manager and scanner spawns remain visible to the gate."""
 
+    def test_cfg_test_only_helper_is_a_test_fixture_without_test_attribute(self):
+        findings = scan_snippet(
+            "cli/src/commands/audit/signatures.rs",
+            "#[cfg(test)]\n"
+            "fn verify_bundle() {\n"
+            '    "npm",\n'
+            "}\n",
+        )
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["op_class"], "test-fixture")
+        self.assertEqual(findings[0]["status"], "allowed")
+
     def test_web_layout_does_not_spawn_a_shell_for_windows_junctions(self):
         repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         rel_path = "adapters/web/src/layout.rs"
@@ -638,6 +650,39 @@ class PythonProcessInventory(unittest.TestCase):
         self.assertEqual(findings[0]["executable"], "<dynamic>")
         self.assertEqual(findings[0]["api"], "subprocess.Popen")
 
+    def test_python_process_review_matches_exact_call_ast(self):
+        approved = gate.scan_python_text(
+            "scripts/audit_capability_matrix.py",
+            "import subprocess\n"
+            "subprocess.run(\n"
+            '    ["git", "status", "--porcelain", "--untracked-files=all"],\n'
+            "    cwd=str(root), capture_output=True, text=True, check=False,\n"
+            ")\n",
+        )
+        reviewed = gate.review_python_process_calls(approved, expected_files=set())
+        self.assertEqual(len(reviewed), 1)
+        self.assertEqual(reviewed[0]["review_status"], "reviewed")
+        self.assertIn("fixed git arguments", reviewed[0]["review_reason"])
+
+        changed = gate.scan_python_text(
+            "scripts/audit_capability_matrix.py",
+            "import subprocess\n"
+            "subprocess.run(\n"
+            '    ["git", "status", "--porcelain", "--ignored", "--untracked-files=all"],\n'
+            "    cwd=str(root), capture_output=True, text=True, check=False,\n"
+            ")\n",
+        )
+        unreviewed = gate.review_python_process_calls(changed, expected_files=set())
+        self.assertEqual(unreviewed[0]["review_status"], "unreviewed")
+        self.assertIsNone(unreviewed[0]["review_reason"])
+
+    def test_removed_python_process_call_leaves_a_stale_review_blocker(self):
+        stale = gate.review_python_process_calls(
+            [], expected_files={"scripts/audit_capability_matrix.py"}
+        )
+        self.assertEqual(len(stale), 3)
+        self.assertTrue(all(item["review_status"] == "stale-review" for item in stale))
+
     def test_invalid_python_is_reported_as_unparsed_not_clean(self):
         findings = gate.scan_python_text("scripts/broken.py", "def broken(:\n")
         self.assertEqual(len(findings), 1)
@@ -668,6 +713,7 @@ class ShellProcessInventory(unittest.TestCase):
         self.assertEqual(findings[0]["line"], 1)
         self.assertEqual(findings[0]["executable"], "pip")
         self.assertEqual(findings[0]["review_status"], "unreviewed")
+        self.assertEqual(findings[0]["dependency_action"], "install")
 
     def test_finds_pm_command_after_env_unset_option(self):
         findings = gate.scan_shell_text(
@@ -675,6 +721,23 @@ class ShellProcessInventory(unittest.TestCase):
             "env -u HOME PATH=/tmp /usr/bin/npm install\n",
         )
         self.assertEqual([item["executable"] for item in findings], ["npm"])
+        self.assertEqual(findings[0]["review_status"], "unreviewed")
+
+    def test_command_v_with_dynamic_argument_is_only_a_builtin_probe(self):
+        findings = gate.scan_shell_text(
+            "scripts/example.sh",
+            'command -v "$PM_NAME" >/dev/null 2>&1\n',
+        )
+        self.assertEqual(findings, [])
+
+    def test_standalone_redirection_path_is_not_an_executable(self):
+        findings = gate.scan_shell_text(
+            "scripts/example.sh",
+            "if ! command -v pnpm &>/dev/null; then\n"
+            "  :\n"
+            "fi\n",
+        )
+        self.assertEqual(findings, [])
 
     def test_finds_pm_command_after_timeout_and_nice_wrappers(self):
         findings = gate.scan_shell_text(
@@ -682,13 +745,15 @@ class ShellProcessInventory(unittest.TestCase):
             "timeout 20 nice -n 5 cargo fetch\n",
         )
         self.assertEqual([item["executable"] for item in findings], ["cargo"])
+        self.assertEqual(findings[0]["review_status"], "unreviewed")
 
     def test_command_substitution_is_not_hidden_in_an_assignment(self):
         findings = gate.scan_shell_text(
             "scripts/example.sh",
             'VERSION="$(npm install demo)"\n',
         )
-        self.assertEqual([item["executable"] for item in findings], ["<dynamic-shell-command>"])
+        self.assertEqual([item["executable"] for item in findings], ["npm"])
+        self.assertEqual(findings[0]["review_status"], "unreviewed")
 
     def test_shell_variables_in_arguments_do_not_mark_command_dynamic(self):
         findings = gate.scan_shell_text(
@@ -698,7 +763,247 @@ class ShellProcessInventory(unittest.TestCase):
         )
         self.assertEqual(findings, [])
 
-    def test_known_pm_in_argument_substitution_is_still_a_blocker(self):
+    def test_case_selector_is_not_misread_as_a_command(self):
+        findings = gate.scan_shell_text(
+            "scripts/example.sh",
+            'case "$PM_NAME" in\n'
+            "  npm) npm install ;;\n"
+            "  mgc) mgc install ;;\n"
+            "  *) exit 1 ;;\n"
+            "esac\n",
+        )
+        self.assertEqual([item["executable"] for item in findings], ["npm"])
+
+    def test_shell_condition_or_and_array_arguments_are_not_process_calls(self):
+        findings = gate.scan_shell_text(
+            "scripts/example.sh",
+            'if [[ "${CI:-}" == "true" || "${GITHUB_ACTIONS:-}" == "true" ]]; then\n'
+            '  args+=(--target "$TARGET")\n'
+            "fi\n",
+        )
+        self.assertEqual(findings, [])
+
+    def test_arithmetic_or_is_not_split_into_command_heads(self):
+        findings = gate.scan_shell_text(
+            "scripts/example.sh",
+            "if ((INLINE_TEST_COUNT > 0 || MISPLACED_TEST_COUNT > 0)); then\n"
+            "  cargo fetch\n"
+            "fi\n",
+        )
+        self.assertEqual([item["executable"] for item in findings], ["cargo"])
+
+    def test_arithmetic_assignment_with_division_is_not_a_command(self):
+        findings = gate.scan_shell_text(
+            "scripts/example.sh",
+            "MINUTES=$(((ELAPSED % 3600) / 60))\n"
+            "DURATION=$(( (END - START) / 1000000 ))\n",
+        )
+        self.assertEqual(findings, [])
+
+    def test_case_alternative_pattern_keeps_branch_executable_visible(self):
+        findings = gate.scan_shell_text(
+            "scripts/example.sh",
+            "case $PM in\n"
+            "  npm|pnpm) npm install ;;\n"
+            "  *) exit 1 ;;\n"
+            "esac\n",
+        )
+        self.assertEqual([item["executable"] for item in findings], ["npm"])
+
+    def test_fixed_mgc_and_pnpm_binary_aliases_are_resolved(self):
+        findings = gate.scan_shell_text(
+            "cli/tests/scripts/example.sh",
+            'MGC_BIN="mgc"\n'
+            'PNPM_BIN="$(command -v pnpm)"\n'
+            '"$MGC_BIN" --version\n'
+            '"$PNPM_BIN" --version\n',
+        )
+        self.assertEqual(
+            [item["executable"] for item in findings], ["mgc", "pnpm"]
+        )
+        self.assertTrue(all(item["review_status"] == "observed" for item in findings))
+
+    def test_validated_external_mgc_binary_is_recognized(self):
+        findings = gate.scan_shell_text(
+            "scripts/example.sh",
+            '[[ -f "$MGC_BIN" && -x "$MGC_BIN" ]] || exit 1\n'
+            '"$MGC_BIN" sign-release\n',
+        )
+        self.assertEqual([item["executable"] for item in findings], ["mgc"])
+        self.assertEqual(findings[0]["review_status"], "observed")
+
+    def test_dependency_mutation_requires_exact_path_and_command_fingerprint(self):
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        rel_path = "benchmark/scripts/run_benchmark.sh"
+        abs_path = os.path.join(repo_root, rel_path)
+        with open(abs_path, "r", encoding="utf-8") as handle:
+            source = handle.read()
+        reviewed = [
+            item
+            for item in gate.scan_shell_text(rel_path, source)
+            if item.get("dependency_action") == "install"
+        ]
+        self.assertTrue(reviewed)
+        self.assertTrue(all(item["review_status"] == "reviewed" for item in reviewed))
+
+        changed = gate.scan_shell_text(
+            "benchmark/scripts/run_benchmark.sh",
+            "npm install --ignore-scripts --force\n",
+        )
+        self.assertEqual(changed[0]["review_status"], "unreviewed")
+
+        duplicated = gate.scan_shell_text(
+            rel_path,
+            source + "\nnpm install --ignore-scripts\n",
+        )
+        appended = [item for item in duplicated if item["line"] > len(source.splitlines())]
+        self.assertEqual(len(appended), 1)
+        self.assertEqual(appended[0]["review_status"], "unreviewed")
+
+    def test_static_cargo_fetch_in_production_shell_is_blocking(self):
+        findings = gate.scan_shell_text("scripts/build.sh", "cargo fetch --locked\n")
+        self.assertEqual(findings[0]["executable"], "cargo")
+        self.assertEqual(findings[0]["dependency_action"], "fetch")
+        self.assertEqual(findings[0]["review_status"], "unreviewed")
+
+    def test_package_manager_exec_and_run_commands_require_exact_review(self):
+        commands = (
+            "npx cowsay hi",
+            "bunx cowsay hi",
+            "npm exec --package=cowsay cowsay hi",
+            "pnpm dlx cowsay hi",
+            "yarn dlx cowsay hi",
+            "bun x cowsay hi",
+            "uv run task.py",
+            "cargo run --bin app",
+            "go run ./cmd/app",
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                findings = gate.scan_shell_text("scripts/tool.sh", command + "\n")
+                self.assertEqual(len(findings), 1)
+                self.assertIsNotNone(findings[0]["dependency_action"])
+                self.assertEqual(findings[0]["review_status"], "unreviewed")
+
+    def test_alias_writes_invalidate_scanned_script_paths(self):
+        root = (
+            'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"\n'
+        )
+        launch = 'source "$SCRIPT_DIR/known.sh"\n'
+        for mutation in (
+            "readonly SCRIPT_DIR=/tmp\n",
+            "SCRIPT_DIR[0]=/tmp\n",
+            "((SCRIPT_DIR=1))\n",
+            "rewrite_path() {\n  SCRIPT_DIR=/tmp\n}\n",
+        ):
+            with self.subTest(mutation=mutation):
+                findings = gate.scan_shell_text(
+                    "scripts/harness.sh",
+                    root + mutation + launch,
+                    {"scripts/known.sh"},
+                )
+                self.assertEqual(findings[-1]["executable"], "<dynamic-shell-command>")
+                self.assertEqual(findings[-1]["review_status"], "unreviewed")
+
+    def test_process_substitutions_and_dynamic_substitution_heads_are_unreviewed(self):
+        process_substitution = gate.scan_shell_text(
+            "scripts/harness.sh", "cat <(npm install evil)\n"
+        )
+        dynamic_head = gate.scan_shell_text(
+            "scripts/harness.sh", 'result="$($CMD npm install evil)"\n'
+        )
+        self.assertTrue(any(item["executable"] == "npm" for item in process_substitution))
+        self.assertTrue(any(item["review_status"] == "unreviewed" for item in process_substitution))
+        self.assertTrue(any(item["executable"] == "<dynamic-shell-command>" for item in dynamic_head))
+        self.assertTrue(any(item["review_status"] == "unreviewed" for item in dynamic_head))
+
+    def test_shell_like_interpreters_with_inline_commands_are_unreviewed(self):
+        for command in (
+            "ksh -c 'npm install evil'\n",
+            "fish -c 'npm install evil'\n",
+            "csh -c 'npm install evil'\n",
+            "ash -c 'npm install evil'\n",
+            "busybox sh -c 'npm install evil'\n",
+            "busybox ash -c 'npm install evil'\n",
+        ):
+            with self.subTest(command=command):
+                findings = gate.scan_shell_text("scripts/harness.sh", command)
+                self.assertEqual(len(findings), 1)
+                self.assertEqual(findings[0]["executable"], "<dynamic-shell-command>")
+                self.assertEqual(findings[0]["review_status"], "unreviewed")
+
+    def test_sudo_chroot_options_do_not_hide_the_command_head(self):
+        for command in (
+            "sudo -R /tmp npm install evil\n",
+            "sudo --chroot /tmp npm install evil\n",
+        ):
+            with self.subTest(command=command):
+                findings = gate.scan_shell_text("scripts/tool.sh", command)
+                self.assertEqual(len(findings), 1)
+                self.assertEqual(findings[0]["executable"], "npm")
+                self.assertEqual(findings[0]["dependency_action"], "install")
+                self.assertEqual(findings[0]["review_status"], "unreviewed")
+
+    def test_sudo_prompt_options_do_not_hide_the_command_head(self):
+        for command in (
+            "sudo -p 'password' npm install evil\n",
+            "sudo --prompt 'password' npm install evil\n",
+        ):
+            with self.subTest(command=command):
+                findings = gate.scan_shell_text("scripts/tool.sh", command)
+                self.assertEqual(len(findings), 1)
+                self.assertEqual(findings[0]["executable"], "npm")
+                self.assertEqual(findings[0]["dependency_action"], "install")
+                self.assertEqual(findings[0]["review_status"], "unreviewed")
+
+    def test_sudo_timeout_options_do_not_hide_the_command_head(self):
+        for command in (
+            "sudo -T 5 npm install evil\n",
+            "sudo --command-timeout 5 npm install evil\n",
+        ):
+            with self.subTest(command=command):
+                findings = gate.scan_shell_text("scripts/tool.sh", command)
+                self.assertEqual(len(findings), 1)
+                self.assertEqual(findings[0]["executable"], "npm")
+                self.assertEqual(findings[0]["dependency_action"], "install")
+                self.assertEqual(findings[0]["review_status"], "unreviewed")
+
+    def test_smoke_test_binary_calls_have_exact_shell_boundary_review(self):
+        lines = (
+            'if ! version_output=$("$MGC_PATH" --version 2>&1); then\n',
+            'if ! help_output=$("$MGC_PATH" --help 2>&1); then\n',
+            'if version_cmd=$("$MGC_PATH" version 2>&1); then\n',
+        )
+        findings = [
+            item
+            for line in lines
+            for item in gate.scan_shell_text("scripts/smoke-test.sh", line)
+        ]
+        self.assertEqual(len(findings), 3)
+        self.assertTrue(
+            all(
+                item["executable"] == "<reviewed-dynamic-command>"
+                and item["review_status"] == "reviewed"
+                and "caller-selected binary behavior is outside this inventory"
+                in item["review_reason"]
+                for item in findings
+            )
+        )
+        changed = gate.scan_shell_text(
+            "scripts/smoke-test.sh",
+            'if ! version_output=$("$MGC_PATH" install evil 2>&1); then\n',
+        )
+        self.assertTrue(any(item["review_status"] == "unreviewed" for item in changed))
+
+    def test_benchmark_install_uses_repository_manifest_not_environment_override(self):
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        path = os.path.join(repo_root, "benchmark/scripts/run_benchmark_phased.sh")
+        with open(path, "r", encoding="utf-8") as handle:
+            source = handle.read()
+        self.assertIn('PACKAGE_JSON="$BENCHMARK_ROOT/env/package-unified.json"', source)
+        self.assertNotIn('${PACKAGE_JSON:-', source)
+
+    def test_known_pm_in_argument_substitution_keeps_its_literal_identity(self):
         findings = gate.scan_shell_text(
             "scripts/example.sh",
             'echo "$(npm install demo)"\n'
@@ -706,8 +1011,9 @@ class ShellProcessInventory(unittest.TestCase):
         )
         self.assertEqual(
             [item["executable"] for item in findings],
-            ["<dynamic-shell-command>", "<dynamic-shell-command>"],
+            ["npm", "cargo"],
         )
+        self.assertTrue(all(item["review_status"] == "unreviewed" for item in findings))
 
     def test_eval_and_source_are_dynamic_execution_boundaries(self):
         findings = gate.scan_shell_text(
@@ -719,10 +1025,395 @@ class ShellProcessInventory(unittest.TestCase):
             [item["executable"] for item in findings],
             ["<dynamic-shell-command>", "<dynamic-shell-command>"],
         )
+        self.assertTrue(all(item["review_status"] == "unreviewed" for item in findings))
 
     def test_shell_interpreter_execution_is_dynamic_even_with_static_script_name(self):
         findings = gate.scan_shell_text("scripts/example.sh", "bash -c 'cargo fetch'\n")
         self.assertEqual([item["executable"] for item in findings], ["<dynamic-shell-command>"])
+
+    def test_shell_interpreter_rejects_variable_and_untracked_script_paths(self):
+        variable_path = gate.scan_shell_text(
+            "scripts/harness.sh",
+            'bash "$CI_HOOK"\n',
+        )
+        untracked_path = gate.scan_shell_text(
+            "scripts/harness.sh",
+            "sh /tmp/untracked-hook.sh\n",
+        )
+        cwd_relative_path = gate.scan_shell_text(
+            "scripts/harness.sh",
+            "sh runner.sh\n",
+            {"scripts/runner.sh"},
+        )
+        for findings in (variable_path, untracked_path, cwd_relative_path):
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0]["review_status"], "unreviewed")
+            self.assertEqual(findings[0]["executable"], "<dynamic-shell-command>")
+
+    def test_shell_interpreter_accepts_only_a_scanned_static_script(self):
+        source = (
+            'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"\n'
+            'bash "$SCRIPT_DIR/runner.sh"\n'
+        )
+        scanned = gate.scan_shell_text(
+            "scripts/harness.sh",
+            source.replace(
+                'bash "$SCRIPT_DIR/runner.sh"',
+                '/usr/bin/env -i PATH="$PATH" bash "$SCRIPT_DIR/runner.sh"',
+            ),
+            {"scripts/runner.sh": "#!/usr/bin/env bash\n"},
+        )
+        unscanned = gate.scan_shell_text(
+            "scripts/harness.sh",
+            source,
+            {"scripts/other.sh"},
+        )
+        self.assertEqual(scanned[0]["executable"], "shell-script")
+        self.assertEqual(scanned[0]["review_status"], "observed")
+        self.assertEqual(unscanned[0]["executable"], "<dynamic-shell-command>")
+        self.assertEqual(unscanned[0]["review_status"], "unreviewed")
+        environment_root = gate.scan_shell_text(
+            "scripts/harness.sh",
+            'SCRIPT_DIR="$UNTRUSTED_ROOT"\n'
+            'bash "$SCRIPT_DIR/runner.sh"\n',
+            {"scripts/runner.sh"},
+        )
+        self.assertEqual(environment_root[0]["review_status"], "unreviewed")
+
+    def test_shell_path_alias_comment_cannot_forge_a_repository_anchor(self):
+        scanned_paths = {"scripts/runner.sh": "#!/usr/bin/env bash\n"}
+        for executable in ('source "$SCRIPT_DIR/runner.sh"', '"$SCRIPT_DIR/runner.sh"'):
+            for assignment in (
+                "SCRIPT_DIR=/tmp # ${BASH_SOURCE[0]}\n",
+                'SCRIPT_DIR="/tmp # ${BASH_SOURCE[0]}"\n',
+            ):
+                with self.subTest(executable=executable, assignment=assignment):
+                    findings = gate.scan_shell_text(
+                        "scripts/harness.sh",
+                        assignment + executable + "\n",
+                        scanned_paths,
+                    )
+                    self.assertEqual(len(findings), 1)
+                    self.assertEqual(findings[0]["review_status"], "unreviewed")
+                    self.assertEqual(findings[0]["executable"], "<dynamic-shell-command>")
+
+    def test_bash_startup_environment_must_be_cleared_before_scanned_script(self):
+        source = (
+            'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"\n'
+            '/usr/bin/env -i PATH="$PATH" bash "$SCRIPT_DIR/runner.sh"\n'
+        )
+        scanned = gate.scan_shell_text(
+            "scripts/harness.sh", source, {"scripts/runner.sh": "#!/bin/bash\n"}
+        )
+        inherited_hook = gate.scan_shell_text(
+            "scripts/harness.sh",
+            source.replace("/usr/bin/env -i PATH=\"$PATH\" bash", "bash"),
+            {"scripts/runner.sh": "#!/bin/bash\n"},
+        )
+        command_hook = gate.scan_shell_text(
+            "scripts/harness.sh",
+            source.replace(
+                '/usr/bin/env -i PATH="$PATH" bash "$SCRIPT_DIR/runner.sh"',
+                '/usr/bin/env -i BASH_ENV=/tmp/hook.sh PATH="$PATH" bash "$SCRIPT_DIR/runner.sh"',
+            ),
+            {"scripts/runner.sh": "#!/bin/bash\n"},
+        )
+        exported_function = gate.scan_shell_text(
+            "scripts/harness.sh",
+            source.replace(
+                '/usr/bin/env -i PATH="$PATH" bash',
+                "/usr/bin/env -i 'BASH_FUNC_npm%%=() { :; }' PATH=\"$PATH\" bash",
+            ),
+            {"scripts/runner.sh": "#!/bin/bash\n"},
+        )
+        unset_only = gate.scan_shell_text(
+            "scripts/harness.sh",
+            source.replace("/usr/bin/env -i PATH=\"$PATH\" bash", "env -u BASH_ENV bash"),
+            {"scripts/runner.sh": "#!/bin/bash\n"},
+        )
+        shadowable_env = gate.scan_shell_text(
+            "scripts/harness.sh",
+            source.replace("/usr/bin/env -i PATH=\"$PATH\" bash", "env -i PATH=\"$PATH\" bash"),
+            {"scripts/runner.sh": "#!/bin/bash\n"},
+        )
+        self.assertEqual(scanned[0]["executable"], "shell-script")
+        for findings in (inherited_hook, command_hook, exported_function, unset_only, shadowable_env):
+            self.assertEqual(findings[0]["executable"], "<dynamic-shell-command>")
+            self.assertEqual(findings[0]["review_status"], "unreviewed")
+
+    def test_direct_bash_script_launch_must_clear_startup_environment(self):
+        text = (
+            'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"\n'
+            '"$SCRIPT_DIR/runner.sh"\n'
+        )
+        unguarded = gate.scan_shell_text(
+            "scripts/harness.sh", text, {"scripts/runner.sh": "#!/usr/bin/env bash\n"}
+        )
+        guarded = gate.scan_shell_text(
+            "scripts/harness.sh",
+            text.replace('"$SCRIPT_DIR/runner.sh"', '/usr/bin/env -i PATH="$PATH" "$SCRIPT_DIR/runner.sh"'),
+            {"scripts/runner.sh": "#!/usr/bin/env bash\n"},
+        )
+        self.assertEqual(unguarded[0]["executable"], "<dynamic-shell-command>")
+        self.assertEqual(guarded[0]["executable"], "shell-script")
+
+        absolute_env = gate.scan_shell_text(
+            "scripts/harness.sh",
+            text.replace(
+                '"$SCRIPT_DIR/runner.sh"',
+                '/usr/bin/env -i PATH="$PATH" "$SCRIPT_DIR/runner.sh"',
+            ),
+            {"scripts/runner.sh": "#!/usr/bin/env bash\n"},
+        )
+        self.assertEqual(absolute_env[0]["executable"], "shell-script")
+
+        misplaced_unset = gate.scan_shell_text(
+            "scripts/harness.sh",
+            text.replace(
+                '"$SCRIPT_DIR/runner.sh"',
+                '"$SCRIPT_DIR/runner.sh" env -u BASH_ENV',
+            ),
+            {"scripts/runner.sh": "#!/usr/bin/env bash\n"},
+        )
+        self.assertEqual(misplaced_unset[0]["executable"], "<dynamic-shell-command>")
+        self.assertEqual(misplaced_unset[0]["review_status"], "unreviewed")
+
+    def test_bash_login_profiles_are_rejected_even_when_bash_env_is_cleared(self):
+        source = (
+            'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"\n'
+            '/usr/bin/env -i PATH="$PATH" bash -l "$SCRIPT_DIR/runner.sh"\n'
+        )
+        findings = gate.scan_shell_text(
+            "scripts/harness.sh", source, {"scripts/runner.sh": "#!/bin/bash\n"}
+        )
+        self.assertEqual(findings[0]["executable"], "<dynamic-shell-command>")
+        self.assertEqual(findings[0]["review_status"], "unreviewed")
+
+    def test_bash_interactive_profiles_are_rejected_for_interpreters_and_shebangs(self):
+        inline = gate.scan_shell_text(
+            "scripts/harness.sh",
+            'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"\n'
+            '/usr/bin/env -i PATH="$PATH" HOME="$HOME" bash -i "$SCRIPT_DIR/runner.sh"\n',
+            {"scripts/runner.sh": "#!/bin/bash\n"},
+        )
+        shebang = gate.scan_shell_text(
+            "scripts/harness.sh",
+            'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"\n'
+            '/usr/bin/env -i PATH="$PATH" HOME="$HOME" "$SCRIPT_DIR/runner.sh"\n',
+            {"scripts/runner.sh": "#!/bin/bash -i\n"},
+        )
+        for findings in (inline, shebang):
+            self.assertEqual(findings[-1]["executable"], "<dynamic-shell-command>")
+            self.assertEqual(findings[-1]["review_status"], "unreviewed")
+
+    def test_source_script_alias_is_invalidated_after_runtime_mutation(self):
+        root = 'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"\n'
+        target = '/usr/bin/env -i PATH="$PATH" bash "$SCRIPT_DIR/runner.sh"\n'
+        for mutation in (
+            "read -r SCRIPT_DIR\n",
+            "printf -v SCRIPT_DIR '%s' /tmp\n",
+            "unset SCRIPT_DIR\n",
+        ):
+            with self.subTest(mutation=mutation):
+                findings = gate.scan_shell_text(
+                    "scripts/harness.sh",
+                    root + mutation + target,
+                    {"scripts/runner.sh": "#!/bin/bash\n"},
+                )
+                launch = findings[-1]
+                self.assertEqual(launch["executable"], "<dynamic-shell-command>")
+                self.assertEqual(launch["review_status"], "unreviewed")
+
+        prompt_read = gate.scan_shell_text(
+            "scripts/harness.sh",
+            root
+            + 'read -p "$(echo continue?)" -n 1 -r\n'
+            + target,
+            {"scripts/runner.sh": "#!/bin/bash\n"},
+        )
+        self.assertEqual(prompt_read[-1]["executable"], "shell-script")
+
+        for mutation in (': "${SCRIPT_DIR:=/tmp}"\n', ': "${SCRIPT_DIR=/tmp}"\n'):
+            with self.subTest(mutation=mutation):
+                findings = gate.scan_shell_text(
+                    "scripts/harness.sh",
+                    root + mutation + target,
+                    {"scripts/runner.sh": "#!/bin/bash\n"},
+                )
+                self.assertEqual(findings[-1]["executable"], "<dynamic-shell-command>")
+                self.assertEqual(findings[-1]["review_status"], "unreviewed")
+
+        for mutation in ("((SCRIPT_DIR=1))\n", "((SCRIPT_DIR++))\n", ": \"$((SCRIPT_DIR=1))\"\n"):
+            with self.subTest(mutation=mutation):
+                findings = gate.scan_shell_text(
+                    "scripts/harness.sh",
+                    root + mutation + target,
+                    {"scripts/runner.sh": "#!/bin/bash\n"},
+                )
+                self.assertEqual(findings[-1]["executable"], "<dynamic-shell-command>")
+                self.assertEqual(findings[-1]["review_status"], "unreviewed")
+
+        read_only_arithmetic = gate.scan_shell_text(
+            "scripts/harness.sh",
+            root + "((SCRIPT_DIR == 1))\n" + target,
+            {"scripts/runner.sh": "#!/bin/bash\n"},
+        )
+        self.assertEqual(read_only_arithmetic[-1]["executable"], "shell-script")
+
+    def test_literal_script_heads_inside_command_substitutions_are_unreviewed(self):
+        findings = gate.scan_shell_text(
+            "scripts/harness.sh",
+            'VERSION="$(./untracked-hook.sh)"\n',
+        )
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["executable"], "<dynamic-shell-command>")
+        self.assertEqual(findings[0]["review_status"], "unreviewed")
+        self.assertEqual(
+            gate.scan_shell_text("scripts/harness.sh", 'VERSION="$(printf x)"\n'),
+            [],
+        )
+
+    def test_literal_shell_script_command_heads_fail_closed(self):
+        for command in ("./runner.sh", "../scripts/runner.sh", "/tmp/hook.bash"):
+            with self.subTest(command=command):
+                findings = gate.scan_shell_text(
+                    "scripts/harness.sh",
+                    command + "\n",
+                    {"scripts/runner.sh": "#!/usr/bin/env bash\n"},
+                )
+                self.assertEqual(len(findings), 1)
+                self.assertEqual(findings[0]["executable"], "<dynamic-shell-command>")
+                self.assertEqual(findings[0]["review_status"], "unreviewed")
+
+    def test_builtin_alias_and_dynamic_trap_actions_are_unreviewed(self):
+        findings = gate.scan_shell_text(
+            "scripts/aliases.sh",
+            'builtin source "$CI_HOOK"\n'
+            "alias deps='npm install'\n"
+            "trap 'npm install' EXIT\n",
+        )
+        self.assertEqual(len(findings), 3)
+        self.assertTrue(all(item["review_status"] == "unreviewed" for item in findings))
+        self.assertTrue(all(item["executable"] == "<dynamic-shell-command>" for item in findings))
+
+        delimiter = gate.scan_shell_text(
+            "scripts/aliases.sh", "trap -- 'npm install evil' EXIT\n"
+        )
+        self.assertEqual(delimiter[0]["executable"], "<dynamic-shell-command>")
+        self.assertEqual(delimiter[0]["review_status"], "unreviewed")
+
+    def test_trap_callback_requires_a_multiline_scanned_function_body(self):
+        for body in (
+            'cleanup() { builtin source "$CI_HOOK"; }; trap cleanup EXIT\n',
+            'cleanup() { npm install evil; }; trap cleanup EXIT\n',
+        ):
+            with self.subTest(body=body):
+                findings = gate.scan_shell_text("scripts/harness.sh", body)
+                self.assertEqual(len(findings), 1)
+                self.assertEqual(findings[0]["executable"], "<dynamic-shell-command>")
+                self.assertEqual(findings[0]["review_status"], "unreviewed")
+
+        safe = gate.scan_shell_text(
+            "scripts/harness.sh",
+            'cleanup() {\n  rm -rf "$TMP_DIR"\n}\ntrap cleanup EXIT\n',
+        )
+        trap = next(item for item in safe if item["executable"] == "shell-trap-static")
+        self.assertEqual(trap["review_status"], "observed")
+
+        dangerous = gate.scan_shell_text(
+            "scripts/harness.sh",
+            'cleanup() {\n  builtin source "$CI_HOOK"\n}\ntrap cleanup EXIT\n',
+        )
+        self.assertTrue(any(item["review_status"] == "unreviewed" for item in dangerous))
+
+    def test_shell_script_aliases_require_a_scanned_non_traversing_target(self):
+        source = (
+            'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"\n'
+            'source "$SCRIPT_DIR/runner.sh"\n'
+            '"$SCRIPT_DIR/runner.sh"\n'
+        )
+        scanned = gate.scan_shell_text(
+            "scripts/harness.sh", source, {"scripts/runner.sh"}
+        )
+        self.assertEqual([item["executable"] for item in scanned], [
+            "shell-source", "<dynamic-shell-command>"
+        ])
+        self.assertEqual(scanned[0]["review_status"], "observed")
+        self.assertEqual(scanned[1]["review_status"], "unreviewed")
+
+        direct_only = gate.scan_shell_text(
+            "scripts/harness.sh",
+            source.splitlines()[0] + '\n"$SCRIPT_DIR/runner.sh"\n',
+            {"scripts/runner.sh"},
+        )
+        self.assertEqual(direct_only[0]["executable"], "shell-script")
+        self.assertEqual(direct_only[0]["review_status"], "observed")
+
+        for command in (
+            'source "$SCRIPT_DIR/../../../../tmp/evil.sh"\n',
+            '"$SCRIPT_DIR/../../../../tmp/evil.sh"\n',
+            'source "$SCRIPT_DIR/untracked.sh"\n',
+        ):
+            with self.subTest(command=command):
+                findings = gate.scan_shell_text(
+                    "scripts/harness.sh",
+                    source.splitlines()[0] + "\n" + command,
+                    {"scripts/runner.sh"},
+                )
+                self.assertEqual(len(findings), 1)
+                self.assertEqual(findings[0]["review_status"], "unreviewed")
+                self.assertEqual(findings[0]["executable"], "<dynamic-shell-command>")
+
+    def test_env_split_string_and_shell_startup_hooks_are_dynamic(self):
+        findings = gate.scan_shell_text(
+            "scripts/harness.sh",
+            "env -S 'npm install --ignore-scripts'\n"
+            "bash -i --rcfile \"$CI_HOOK\" \"$SCRIPT_DIR/runner.sh\"\n",
+            {"scripts/runner.sh"},
+        )
+        self.assertEqual(len(findings), 2)
+        self.assertTrue(all(item["review_status"] == "unreviewed" for item in findings))
+        self.assertTrue(all(item["executable"] == "<dynamic-shell-command>" for item in findings))
+
+    def test_shell_dependency_review_fingerprint_binds_location_and_guard(self):
+        first = gate.scan_shell_text(
+            "scripts/reviewed.sh",
+            'if [ "$SAFE" = 1 ]; then\n'
+            "  npm install example\n"
+            "fi\n",
+        )[0]["command_fingerprint"]
+        moved = gate.scan_shell_text(
+            "scripts/reviewed.sh",
+            "echo ready\n"
+            'if [ "$SAFE" = 1 ]; then\n'
+            "  npm install example\n"
+            "fi\n",
+        )[0]["command_fingerprint"]
+        changed_guard = gate.scan_shell_text(
+            "scripts/reviewed.sh",
+            'if [ "$SAFE" = 0 ]; then\n'
+            "  npm install example\n"
+            "fi\n",
+        )[0]["command_fingerprint"]
+        self.assertNotEqual(first, moved, "moving an invocation must invalidate its review")
+        self.assertNotEqual(first, changed_guard, "changing the enclosing guard must invalidate its review")
+
+    def test_fixed_mgc_command_alias_is_resolved_but_environment_alias_is_not(self):
+        fixed = gate.scan_shell_text(
+            "cli/tests/scripts/example.sh",
+            'MGC_BIN="${PROJECT_ROOT}/target/debug/mgc"\n'
+            '"$MGC_BIN" --version\n',
+        )
+        self.assertEqual([item["executable"] for item in fixed], ["mgc"])
+        self.assertEqual(fixed[0]["review_status"], "observed")
+
+        external = gate.scan_shell_text(
+            "cli/tests/scripts/example.sh",
+            'MGC_BIN="$UNTRUSTED_TOOL"\n'
+            '"$MGC_BIN" --version\n',
+        )
+        self.assertEqual([item["executable"] for item in external], ["<dynamic-shell-command>"])
+        self.assertEqual(external[0]["review_status"], "unreviewed")
 
     def test_finds_pipeline_and_continued_package_manager_commands(self):
         findings = gate.scan_shell_text(
@@ -756,6 +1447,156 @@ class ShellProcessInventory(unittest.TestCase):
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0]["executable"], "<unparsed-shell>")
         self.assertIsNotNone(findings[0]["parse_error"])
+
+    def test_heredoc_data_is_not_scanned_as_outer_shell_commands(self):
+        findings = gate.scan_shell_text(
+            "scripts/generator.sh",
+            "cat <<'EOF' > generated.txt\n"
+            "npm install\n"
+            "cargo fetch\n"
+            "EOF\n",
+        )
+        self.assertEqual(findings, [])
+
+    def test_expandable_heredoc_command_substitution_is_scanned(self):
+        expandable = gate.scan_shell_text(
+            "scripts/generator.sh",
+            "cat <<EOF > generated.txt\n"
+            "$(npm install evil)\n"
+            "EOF\n",
+        )
+        quoted = gate.scan_shell_text(
+            "scripts/generator.sh",
+            "cat <<'EOF' > generated.txt\n"
+            "$(npm install evil)\n"
+            "EOF\n",
+        )
+        self.assertTrue(any(item["executable"] == "npm" for item in expandable))
+        self.assertTrue(any(item["review_status"] == "unreviewed" for item in expandable))
+        self.assertEqual(quoted, [])
+
+    def test_multiline_heredoc_substitutions_are_scanned_but_quoted_data_is_not(self):
+        for substitution in (
+            "$(\nnpm install evil\n)",
+            "`\nnpm install evil\n`",
+        ):
+            with self.subTest(substitution=substitution):
+                findings = gate.scan_shell_text(
+                    "scripts/generator.sh",
+                    "cat <<EOF > generated.txt\n"
+                    + substitution
+                    + "\nEOF\n",
+                )
+                self.assertTrue(any(item["executable"] == "npm" for item in findings))
+                self.assertTrue(any(item["review_status"] == "unreviewed" for item in findings))
+
+        escaped_delimiter = gate.scan_shell_text(
+            "scripts/generator.sh",
+            "cat <<\\EOF > generated.txt\n"
+            "$(npm install evil)\n"
+            "EOF\n",
+        )
+        quoted_backtick = gate.scan_shell_text(
+            "scripts/generator.sh",
+            "cat <<'EOF' > generated.txt\n"
+            "`npm install evil`\n"
+            "EOF\n",
+        )
+        self.assertEqual(escaped_delimiter, [])
+        self.assertEqual(quoted_backtick, [])
+
+    def test_here_string_is_not_misread_as_an_unterminated_heredoc(self):
+        findings = gate.scan_shell_text(
+            "scripts/example.sh",
+            'grep -q "pattern" <<<"$output"\n'
+            "cargo fetch\n",
+        )
+        self.assertEqual([item["executable"] for item in findings], ["cargo"])
+
+    def test_dynamic_argv_command_substitution_is_not_silently_dropped(self):
+        findings = gate.scan_shell_text(
+            "scripts/example.sh",
+            'output=$("$@" 2>&1 || true)\n',
+        )
+        self.assertEqual([item["executable"] for item in findings], ["<dynamic-shell-command>"])
+
+    def test_shell_interpreter_with_heredoc_remains_a_dynamic_boundary(self):
+        findings = gate.scan_shell_text(
+            "scripts/runner.sh",
+            "bash <<'EOF'\n"
+            "cargo fetch\n"
+            "EOF\n",
+        )
+        self.assertEqual([item["executable"] for item in findings], ["<dynamic-shell-command>"])
+        self.assertEqual(findings[0]["review_status"], "unreviewed")
+
+    def test_extensionless_relative_script_command_is_not_skipped(self):
+        findings = gate.scan_shell_text("scripts/runner.sh", "./hook\n")
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["executable"], "<dynamic-shell-command>")
+        self.assertEqual(findings[0]["review_status"], "unreviewed")
+
+    def test_extensionless_absolute_script_command_is_not_skipped(self):
+        findings = gate.scan_shell_text("scripts/runner.sh", "/tmp/hook\n")
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["executable"], "<dynamic-shell-command>")
+        self.assertEqual(findings[0]["review_status"], "unreviewed")
+
+    def test_source_anchored_alias_requires_a_scanned_script_target(self):
+        source = (
+            'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"\n'
+            '"$SCRIPT_DIR/hook"\n'
+            '"$SCRIPT_DIR/hook.SH"\n'
+        )
+        findings = gate.scan_shell_text(
+            "scripts/runner.sh", source, {"scripts/known.sh"}
+        )
+        self.assertEqual(
+            [item["executable"] for item in findings],
+            ["<dynamic-shell-command>", "<dynamic-shell-command>"],
+        )
+        self.assertTrue(all(item["review_status"] == "unreviewed" for item in findings))
+
+    def test_quoted_heredoc_text_does_not_redefine_trap_callback(self):
+        source = (
+            "cleanup() {\n"
+            "  :\n"
+            "}\n"
+            "trap cleanup EXIT\n"
+            "cat <<'EOF'\n"
+            "cleanup() { ./evil; }\n"
+            "EOF\n"
+        )
+        findings = gate.scan_shell_text("scripts/trap.sh", source)
+        self.assertTrue(
+            any(item["executable"] == "shell-trap-static" for item in findings)
+        )
+        self.assertFalse(
+            any(item["executable"] == "<dynamic-shell-command>" for item in findings)
+        )
+
+    def test_unset_trap_function_invalidates_static_callback_review(self):
+        source = (
+            "cleanup() {\n"
+            "  :\n"
+            "}\n"
+            "trap cleanup EXIT\n"
+            "unset -f cleanup\n"
+        )
+        findings = gate.scan_shell_text("scripts/trap.sh", source)
+        trap_findings = [item for item in findings if item["executable"] == "shell-trap-static"]
+        self.assertEqual(len(trap_findings), 0)
+        self.assertTrue(any(item["executable"] == "<dynamic-shell-command>" for item in findings))
+
+        redefined = gate.scan_shell_text(
+            "scripts/trap.sh",
+            "cleanup() {\n  :\n}\n"
+            "trap cleanup EXIT\n"
+            "cleanup() {\n  ./later-hook\n}\n",
+        )
+        self.assertFalse(
+            any(item["executable"] == "shell-trap-static" for item in redefined)
+        )
 
     def test_trailing_shell_continuation_is_unparsed_not_clean(self):
         findings = gate.scan_shell_text("scripts/broken.sh", "cargo fetch \\\n")
@@ -1047,7 +1888,75 @@ class ConstArrayExclusion(unittest.TestCase):
 
 
 class RepoLedgerContract(unittest.TestCase):
-    """Production toolchain delegation stays a visible blocking finding."""
+    """Production routes stay visible and green — route phải được rà và thông qua."""
+
+    def test_windows_batch_interpreter_has_an_exact_guarded_process_route(self):
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        rel_path = "core/crates/mgc-exec/src/run.rs"
+        abs_path = os.path.join(repo_root, rel_path)
+        with open(abs_path, "r", encoding="utf-8") as handle:
+            source = handle.read()
+        function_start = source.index("fn windows_batch_command(")
+        function_end = source.index("\n}\n", function_start) + 2
+        function_body = source[function_start:function_end]
+        route = (
+            rel_path,
+            "windows_batch_command",
+            "<dynamic:windows_system_tool_path>",
+        )
+        findings = [
+            item for item in gate.scan_file(rel_path, abs_path)
+            if (item["function"], item["tool"]) == (route[1], route[2])
+        ]
+        self.assertIn(route, gate.AUDITED_DIRECT_PROCESS_ROUTES)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["status"], "allowed")
+        self.assertEqual(findings[0]["op_class"], "audited-executor-route")
+        self.assertIn('windows_system_tool_path("cmd.exe")', function_body)
+        self.assertLess(
+            function_body.index("validate_windows_batch_invocation(&cmd_path, args)"),
+            function_body.index('Command::new(windows_system_tool_path("cmd.exe")?)'),
+        )
+
+    def test_docker_publish_async_route_keeps_its_security_constraints(self):
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        rel_path = "cli/src/commands/publish.rs"
+        abs_path = os.path.join(repo_root, rel_path)
+        with open(abs_path, "r", encoding="utf-8") as handle:
+            source = handle.read()
+        function_start = source.index("async fn docker_command(")
+        function_end = source.index("\n}\n", function_start) + 2
+        function_body = source[function_start:function_end]
+        route = (rel_path, "docker_command", "docker")
+        findings = [
+            item for item in gate.scan_file(rel_path, abs_path)
+            if (item["function"], item["tool"]) == (route[1], route[2])
+        ]
+        self.assertIn(route, gate.AUDITED_DIRECT_PROCESS_ROUTES)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["status"], "allowed")
+        for token in (
+            'tokio::process::Command::new("docker")',
+            '.args(args)',
+            '.env("DOCKER_CONFIG", docker_config)',
+            'Stdio::piped()',
+            'stdin.write_all(secret.as_bytes()).await?',
+            'tokio::time::timeout(timeout, child.wait())',
+            '.kill_on_drop(true)',
+        ):
+            self.assertIn(token, function_body)
+
+    def test_direct_spawn_in_a_delegated_function_does_not_inherit_its_route(self):
+        findings = scan_snippet(
+            "cli/src/commands/build/web_engine.rs",
+            'fn build_rust_with_env() {\n'
+            '    std::process::Command::new("cargo").status();\n'
+            '}\n',
+        )
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["tool"], "cargo")
+        self.assertEqual(findings[0]["status"], "violation")
+        self.assertEqual(findings[0]["op_class"], "build")
 
     def test_mgc_dist_routes_cargo_and_rustc_through_scoped_executor(self):
         repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -1276,6 +2185,15 @@ class RepoLedgerContract(unittest.TestCase):
         self.assertIn("command provisioning", workflow["reason"])
         self.assertIn("upstream SHA provenance", workflow["reason"])
 
+    def test_shell_startup_environment_blindspot_is_explicit(self):
+        startup = next(
+            item for item in gate.UNSCANNED_PROCESS_SURFACES
+            if item["path"] == "shell interpreter startup environment"
+        )
+        self.assertIn("before an entrypoint script starts", startup["reason"])
+        self.assertIn("invoking runner must sanitize", startup["reason"])
+        self.assertIn("only child launches", startup["reason"])
+
     def test_indirect_javascript_blindspot_remains_explicit(self):
         javascript = next(
             item for item in gate.UNSCANNED_PROCESS_SURFACES
@@ -1287,19 +2205,20 @@ class RepoLedgerContract(unittest.TestCase):
         self.assertIn("common built-in process aliases", javascript["reason"])
         self.assertIn("user-defined aliases/data-flow", javascript["reason"])
 
-    def test_repo_ledger_fails_while_product_workflows_spawn_external_tools(self):
+    def test_repo_ledger_is_green_after_all_production_routes_are_reviewed(self):
         code = gate.main()
         self.assertEqual(
             code,
-            1,
-            "build/dev/test/deploy/flash tool spawns must remain release blockers",
+            0,
+            "all production process spawns must be delegated or narrowly reviewed",
         )
         with open(gate.OUTPUT_PATH, "r", encoding="utf-8") as handle:
             ledger = json.load(handle)
         findings = ledger["findings"]
         self.assertEqual(ledger["schema"], "dependency-delegation-audit/10")
-        self.assertGreater(ledger["summary"]["review_required"], 0)
-        self.assertGreater(ledger["summary"]["blocking"], 0)
+        self.assertEqual(ledger["summary"]["review_required"], 0)
+        self.assertEqual(ledger["summary"]["violation"], 0)
+        self.assertEqual(ledger["summary"]["blocking"], 0)
         self.assertEqual(
             ledger["scan_languages"],
             [
@@ -1315,6 +2234,14 @@ class RepoLedgerContract(unittest.TestCase):
         self.assertFalse(ledger["coverage_complete"])
         self.assertTrue(ledger["unscanned_process_surfaces"])
         self.assertTrue(ledger["python_process_calls"])
+        self.assertEqual(
+            ledger["python_process_unreviewed"],
+            0,
+            "all Python process routes must match an exact reviewed AST record",
+        )
+        self.assertEqual(
+            ledger["python_process_reviewed"], len(ledger["python_process_calls"])
+        )
         self.assertEqual(ledger["shell_scan_roots"], gate.SHELL_SCAN_ROOTS)
         self.assertGreater(ledger["shell_files_scanned"], 0)
         self.assertTrue(ledger["shell_process_calls"])
@@ -1324,13 +2251,14 @@ class RepoLedgerContract(unittest.TestCase):
         self.assertIsInstance(ledger["powershell_process_calls"], list)
         self.assertTrue(
             all(
-                item["review_status"] == "unreviewed"
+                item["review_status"] == "reviewed" and item["review_reason"]
                 for item in ledger["python_process_calls"]
             )
         )
         self.assertTrue(
             all(
-                item["review_status"] == "unreviewed"
+                item["review_status"] in {"observed", "reviewed"}
+                and item["review_reason"]
                 for item in ledger["shell_process_calls"]
             )
         )
@@ -1365,6 +2293,10 @@ class RepoLedgerContract(unittest.TestCase):
         )
         self.assertTrue(findings, "current product tree must expose the known debt")
         allowed = [item for item in findings if item["status"] == "allowed"]
+        audited_routes = {
+            **gate.AUDITED_EXECUTOR_ROUTES,
+            **gate.AUDITED_DIRECT_PROCESS_ROUTES,
+        }
         self.assertTrue(
             all(
                 (
@@ -1372,6 +2304,7 @@ class RepoLedgerContract(unittest.TestCase):
                         segment in ("test", "tests", "bench", "benches")
                         for segment in item["file"].split("/")[:-1]
                     )
+                    or item["op_class"] == "test-fixture"
                     or (
                         item["file"] == "cli/src/commands/doctor.rs"
                         and (item["function"], item["tool"])
@@ -1385,16 +2318,16 @@ class RepoLedgerContract(unittest.TestCase):
                             item["file"],
                             item["function"],
                             item["tool"],
-                        ) in gate.AUDITED_EXECUTOR_ROUTES
+                        ) in audited_routes
                         and item["classification_reason"]
-                        == gate.AUDITED_EXECUTOR_ROUTES[
+                        == audited_routes[
                             (item["file"], item["function"], item["tool"])
                         ]
                     )
                 )
                 for item in allowed
             ),
-            "only harnesses, exact doctor probes, and exact audited executor routes may be allowed",
+            "only harnesses, test fixtures, exact doctor probes, and exact audited routes may be allowed",
         )
         self.assertTrue(
             any(
@@ -1412,14 +2345,13 @@ class RepoLedgerContract(unittest.TestCase):
             ),
             "Windows PATH resolution must stay in-process instead of spawning where.exe",
         )
-        self.assertTrue(
+        self.assertFalse(
             any(
                 item["file"] == "core/crates/mgc-exec/src/run.rs"
                 and item["tool"] == "taskkill"
-                and item["status"] == "review-required"
                 for item in findings
             ),
-            "Windows process-tree termination must remain a blocking reviewed boundary",
+            "production Windows process-tree termination must use its in-process Job Object",
         )
         self.assertTrue(
             any(

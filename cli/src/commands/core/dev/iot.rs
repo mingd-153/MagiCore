@@ -142,10 +142,16 @@ fn find_elf(root: &Path, target: &str) -> Result<PathBuf> {
 }
 
 fn run_tool(root: &Path, cmd: &str, args: &[&str]) -> Result<()> {
+    let execution_scope = match cmd {
+        "cargo" => mgc_exec::allowlist::ExecutionScope::BuildRunner,
+        "espflash" => mgc_exec::allowlist::ExecutionScope::DeviceControl,
+        _ => bail!("unsupported IoT tool"),
+    };
     let opts = mgc_exec::prelude::ExecOptions {
         cwd: Some(root.to_path_buf()),
         log_path: Some(root.join(".magicore").join("exec.log")),
         clean_env: true,
+        execution_scope: Some(execution_scope),
         ..Default::default()
     };
     let args = args.iter().map(|a| a.to_string()).collect::<Vec<_>>();

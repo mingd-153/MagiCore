@@ -185,13 +185,13 @@ impl NuGetProtocol {
     }
 
     fn nupkg_url(&self, id: &str, version: &str) -> String {
+        // The NuGet flat-container filename is lowercased like its URL segments.
+        // Tên file flat-container NuGet phải viết thường như các đoạn URL.
+        let id_lower = id.to_lowercase();
+        let version_lower = version.to_lowercase();
         format!(
             "{}/{}/{}/{}.{}.nupkg",
-            self.package_base,
-            id.to_lowercase(),
-            version.to_lowercase(),
-            id,
-            version
+            self.package_base, id_lower, version_lower, id_lower, version_lower
         )
     }
 

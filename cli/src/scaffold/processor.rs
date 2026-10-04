@@ -648,6 +648,8 @@ impl Scaffolder {
             "test".to_string(),
             serde_json::Value::String("node --test test/scaffold.test.cjs".to_string()),
         );
+        // This file stays in the claimed staging tree until atomic publication.
+        // File này ở trong cây staging đã claim cho tới khi publish nguyên tử.
         std::fs::write(&package_path, serde_json::to_vec_pretty(&manifest)?)?;
 
         let smoke_test = target.join("test/scaffold.test.cjs");

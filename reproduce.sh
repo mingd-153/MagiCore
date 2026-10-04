@@ -97,7 +97,8 @@ echo "☕ Grab a coffee while this runs..."
 echo ""
 
 # Run with error handling
-if ./scripts/run_benchmark_native.sh; then
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if /usr/bin/env -i PATH="$PATH" HOME="${HOME:-}" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-C.UTF-8}" CI="${CI:-}" GITHUB_ACTIONS="${GITHUB_ACTIONS:-}" GITHUB_WORKSPACE="${GITHUB_WORKSPACE:-}" MGC_BIN="${MGC_BIN:-}" MGC_BINARY="${MGC_BINARY:-}" MGC_CACHE_DIR="${MGC_CACHE_DIR:-}" PACKAGE_JSON="${PACKAGE_JSON:-}" MAGICORE_REPO_ROOT="${MAGICORE_REPO_ROOT:-}" TEST_HOME="${TEST_HOME:-}" "$SCRIPT_DIR/benchmark/scripts/run_benchmark_native.sh"; then
   echo ""
   echo "✅ Benchmarks completed successfully!"
 else

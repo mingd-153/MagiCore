@@ -22,7 +22,7 @@ for i in $(seq 1 $TOTAL_RUNS); do
     echo "[Run $i/$TOTAL_RUNS] Starting $PM_NAME benchmark..."
 
     # Call existing benchmark script
-    if bash "$SCRIPT_DIR/run_benchmark.sh" "$PM_NAME" "$i" 2>&1 | tee "$RESULTS_DIR/${PM_NAME}_run${i}.log"; then
+  if /usr/bin/env -i PATH="$PATH" HOME="${HOME:-}" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-C.UTF-8}" MGC_BIN="${MGC_BIN:-}" PACKAGE_JSON="${PACKAGE_JSON:-}" bash "$SCRIPT_DIR/run_benchmark.sh" "$PM_NAME" "$i" 2>&1 | tee "$RESULTS_DIR/${PM_NAME}_run${i}.log"; then
         echo "Run $i completed"
     else
         echo "WARN: Run $i failed (exit code $?)"
