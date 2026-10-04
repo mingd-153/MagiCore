@@ -256,14 +256,29 @@ class LifecycleEnvironmentIsolation(unittest.TestCase):
         script = (
             Path(__file__).resolve().parent.parent / "scripts" / "bootstrap_flutter_sdk.sh"
         )
+
+        def bash_path(path):
+            value = os.fspath(path)
+            if os.name != "nt":
+                return value
+            converted = subprocess.run(
+                ["bash", "-c", 'cygpath -u "$1"', "bash-path", value],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(converted.returncode, 0, converted.stderr)
+            return converted.stdout.strip()
+
         with tempfile.TemporaryDirectory(prefix="flutter sdk bootstrap ") as tmp:
             temp_root = Path(tmp)
             sdk_root = temp_root / "fake Flutter SDK"
+            bash_sdk_root = bash_path(sdk_root)
             expected_args = [
                 "pub",
                 "--suppress-analytics",
                 "--directory",
-                str(sdk_root / "packages" / "flutter_tools"),
+                f"{bash_sdk_root}/packages/flutter_tools",
                 "get",
                 "--example",
             ]
@@ -293,15 +308,15 @@ class LifecycleEnvironmentIsolation(unittest.TestCase):
             env = os.environ.copy()
             env.update(
                 {
-                    "FLUTTER_ROOT": str(sdk_root),
+                    "FLUTTER_ROOT": bash_sdk_root,
                     "RUNNER_OS": "Linux",
-                    "CAPTURED_ARGS": str(capture),
-                    "FLUTTER_CAPTURED_ARGS": str(flutter_capture),
-                    "BOOTSTRAP_STEPS": str(bootstrap_steps),
+                    "CAPTURED_ARGS": bash_path(capture),
+                    "FLUTTER_CAPTURED_ARGS": bash_path(flutter_capture),
+                    "BOOTSTRAP_STEPS": bash_path(bootstrap_steps),
                 }
             )
             result = subprocess.run(
-                ["bash", str(script)],
+                ["bash", bash_path(script)],
                 cwd=temp_root,
                 env=env,
                 capture_output=True,
