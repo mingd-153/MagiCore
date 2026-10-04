@@ -128,6 +128,14 @@ jobs:
           flutter-version: "3.47.4"
           channel: "stable"
 
+      # Build Flutter's SDK tooling in its runner cache before lanes redirect
+      # HOME/PUB_CACHE into isolated sandboxes.
+      # Dựng Flutter SDK trong cache tạm riêng của job trước khi lane cô lập HOME/PUB_CACHE.
+      - name: Warm Flutter SDK toolchain
+        run: flutter --version
+        env:
+          PUB_CACHE: ${{ runner.temp }}/flutter-pub-cache
+
       - name: Install Linux build deps (flutter lane)
         if: matrix.os == 'ubuntu-latest'
         run: |
@@ -146,6 +154,7 @@ jobs:
         env:
           MGC_LIFECYCLE_BIN: ./target/debug/mgc
           MGC_LIFECYCLE_MATRIX_OUT: docs/specs/lifecycleCapabilityMatrix.json
+          PUB_CACHE: ${{ runner.temp }}/flutter-pub-cache
 
       - name: Print per-lane verdicts into the log (evidence, incl. Windows)
         # Print every lane before the cross-platform gate for actionable CI logs.

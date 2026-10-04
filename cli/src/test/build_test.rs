@@ -423,6 +423,26 @@ fn cdk_build_recognizes_windows_cmd_shim_as_installed() {
 
 #[cfg(feature = "clo")]
 #[test]
+fn cdk_synth_disables_background_telemetry() {
+    let local_bin = Path::new("/lane/project/node_modules/.bin");
+    let env = super::cloud_cdk_synth_env(local_bin).unwrap();
+
+    assert_eq!(
+        env.iter()
+            .find(|(key, _)| key == "CDK_DISABLE_CLI_TELEMETRY")
+            .map(|(_, value)| value.as_str()),
+        Some("true")
+    );
+    assert_eq!(
+        env.iter()
+            .find(|(key, _)| key == "PATH")
+            .and_then(|(_, value)| std::env::split_paths(value).next()),
+        Some(local_bin.to_path_buf())
+    );
+}
+
+#[cfg(feature = "clo")]
+#[test]
 fn build_cloud_fails_when_toolchain_missing() {
     let tmp = std::env::temp_dir().join(format!("mgc-build-cloud-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);

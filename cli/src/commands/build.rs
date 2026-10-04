@@ -732,6 +732,22 @@ fn cloud_local_executable_exists(root: &Path, bin_name: &str, windows: bool) -> 
 }
 
 #[cfg(feature = "clo")]
+fn cloud_cdk_synth_env(local_bin: &Path) -> Result<Vec<(String, String)>> {
+    Ok(vec![
+        (
+            "PATH".to_string(),
+            prepend_path(local_bin)?.to_string_lossy().to_string(),
+        ),
+        // CDK telemetry deliberately runs in a short-lived background child;
+        // disable it so the process-tree guard sees only synth work.
+        // Telemetry CDK chủ động chạy bằng process nền ngắn hạn; tắt nó để
+        // guard cây process chỉ theo dõi đúng công việc synth.
+        // Source: https://docs.aws.amazon.com/cdk/v2/guide/cli-telemetry.html
+        ("CDK_DISABLE_CLI_TELEMETRY".to_string(), "true".to_string()),
+    ])
+}
+
+#[cfg(feature = "clo")]
 async fn build_cloud(root: &Path) -> Result<()> {
     let kind = mgc_cloud_adapter::detect_type(root)
         .ok_or_else(|| crate::error::no_framework_detected("cloud", root))?;
@@ -749,10 +765,7 @@ async fn build_cloud(root: &Path) -> Result<()> {
                 .map(|a| a.to_string_lossy().to_string())
                 .collect::<Vec<_>>();
             let local_bin = root.join("node_modules").join(".bin");
-            let env = vec![(
-                "PATH".to_string(),
-                prepend_path(&local_bin)?.to_string_lossy().to_string(),
-            )];
+            let env = cloud_cdk_synth_env(&local_bin)?;
             info(&format!("cdk synth: node {}", args.join(" ")));
             let opts = mgc_exec::prelude::ExecOptions {
                 cwd: Some(root.to_path_buf()),

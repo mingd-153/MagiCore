@@ -2941,6 +2941,48 @@ def lifecycle_environment(sandbox: str, project_path: str) -> dict[str, str]:
     return env
 
 
+def lifecycle_step_environment(
+    lane: dict,
+    step: str,
+    lane_env: dict[str, str],
+    flutter_sdk_pub_cache: str,
+) -> dict[str, str]:
+    """Use the warmed SDK Pub cache only for Flutter test/build commands.
+    (Chỉ dùng Pub cache SDK đã làm nóng cho test/build Flutter.)"""
+    if (lane.get("core"), lane.get("language")) == ("app", "flutter") and step in {
+        "test",
+        "build",
+    }:
+        # MgC project dependencies remain under its sandbox-owned store; this
+        # cache is for Flutter SDK self-bootstrap only, not project resolution.
+        # Dependency project vẫn ở store cô lập của MgC; cache này chỉ phục vụ
+        # Flutter SDK tự khởi tạo, không dùng để resolve dependency project.
+        step_env = lane_env.copy()
+        step_env["PUB_CACHE"] = flutter_sdk_pub_cache
+        return step_env
+    return lane_env
+
+
+def flutter_sdk_pub_cache_directory(
+    host_environment: dict[str, str], windows: bool = os.name == "nt"
+) -> str:
+    """Resolve the job-local cache warmed for Flutter's SDK tool.
+    (Tìm cache riêng của job đã dùng để làm nóng công cụ Flutter SDK.)"""
+    configured = host_environment.get("PUB_CACHE")
+    if configured:
+        return os.path.abspath(configured)
+    if windows:
+        local_app_data = host_environment.get("LOCALAPPDATA")
+        if local_app_data:
+            return os.path.join(local_app_data, "Pub", "Cache")
+    host_home = (
+        host_environment.get("HOME")
+        or host_environment.get("USERPROFILE")
+        or os.path.expanduser("~")
+    )
+    return os.path.join(host_home, ".pub-cache")
+
+
 def pulumi_local_environment(sandbox: str, environment: dict[str, str]) -> dict[str, str]:
     """Isolate Pulumi state locally and remove inherited cloud credentials.
     (Cô lập state Pulumi trong sandbox và bỏ credential cloud từ host.)"""
@@ -3046,6 +3088,7 @@ def run_lane(mgc_bin: str, lane: dict) -> dict:
     project_dir = lane.get("project_dir", lane["scaffold"][-1])
     project_path = os.path.join(sandbox, project_dir)
     lane_env = lifecycle_environment(sandbox, project_path)
+    flutter_sdk_pub_cache = flutter_sdk_pub_cache_directory(os.environ)
     if (lane.get("core"), lane.get("language")) == ("clo", "pulumi"):
         lane_env = pulumi_local_environment(sandbox, lane_env)
 
@@ -3067,17 +3110,26 @@ def run_lane(mgc_bin: str, lane: dict) -> dict:
             shutil.rmtree(sandbox, ignore_errors=True)
             return {"dims": dims, "detail": detail, "toolchain_available": False}
 
-    def run_step(argv: list[str], subdir: str = "") -> tuple[int, str]:
+    def run_step(
+        argv: list[str], subdir: str = "", lifecycle_step: str = ""
+    ) -> tuple[int, str]:
         # Steps run INSIDE the scaffolded project (cwd = sandbox/<name>)
         # — install/test/build belong to the project, not the sandbox
         # root where two projects could otherwise collide.
         # Bước chạy BÊN TRONG project (cwd = sandbox/<name>) —
         # install/test/build thuộc project, không thuộc root sandbox.
         cwd = os.path.join(sandbox, subdir) if subdir else sandbox
+        step_env = (
+            lifecycle_step_environment(
+                lane, lifecycle_step, lane_env, flutter_sdk_pub_cache
+            )
+            if lifecycle_step
+            else lane_env
+        )
         try:
             proc = run_text_capture(
                 [mgc_bin] + argv, capture_output=True, text=True,
-                cwd=cwd, env=lane_env, timeout=timeout_s,
+                cwd=cwd, env=step_env, timeout=timeout_s,
             )
             return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
         except subprocess.TimeoutExpired:
@@ -3258,7 +3310,7 @@ def run_lane(mgc_bin: str, lane: dict) -> dict:
             # ghi `unverified`, không thỏa điều gì (fail-closed, schema v7).)
             dims[step] = STATUS_UNVERIFIED
             continue
-        rc, out = run_step(argv, subdir=project_dir)
+        rc, out = run_step(argv, subdir=project_dir, lifecycle_step=step)
         if rc != 0:
             dims[step] = STATUS_FAILED
             detail[f"{step}_output"] = out[-2000:]
