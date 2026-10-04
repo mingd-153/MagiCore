@@ -2946,41 +2946,57 @@ def lifecycle_step_environment(
     step: str,
     lane_env: dict[str, str],
     flutter_sdk_pub_cache: str,
+    flutter_sdk_home: str = "",
 ) -> dict[str, str]:
-    """Use the warmed SDK Pub cache only for Flutter test/build commands.
-    (Chỉ dùng Pub cache SDK đã làm nóng cho test/build Flutter.)"""
+    """Use the warmed job-local Flutter SDK home/cache for test/build only.
+    (Chỉ dùng HOME/cache Flutter SDK tạm của job cho test/build.)"""
     if (lane.get("core"), lane.get("language")) == ("app", "flutter") and step in {
         "test",
         "build",
     }:
+        if not flutter_sdk_home:
+            # Local/unwarmed runs keep the lane-private HOME and Pub cache.
+            # Local/chưa warm thì giữ HOME và Pub cache riêng của lane.
+            return lane_env
         # MgC project dependencies remain under its sandbox-owned store; this
-        # cache is for Flutter SDK self-bootstrap only, not project resolution.
-        # Dependency project vẫn ở store cô lập của MgC; cache này chỉ phục vụ
-        # Flutter SDK tự khởi tạo, không dùng để resolve dependency project.
+        # home/cache matches the pre-warm step so Flutter does not bootstrap
+        # its own SDK packages from a different HOME; it is not project resolution.
+        # HOME/cache trùng bước warm để Flutter không bootstrap package SDK từ
+        # HOME khác; chúng không dùng để resolve dependency của project.
         step_env = lane_env.copy()
         step_env["PUB_CACHE"] = flutter_sdk_pub_cache
+        if flutter_sdk_home:
+            step_env["HOME"] = flutter_sdk_home
+            step_env["USERPROFILE"] = flutter_sdk_home
         return step_env
     return lane_env
 
 
 def flutter_sdk_pub_cache_directory(
-    host_environment: dict[str, str], windows: bool = os.name == "nt"
+    host_environment: dict[str, str],
 ) -> str:
     """Resolve the job-local cache warmed for Flutter's SDK tool.
     (Tìm cache riêng của job đã dùng để làm nóng công cụ Flutter SDK.)"""
     configured = host_environment.get("PUB_CACHE")
     if configured:
         return os.path.abspath(configured)
-    if windows:
-        local_app_data = host_environment.get("LOCALAPPDATA")
-        if local_app_data:
-            return os.path.join(local_app_data, "Pub", "Cache")
-    host_home = (
-        host_environment.get("HOME")
-        or host_environment.get("USERPROFILE")
-        or os.path.expanduser("~")
-    )
-    return os.path.join(host_home, ".pub-cache")
+    job_home = host_environment.get("FLUTTER_SDK_HOME")
+    if job_home:
+        return os.path.join(os.path.abspath(job_home), ".pub-cache")
+    # Never substitute the developer/runner account cache for an isolated lane.
+    # Không bao giờ thay cache riêng của lane bằng cache tài khoản developer/runner.
+    return ""
+
+
+def flutter_sdk_home_directory(host_environment: dict[str, str]) -> str:
+    """Resolve the job-local HOME shared by Flutter warm and runtime steps.
+    (Tìm HOME riêng của job dùng chung cho bước warm và Flutter runtime.)"""
+    configured = host_environment.get("FLUTTER_SDK_HOME")
+    if configured:
+        return os.path.abspath(configured)
+    # Local matrix runs without the CI warm step keep their existing lane HOME.
+    # Chạy matrix local không có bước warm CI thì giữ HOME riêng hiện tại của lane.
+    return ""
 
 
 def pulumi_local_environment(sandbox: str, environment: dict[str, str]) -> dict[str, str]:
@@ -3089,6 +3105,7 @@ def run_lane(mgc_bin: str, lane: dict) -> dict:
     project_path = os.path.join(sandbox, project_dir)
     lane_env = lifecycle_environment(sandbox, project_path)
     flutter_sdk_pub_cache = flutter_sdk_pub_cache_directory(os.environ)
+    flutter_sdk_home = flutter_sdk_home_directory(os.environ)
     if (lane.get("core"), lane.get("language")) == ("clo", "pulumi"):
         lane_env = pulumi_local_environment(sandbox, lane_env)
 
@@ -3121,7 +3138,7 @@ def run_lane(mgc_bin: str, lane: dict) -> dict:
         cwd = os.path.join(sandbox, subdir) if subdir else sandbox
         step_env = (
             lifecycle_step_environment(
-                lane, lifecycle_step, lane_env, flutter_sdk_pub_cache
+                lane, lifecycle_step, lane_env, flutter_sdk_pub_cache, flutter_sdk_home
             )
             if lifecycle_step
             else lane_env

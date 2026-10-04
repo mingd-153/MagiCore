@@ -84,18 +84,21 @@ class LifecycleEnvironmentIsolation(unittest.TestCase):
         original = dict(lane_env)
 
         test_env = matrix_module.lifecycle_step_environment(
-            lane, "test", lane_env, "/runner/.pub-cache"
+            lane, "test", lane_env, "/runner/.pub-cache", "/runner/flutter-sdk-home"
         )
         build_env = matrix_module.lifecycle_step_environment(
-            lane, "build", lane_env, "/runner/.pub-cache"
+            lane, "build", lane_env, "/runner/.pub-cache", "/runner/flutter-sdk-home"
         )
         install_env = matrix_module.lifecycle_step_environment(
-            lane, "install", lane_env, "/runner/.pub-cache"
+            lane, "install", lane_env, "/runner/.pub-cache", "/runner/flutter-sdk-home"
         )
 
         self.assertEqual(test_env["PUB_CACHE"], "/runner/.pub-cache")
         self.assertEqual(build_env["PUB_CACHE"], "/runner/.pub-cache")
-        self.assertEqual(test_env["HOME"], lane_env["HOME"])
+        self.assertEqual(test_env["HOME"], "/runner/flutter-sdk-home")
+        self.assertEqual(test_env["USERPROFILE"], "/runner/flutter-sdk-home")
+        self.assertEqual(build_env["HOME"], "/runner/flutter-sdk-home")
+        self.assertEqual(install_env["HOME"], lane_env["HOME"])
         self.assertEqual(install_env["PUB_CACHE"], "/tmp/lane/.cache/pub")
         self.assertEqual(lane_env, original)
         self.assertIsNot(test_env, lane_env)
@@ -109,6 +112,18 @@ class LifecycleEnvironmentIsolation(unittest.TestCase):
         )
 
         self.assertIs(step_env, lane_env)
+        self.assertEqual(step_env["PUB_CACHE"], "/tmp/lane/.cache/pub")
+
+    def test_local_flutter_runtime_keeps_lane_home_and_pub_cache_without_job_override(self):
+        lane = {"core": "app", "language": "flutter"}
+        lane_env = {"HOME": "/tmp/lane/.home", "PUB_CACHE": "/tmp/lane/.cache/pub"}
+
+        step_env = matrix_module.lifecycle_step_environment(
+            lane, "test", lane_env, "/home/runner/.pub-cache"
+        )
+
+        self.assertIs(step_env, lane_env)
+        self.assertEqual(step_env["HOME"], "/tmp/lane/.home")
         self.assertEqual(step_env["PUB_CACHE"], "/tmp/lane/.cache/pub")
 
     def test_flutter_sdk_is_warmed_before_the_lifecycle_matrix_runs(self):
@@ -128,6 +143,13 @@ class LifecycleEnvironmentIsolation(unittest.TestCase):
         job_cache = "PUB_CACHE: ${{ runner.temp }}/flutter-pub-cache"
         self.assertIn(job_cache, workflow[warm:matrix])
         self.assertIn(job_cache, workflow[matrix:])
+        job_home = "FLUTTER_SDK_HOME: ${{ runner.temp }}/flutter-sdk-home"
+        self.assertIn(job_home, workflow[warm:matrix])
+        self.assertIn(job_home, workflow[matrix:])
+        self.assertIn("HOME: ${{ runner.temp }}/flutter-sdk-home", workflow[warm:matrix])
+        self.assertIn(
+            "USERPROFILE: ${{ runner.temp }}/flutter-sdk-home", workflow[warm:matrix]
+        )
 
     def test_flutter_sdk_cache_uses_the_explicit_job_local_path(self):
         cache = matrix_module.flutter_sdk_pub_cache_directory(
@@ -146,20 +168,40 @@ class LifecycleEnvironmentIsolation(unittest.TestCase):
 
     def test_flutter_sdk_cache_uses_the_windows_default_when_unconfigured(self):
         cache = matrix_module.flutter_sdk_pub_cache_directory(
-            {"LOCALAPPDATA": "C:/Users/runner/AppData/Local"}, windows=True
+            {"LOCALAPPDATA": "C:/Users/runner/AppData/Local"}
+        )
+
+        self.assertEqual(cache, "")
+
+    def test_flutter_sdk_cache_uses_home_default_on_posix_when_unconfigured(self):
+        cache = matrix_module.flutter_sdk_pub_cache_directory(
+            {"HOME": "/home/runner"}
+        )
+
+        self.assertEqual(cache, "")
+
+    def test_flutter_sdk_pub_cache_without_override_stays_below_job_home(self):
+        cache = matrix_module.flutter_sdk_pub_cache_directory(
+            {"FLUTTER_SDK_HOME": "/runner/flutter-sdk-home"}
         )
 
         self.assertEqual(
             cache,
-            os.path.join("C:/Users/runner/AppData/Local", "Pub", "Cache"),
+            os.path.join(os.path.abspath("/runner/flutter-sdk-home"), ".pub-cache"),
         )
 
-    def test_flutter_sdk_cache_uses_home_default_on_posix_when_unconfigured(self):
-        cache = matrix_module.flutter_sdk_pub_cache_directory(
-            {"HOME": "/home/runner"}, windows=False
+    def test_flutter_sdk_home_uses_only_explicit_job_local_override(self):
+        home = matrix_module.flutter_sdk_home_directory(
+            {"FLUTTER_SDK_HOME": "relative/flutter-sdk-home", "HOME": "/home/runner"}
         )
 
-        self.assertEqual(cache, "/home/runner/.pub-cache")
+        self.assertTrue(os.path.isabs(home))
+        self.assertEqual(os.path.basename(home), "flutter-sdk-home")
+
+    def test_flutter_sdk_home_does_not_fall_back_to_the_host_home(self):
+        home = matrix_module.flutter_sdk_home_directory({"HOME": "/home/runner"})
+
+        self.assertEqual(home, "")
 
     def test_lane_environment_overrides_host_store_and_project_cache(self):
         with patch.dict(

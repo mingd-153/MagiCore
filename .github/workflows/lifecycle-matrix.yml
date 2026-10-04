@@ -128,12 +128,16 @@ jobs:
           flutter-version: "3.47.4"
           channel: "stable"
 
-      # Build Flutter's SDK tooling in its runner cache before lanes redirect
-      # HOME/PUB_CACHE into isolated sandboxes.
-      # Dựng Flutter SDK trong cache tạm riêng của job trước khi lane cô lập HOME/PUB_CACHE.
+      # Warm Flutter with the same job-local HOME/PUB_CACHE later supplied to
+      # its monitored test/build process, so SDK package bootstrap stays stable.
+      # Warm Flutter cùng HOME/PUB_CACHE riêng của job sẽ truyền cho test/build;
+      # nhờ vậy bootstrap package SDK dùng đúng cùng một cache.
       - name: Warm Flutter SDK toolchain
         run: flutter --version
         env:
+          HOME: ${{ runner.temp }}/flutter-sdk-home
+          USERPROFILE: ${{ runner.temp }}/flutter-sdk-home
+          FLUTTER_SDK_HOME: ${{ runner.temp }}/flutter-sdk-home
           PUB_CACHE: ${{ runner.temp }}/flutter-pub-cache
 
       - name: Install Linux build deps (flutter lane)
@@ -154,6 +158,7 @@ jobs:
         env:
           MGC_LIFECYCLE_BIN: ./target/debug/mgc
           MGC_LIFECYCLE_MATRIX_OUT: docs/specs/lifecycleCapabilityMatrix.json
+          FLUTTER_SDK_HOME: ${{ runner.temp }}/flutter-sdk-home
           PUB_CACHE: ${{ runner.temp }}/flutter-pub-cache
 
       - name: Print per-lane verdicts into the log (evidence, incl. Windows)
