@@ -233,7 +233,7 @@ class LifecycleEnvironmentIsolation(unittest.TestCase):
                     "run: bash scripts/bootstrap_flutter_sdk.sh", workflow[warm:guarded]
                 )
 
-    def test_flutter_sdk_bootstrap_resolves_only_sdk_tool_dependencies(self):
+    def test_flutter_sdk_bootstrap_resolves_dependencies_and_warms_cli(self):
         script = (
             Path(__file__).resolve().parent.parent / "scripts" / "bootstrap_flutter_sdk.sh"
         ).read_text(encoding="utf-8")
@@ -244,9 +244,15 @@ class LifecycleEnvironmentIsolation(unittest.TestCase):
             'pub --suppress-analytics --directory "$sdk_root/packages/flutter_tools" get --example',
             script,
         )
+        self.assertIn('local flutter_bin="$sdk_root/bin/flutter"', script)
+        self.assertLess(
+            script.index('if [[ ! -x "$flutter_bin" ]]'),
+            script.index('"$dart_bin" pub --suppress-analytics'),
+        )
+        self.assertIn('"$flutter_bin" --version', script)
         self.assertNotIn("flutter test --help", script)
 
-    def test_flutter_sdk_bootstrap_invokes_dart_for_posix_and_windows_paths(self):
+    def test_flutter_sdk_bootstrap_invokes_dart_and_cli_for_posix_and_windows_paths(self):
         script = (
             Path(__file__).resolve().parent.parent / "scripts" / "bootstrap_flutter_sdk.sh"
         )
@@ -265,18 +271,33 @@ class LifecycleEnvironmentIsolation(unittest.TestCase):
             dart = sdk_root / "bin" / "cache" / "dart-sdk" / "bin" / "dart"
             dart.parent.mkdir(parents=True, exist_ok=True)
             dart.write_text(
-                "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CAPTURED_ARGS\"\n",
+                "#!/bin/sh\n"
+                "printf '%s\\n' \"$@\" > \"$CAPTURED_ARGS\"\n"
+                "printf '%s\\n' dart >> \"$BOOTSTRAP_STEPS\"\n",
                 encoding="utf-8",
             )
             dart.chmod(0o755)
 
+            flutter = sdk_root / "bin" / "flutter"
+            flutter_capture = temp_root / "flutter-args.txt"
+            flutter.write_text(
+                "#!/bin/sh\n"
+                "printf '%s\\n' \"$@\" > \"$FLUTTER_CAPTURED_ARGS\"\n"
+                "printf '%s\\n' flutter >> \"$BOOTSTRAP_STEPS\"\n",
+                encoding="utf-8",
+            )
+            flutter.chmod(0o755)
+
             capture = temp_root / "args-Linux.txt"
+            bootstrap_steps = temp_root / "bootstrap-steps.txt"
             env = os.environ.copy()
             env.update(
                 {
                     "FLUTTER_ROOT": str(sdk_root),
                     "RUNNER_OS": "Linux",
                     "CAPTURED_ARGS": str(capture),
+                    "FLUTTER_CAPTURED_ARGS": str(flutter_capture),
+                    "BOOTSTRAP_STEPS": str(bootstrap_steps),
                 }
             )
             result = subprocess.run(
@@ -289,7 +310,16 @@ class LifecycleEnvironmentIsolation(unittest.TestCase):
             )
 
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(capture.read_text(encoding="utf-8").splitlines(), expected_args)
+            self.assertEqual(
+                capture.read_text(encoding="utf-8").splitlines(), expected_args
+            )
+            self.assertEqual(
+                flutter_capture.read_text(encoding="utf-8").splitlines(), ["--version"]
+            )
+            self.assertEqual(
+                bootstrap_steps.read_text(encoding="utf-8").splitlines(),
+                ["dart", "flutter"],
+            )
 
             windows_sdk_root = "C:/ci/fake Flutter SDK"
             resolve_windows_dart = (

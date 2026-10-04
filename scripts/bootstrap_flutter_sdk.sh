@@ -43,9 +43,19 @@ bootstrap_flutter_sdk() {
     return 1
   fi
 
+  local flutter_bin="$sdk_root/bin/flutter"
+  if [[ ! -x "$flutter_bin" ]]; then
+    echo "Flutter CLI script is missing or not executable: $flutter_bin" >&2
+    return 1
+  fi
+
   # `--directory` keeps pub resolution inside the installed Flutter SDK, never the app.
   # `--directory` giữ Pub trong SDK Flutter đã cài, không đụng dependency của ứng dụng.
   "$dart_bin" pub --suppress-analytics --directory "$sdk_root/packages/flutter_tools" get --example
+
+  # Flutter can lazily build its CLI and spawn Pub on the first invocation.
+  # Flutter có thể dựng CLI trễ và spawn Pub ở lần gọi đầu tiên.
+  "$flutter_bin" --version
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
