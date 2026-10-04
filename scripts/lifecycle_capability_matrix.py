@@ -71,6 +71,29 @@ def run_text_capture(*args, **kwargs):
     return subprocess.run(*args, **kwargs)
 
 
+def github_actions_annotation_escape(value: object) -> str:
+    """Escape untrusted text before writing a GitHub workflow command.
+    (Escape text không tin cậy trước khi ghi thành workflow command GitHub.)
+    """
+    return str(value).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
+def github_actions_error_annotations(failures: list[str]) -> list[str]:
+    """Format at most ten actionable failure annotations for one step.
+    (Tạo tối đa mười annotation lỗi có ích cho một step.)
+    """
+    if len(failures) > 10:
+        messages = failures[:9] + [
+            f"{len(failures) - 9} additional gate failures; full details are in this step log"
+        ]
+    else:
+        messages = failures
+    return [
+        "::error::" + github_actions_annotation_escape(message)
+        for message in messages
+    ]
+
+
 ALL_DEPENDENCY_OPERATIONS = (
     "install", "add", "remove", "update", "list", "resolve", "lock",
     "fetch", "verify", "store", "materialize", "frozen-install",

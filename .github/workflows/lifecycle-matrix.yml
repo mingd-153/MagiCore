@@ -214,6 +214,7 @@ jobs:
               native_pm_lane_errors,
               lifecycle_lane_owner_contract_errors,
               release_scope_out_reason,
+              github_actions_error_annotations,
           )
 
           data = json.load(open("docs/specs/lifecycleCapabilityMatrix.json"))
@@ -387,8 +388,15 @@ jobs:
                   f"unexpected={sorted(seen - RELEASE_SCOPE)}"
               )
           if failures:
-              print("LIFECYCLE NON-REGRESSION BLOCKED:")
-              print("\n".join(failures))
+              # Emit bounded, escaped annotations so public run metadata identifies
+              # failed evidence without weakening the fail-closed gate.
+              # Phát annotation có giới hạn và escape để chỉ rõ evidence lỗi mà
+              # không nới lỏng gate fail-closed.
+              for failure in failures:
+                  print("LIFECYCLE GATE FAILURE: " + json.dumps(failure))
+              for annotation in github_actions_error_annotations(failures):
+                  print(annotation)
+              print(f"LIFECYCLE NON-REGRESSION BLOCKED: {len(failures)} gate failures")
               sys.exit(1)
           print("OK: release-blocking lifecycle lanes passed: "
                 + ", ".join(
