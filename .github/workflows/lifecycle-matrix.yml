@@ -178,9 +178,9 @@ jobs:
         # lifecycle. Claim MGC-native phải có native-PM evidence, kể cả khi
         # lane scope-out. Scope-out vẫn hiện cùng
         # lý do từ source; thiếu evidence bắt buộc hoặc không rõ vẫn fail.)
-        # Use the OS-specific Python launcher already selected by the matrix.
-        # Dùng lệnh Python theo từng OS đã chọn trong matrix.
-        shell: ${{ matrix.python_cmd }} {0}
+        # setup-python exposes the same `python` launcher on every runner OS.
+        # setup-python cung cấp cùng lệnh `python` trên mọi hệ điều hành runner.
+        shell: python {0}
         run: |
           import json, sys
           sys.path.insert(0, "scripts")

@@ -753,7 +753,8 @@ class NativePackageManagerVerdict(unittest.TestCase):
             / "lifecycle-matrix.yml"
         ).read_text(encoding="utf-8")
         self.assertIn("os: [ubuntu-latest, macos-latest, windows-latest]", workflow)
-        self.assertIn("shell: ${{ matrix.python_cmd }} {0}", workflow)
+        self.assertIn("shell: python {0}", workflow)
+        self.assertNotIn("shell: ${{ matrix.", workflow)
         self.assertNotIn("if: matrix.os != 'windows-latest'", workflow)
         self.assertNotIn("windows-evidence-promotion:", workflow)
 
