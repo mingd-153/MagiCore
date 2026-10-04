@@ -533,20 +533,45 @@ type CachedFileIdentity = (u32, u64);
 #[cfg(not(any(unix, windows)))]
 type CachedFileIdentity = ();
 
-fn cached_file_identity(metadata: &Metadata) -> Option<CachedFileIdentity> {
+#[allow(unsafe_code)]
+pub(crate) fn cached_file_identity(file: &File, metadata: &Metadata) -> Option<CachedFileIdentity> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
+        let _ = file;
         Some((metadata.dev(), metadata.ino()))
     }
     #[cfg(windows)]
     {
-        use std::os::windows::fs::MetadataExt;
-        Some((metadata.volume_serial_number()?, metadata.file_index()?))
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Storage::FileSystem::{
+            BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
+        };
+
+        let mut information = std::mem::MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
+        // SAFETY: `file` owns a live handle and `information` is writable for
+        // the full structure; Windows initializes it when the call succeeds.
+        // (AN TOÀN: `file` sở hữu handle còn sống và `information` ghi được
+        // toàn bộ struct; Windows khởi tạo struct khi lời gọi thành công.)
+        let succeeded = unsafe {
+            GetFileInformationByHandle(
+                file.as_raw_handle() as windows_sys::Win32::Foundation::HANDLE,
+                information.as_mut_ptr(),
+            )
+        };
+        if succeeded == 0 {
+            return None;
+        }
+        // SAFETY: Windows returned success, so it initialized every field.
+        // (AN TOÀN: Windows trả thành công nên mọi field đã được khởi tạo.)
+        let information = unsafe { information.assume_init() };
+        let file_index =
+            (u64::from(information.nFileIndexHigh) << 32) | u64::from(information.nFileIndexLow);
+        Some((information.dwVolumeSerialNumber, file_index))
     }
     #[cfg(not(any(unix, windows)))]
     {
-        let _ = metadata;
+        let _ = (file, metadata);
         Some(())
     }
 }
@@ -788,7 +813,7 @@ pub(crate) fn cached_archive_file_matches(
             target.display()
         ))
     })?;
-    if cached_file_identity(&opened_metadata) != Some(cached_metadata.identity)
+    if cached_file_identity(&file, &opened_metadata) != Some(cached_metadata.identity)
         || opened_metadata.len() != cached_metadata.len
         || metadata_is_executable(&opened_metadata) != cached_metadata.executable
     {
@@ -842,13 +867,22 @@ pub(crate) fn cached_package_files(
                 entry.path().display()
             ))
         })?;
-        let metadata = entry.metadata().map_err(|err| {
+        let Some(file) = open_cached_file_no_follow(root, relative).map_err(|err| {
             MgError::Other(format!(
-                "failed to inspect cached package file '{}': {err}",
+                "failed to securely open cached package file '{}': {err}",
+                entry.path().display()
+            ))
+        })?
+        else {
+            return Ok(None);
+        };
+        let metadata = file.metadata().map_err(|err| {
+            MgError::Other(format!(
+                "failed to inspect opened cached package file '{}': {err}",
                 entry.path().display()
             ))
         })?;
-        let Some(identity) = cached_file_identity(&metadata) else {
+        let Some(identity) = cached_file_identity(&file, &metadata) else {
             return Ok(None);
         };
         files.insert(

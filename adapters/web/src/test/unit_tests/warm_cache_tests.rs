@@ -626,3 +626,19 @@ fn cached_root_import_falls_back_for_nonstandard_archive_prefix() {
     assert!(!imported);
     assert!(!package_root.join("content").exists());
 }
+
+#[test]
+fn cached_file_identity_is_stable_for_reopened_file_handle() {
+    let root = tempdir_real().unwrap();
+    let path = root.path().join("entry.js");
+    std::fs::write(&path, b"identity probe").unwrap();
+
+    let first = std::fs::File::open(&path).unwrap();
+    let first_metadata = first.metadata().unwrap();
+    let second = std::fs::File::open(&path).unwrap();
+    let second_metadata = second.metadata().unwrap();
+
+    let first_identity = cached_file_identity(&first, &first_metadata).unwrap();
+    let second_identity = cached_file_identity(&second, &second_metadata).unwrap();
+    assert_eq!(first_identity, second_identity);
+}
