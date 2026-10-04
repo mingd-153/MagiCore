@@ -188,6 +188,39 @@ class LifecycleEnvironmentIsolation(unittest.TestCase):
         self.assertLess(warm, tests)
         self.assertIn("run: flutter test --help", workflow[warm:tests])
 
+    def test_guarded_flutter_workflows_warm_command_bootstrap(self):
+        workflow_dir = Path(__file__).resolve().parent.parent / ".github" / "workflows"
+        workflows = [
+            (
+                "release-binary-e2e.yml",
+                "Setup Flutter (app lane)",
+                "Warm Flutter command bootstrap for guarded app lifecycle",
+                "Lifecycle app flutter (create → install → test → build)",
+            ),
+            (
+                "delegated-compatibility-matrix.yml",
+                "Setup Flutter",
+                "Warm Flutter command bootstrap for guarded app lifecycle",
+                "Build mgc binary",
+            ),
+            (
+                "security.yml",
+                "Setup Flutter",
+                "Warm Flutter command bootstrap for guarded audit",
+                "Install cargo-audit (rust parity lane on this SHA)",
+            ),
+        ]
+
+        for filename, setup_name, warm_name, guarded_step in workflows:
+            with self.subTest(workflow=filename):
+                workflow = (workflow_dir / filename).read_text(encoding="utf-8")
+                setup = workflow.index(setup_name)
+                warm = workflow.index(warm_name)
+                guarded = workflow.index(guarded_step, warm)
+                self.assertLess(setup, warm)
+                self.assertLess(warm, guarded)
+                self.assertIn("run: flutter test --help", workflow[warm:guarded])
+
     def test_flutter_sdk_cache_uses_the_explicit_job_local_path(self):
         cache = matrix_module.flutter_sdk_pub_cache_directory(
             {"PUB_CACHE": "/runner/_temp/flutter-pub-cache", "HOME": "/home/runner"}
