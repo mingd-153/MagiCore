@@ -253,8 +253,6 @@ class LifecycleEnvironmentIsolation(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="flutter sdk bootstrap ") as tmp:
             temp_root = Path(tmp)
             sdk_root = temp_root / "fake Flutter SDK"
-            fake_bin = temp_root / "mock-bin"
-            fake_bin.mkdir()
             expected_args = [
                 "pub",
                 "--suppress-analytics",
@@ -293,15 +291,10 @@ class LifecycleEnvironmentIsolation(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(capture.read_text(encoding="utf-8").splitlines(), expected_args)
 
-            cygpath = fake_bin / "cygpath"
-            cygpath.write_text(
-                "#!/bin/sh\n[ \"$1\" = -u ] || exit 2\nprintf '%s\\n' \"$2\"\n",
-                encoding="utf-8",
-            )
-            cygpath.chmod(0o755)
-            windows_sdk_root = "/c/ci/fake Flutter SDK"
-            env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+            windows_sdk_root = "C:/ci/fake Flutter SDK"
             resolve_windows_dart = (
+                'cygpath() { [ "$1" = -u ] && [ "$2" = "C:/ci/fake Flutter SDK" ] || return 2; '
+                'printf "%s\\n" "/c/ci/fake Flutter SDK"; }; '
                 'source scripts/bootstrap_flutter_sdk.sh; '
                 'sdk_root="$(normalize_flutter_sdk_root "$1" "$2")"; '
                 'resolve_flutter_sdk_dart_bin "$sdk_root" "$2"'
