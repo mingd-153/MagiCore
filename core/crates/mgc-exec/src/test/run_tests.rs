@@ -777,8 +777,7 @@ fn windows_job_scan_ignores_global_processes_outside_job_membership()
         snapshot(102, Some(100), "LsaIso.exe", &[]),
     ];
 
-    let scanned =
-        super::inspect_windows_job_processes(100, &[100, 101], &processes, &[], |_| Ok(true))?;
+    let scanned = super::inspect_windows_job_processes(100, &[100, 101], &processes, &[])?;
 
     assert_eq!(scanned.descendants, [(101, Some("npm".to_owned()))]);
     Ok(())
@@ -806,8 +805,7 @@ fn windows_job_scan_fails_closed_for_unreadable_job_members()
         },
     ];
 
-    let error =
-        super::inspect_windows_job_processes(100, &[100, 102], &processes, &[], |_| Ok(true))?;
+    let error = super::inspect_windows_job_processes(100, &[100, 102], &processes, &[])?;
 
     assert_eq!(
         error.missing_command_line,
@@ -817,6 +815,67 @@ fn windows_job_scan_fails_closed_for_unreadable_job_members()
         super::windows_job_scan_from_inspection(error),
         super::WindowsProcessScan::MissingCommandLine { pid: 102, .. }
     ));
+    Ok(())
+}
+
+#[test]
+fn windows_job_member_capture_fails_closed_when_membership_cannot_be_verified()
+-> Result<(), Box<dyn std::error::Error>> {
+    let error = match super::capture_windows_job_members(100, &[100, 101], |_| {
+        Err::<(), _>(anyhow::anyhow!(
+            "PID from the Job snapshot no longer belongs to the Job"
+        ))
+    }) {
+        Ok(_) => panic!("an unverifiable Job Object PID must fail closed"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("no longer belongs to the Job"));
+    Ok(())
+}
+
+#[test]
+fn windows_job_snapshot_scans_a_captured_child_that_exits_after_membership_check()
+-> Result<(), Box<dyn std::error::Error>> {
+    use std::ffi::OsString;
+
+    let captured = super::capture_windows_job_members(100, &[100, 101], |_| Ok(()))?;
+    let captured_pids = captured
+        .iter()
+        .map(|(process_id, _)| *process_id)
+        .collect::<Vec<_>>();
+    let process_snapshot = [super::WindowsProcessSnapshot {
+        pid: 101,
+        parent_pid: Some(100),
+        creation_time: Some(101),
+        image_name: "npm.exe".to_owned(),
+        command: vec![OsString::from("npm.exe"), OsString::from("install")],
+    }];
+
+    // Captured identity evidence remains authoritative after the process leaves the job.
+    // Bằng chứng danh tính đã chụp vẫn có hiệu lực sau khi process rời Job.
+    let inspection =
+        super::inspect_windows_job_processes(100, &captured_pids, &process_snapshot, &[])?;
+    assert_eq!(inspection.descendants, [(101, Some("npm".to_owned()))]);
+    Ok(())
+}
+
+#[test]
+fn windows_job_scan_fails_closed_for_captured_child_missing_snapshot()
+-> Result<(), Box<dyn std::error::Error>> {
+    let captured = super::capture_windows_job_members(100, &[100, 101], |_| Ok(()))?;
+    let captured_pids = captured
+        .iter()
+        .map(|(process_id, _)| *process_id)
+        .collect::<Vec<_>>();
+    let error = match super::inspect_windows_job_processes(100, &captured_pids, &[], &[]) {
+        Ok(_) => panic!("a captured Job Object member without metadata must fail closed"),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("cannot inspect captured Windows job child PID 101")
+    );
     Ok(())
 }
 

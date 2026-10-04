@@ -290,24 +290,59 @@ class LifecycleEnvironmentIsolation(unittest.TestCase):
             temp_root = Path(tmp)
             sdk_root = temp_root / "fake Flutter SDK"
             bash_sdk_root = bash_compatible_path(sdk_root)
+            flutter_tools_path = (
+                f"{sdk_root.as_posix()}/packages/flutter_tools"
+                if os.name == "nt"
+                else f"{bash_sdk_root}/packages/flutter_tools"
+            )
             expected_args = [
                 "pub",
                 "--suppress-analytics",
                 "--directory",
-                f"{bash_sdk_root}/packages/flutter_tools",
+                flutter_tools_path,
                 "get",
                 "--example",
             ]
 
-            dart = sdk_root / "bin" / "cache" / "dart-sdk" / "bin" / "dart"
-            dart.parent.mkdir(parents=True, exist_ok=True)
-            dart.write_text(
-                "#!/bin/sh\n"
-                "printf '%s\\n' \"$@\" > \"$CAPTURED_ARGS\"\n"
-                "printf '%s\\n' dart >> \"$BOOTSTRAP_STEPS\"\n",
-                encoding="utf-8",
+            dart = sdk_root / "bin" / "cache" / "dart-sdk" / "bin" / (
+                "dart.exe" if os.name == "nt" else "dart"
             )
-            dart.chmod(0o755)
+            dart.parent.mkdir(parents=True, exist_ok=True)
+            if os.name == "nt":
+                # Compile a native fake dart.exe so Windows exercises the complete bootstrap invocation.
+                # Biên dịch dart.exe giả để Windows chạy trọn luồng bootstrap.
+                fake_dart_source = temp_root / "fake_dart.rs"
+                fake_dart_source.write_text(
+                    r"""use std::{env, fs::{File, OpenOptions}, io::Write};
+fn main() {
+    let mut capture = File::create(env::var("CAPTURED_ARGS").unwrap()).unwrap();
+    for argument in env::args().skip(1) { writeln!(capture, "{argument}").unwrap(); }
+    let mut steps = OpenOptions::new().create(true).append(true).open(env::var("BOOTSTRAP_STEPS").unwrap()).unwrap();
+    writeln!(steps, "dart").unwrap();
+}
+""",
+                    encoding="utf-8",
+                )
+                compiled = subprocess.run(
+                    ["rustc", str(fake_dart_source), "--edition=2021", "-o", str(dart)],
+                    cwd=temp_root,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(
+                    compiled.returncode,
+                    0,
+                    f"stdout={compiled.stdout!r}; stderr={compiled.stderr!r}",
+                )
+            else:
+                dart.write_text(
+                    "#!/bin/sh\n"
+                    "printf '%s\\n' \"$@\" > \"$CAPTURED_ARGS\"\n"
+                    "printf '%s\\n' dart >> \"$BOOTSTRAP_STEPS\"\n",
+                    encoding="utf-8",
+                )
+                dart.chmod(0o755)
 
             flutter = sdk_root / "bin" / "flutter"
             flutter_capture = temp_root / "flutter-args.txt"
@@ -325,7 +360,7 @@ class LifecycleEnvironmentIsolation(unittest.TestCase):
             env.update(
                 {
                     "FLUTTER_ROOT": bash_sdk_root,
-                    "RUNNER_OS": "Linux",
+                    "RUNNER_OS": "Windows" if os.name == "nt" else "Linux",
                     "CAPTURED_ARGS": bash_compatible_path(capture),
                     "FLUTTER_CAPTURED_ARGS": bash_compatible_path(flutter_capture),
                     "BOOTSTRAP_STEPS": bash_compatible_path(bootstrap_steps),
@@ -340,10 +375,15 @@ class LifecycleEnvironmentIsolation(unittest.TestCase):
                 check=False,
             )
 
-            self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(
-                capture.read_text(encoding="utf-8").splitlines(), expected_args
+                result.returncode,
+                0,
+                f"stdout={result.stdout!r}; stderr={result.stderr!r}",
             )
+            captured_args = capture.read_text(encoding="utf-8").splitlines()
+            if os.name == "nt":
+                captured_args[3] = PureWindowsPath(captured_args[3]).as_posix()
+            self.assertEqual(captured_args, expected_args)
             self.assertEqual(
                 flutter_capture.read_text(encoding="utf-8").splitlines(), ["--version"]
             )

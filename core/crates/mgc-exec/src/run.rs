@@ -1882,7 +1882,7 @@ impl ProcessTreeGuard {
     }
 
     #[allow(unsafe_code)]
-    fn contains_process(&self, process_id: u32) -> Result<bool> {
+    fn capture_job_member_process(&self, process_id: u32) -> Result<WindowsOwnedHandle> {
         use windows_sys::Win32::System::JobObjects::IsProcessInJob;
         use windows_sys::Win32::System::Threading::{
             OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
@@ -1896,7 +1896,9 @@ impl ProcessTreeGuard {
         if process.is_null() {
             let error = windows_last_error();
             if error == 87 {
-                return Ok(false);
+                bail!(
+                    "cannot capture Windows job child PID {process_id}: it exited or became unavailable before identity verification"
+                );
             }
             bail!("failed to open Windows job child PID {process_id} (error {error})");
         }
@@ -1911,7 +1913,14 @@ impl ProcessTreeGuard {
                 windows_last_error()
             );
         }
-        Ok(is_member != 0)
+        if is_member == 0 {
+            bail!(
+                "cannot capture Windows job child PID {process_id}: membership changed before identity verification"
+            );
+        }
+        // Keep this handle alive through metadata capture so Windows cannot reuse its PID.
+        // Giữ handle này tới khi chụp metadata để Windows không tái sử dụng PID.
+        Ok(process)
     }
 }
 
@@ -1936,18 +1945,60 @@ fn inspect_windows_job(
     root_pid: u32,
     exempt: &[&str],
 ) -> Result<WindowsJobInspection> {
-    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
     let process_ids = guard.active_process_ids()?;
     if process_ids.is_empty() {
         return Ok(WindowsJobInspection::default());
     }
+    let captured_job_processes =
+        capture_windows_job_members(root_pid, &process_ids, |process_id| {
+            guard.capture_job_member_process(process_id)
+        })?;
+    let captured_job_process_ids = captured_job_processes
+        .iter()
+        .map(|(process_id, _)| *process_id)
+        .collect::<Vec<_>>();
+    let job_pids = captured_job_process_ids
+        .iter()
+        .copied()
+        .map(Pid::from_u32)
+        .collect::<Vec<_>>();
+    if job_pids.is_empty() {
+        return Ok(WindowsJobInspection::default());
+    }
     let mut system = System::new();
     system.refresh_processes_specifics(
-        ProcessesToUpdate::All,
+        // Refresh only job members to shrink the gap between membership and metadata snapshots.
+        // Chỉ làm mới PID trong Job để thu hẹp khoảng lệch giữa snapshot membership và metadata.
+        ProcessesToUpdate::Some(&job_pids),
         true,
         ProcessRefreshKind::nothing().with_cmd(UpdateKind::Always),
     );
+    let missing_job_pids = job_pids
+        .iter()
+        .copied()
+        .filter(|process_id| system.process(*process_id).is_none())
+        .collect::<Vec<_>>();
+    if !missing_job_pids.is_empty() {
+        // Retry every captured member missing from the first metadata snapshot.
+        // Thử lại mọi thành viên đã giữ handle nhưng bị thiếu trong snapshot metadata đầu.
+        system.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&missing_job_pids),
+            true,
+            ProcessRefreshKind::nothing().with_cmd(UpdateKind::Always),
+        );
+        for process_id in &missing_job_pids {
+            if system.process(*process_id).is_none() {
+                // Do not treat an uninspectable captured member as clean, even if it exited meanwhile.
+                // Không coi thành viên đã chụp nhưng thiếu metadata là sạch, kể cả khi nó vừa thoát.
+                bail!(
+                    "cannot inspect captured Windows job child PID {}",
+                    process_id.as_u32()
+                );
+            }
+        }
+    }
     let snapshots = system
         .processes()
         .iter()
@@ -1961,20 +2012,39 @@ fn inspect_windows_job(
             command: process.cmd().to_vec(),
         })
         .collect::<Vec<_>>();
-    inspect_windows_job_processes(root_pid, &process_ids, &snapshots, exempt, |pid| {
-        guard.contains_process(pid)
-    })
+    inspect_windows_job_processes(root_pid, &captured_job_process_ids, &snapshots, exempt)
 }
 
-/// Restrict inspection to live members of the supplied Job Object PID list.
-/// Giới hạn việc kiểm tra vào thành viên còn sống trong danh sách PID của Job Object.
+/// Capture confirmed Job Object members before metadata refresh and retain their identity evidence.
+/// Chụp thành viên Job Object đã xác nhận trước khi refresh metadata và giữ bằng chứng danh tính.
+#[cfg(any(windows, test))]
+fn capture_windows_job_members<T>(
+    root_pid: u32,
+    job_process_ids: &[u32],
+    mut capture_member: impl FnMut(u32) -> Result<T>,
+) -> Result<Vec<(u32, T)>> {
+    use std::collections::HashSet;
+
+    let mut seen = HashSet::new();
+    let mut captured = Vec::new();
+    for &process_id in job_process_ids {
+        if process_id == root_pid || !seen.insert(process_id) {
+            continue;
+        }
+        let identity_guard = capture_member(process_id)?;
+        captured.push((process_id, identity_guard));
+    }
+    Ok(captured)
+}
+
+/// Inspect snapshots for members confirmed before refresh; do not recheck PID membership afterward.
+/// Kiểm snapshot của thành viên đã xác nhận trước refresh; không kiểm tra lại membership sau đó.
 #[cfg(any(windows, test))]
 fn inspect_windows_job_processes(
     root_pid: u32,
     job_process_ids: &[u32],
     processes: &[WindowsProcessSnapshot],
     exempt: &[&str],
-    mut is_job_member: impl FnMut(u32) -> Result<bool>,
 ) -> Result<WindowsJobInspection> {
     use std::collections::{HashMap, HashSet};
 
@@ -1985,11 +2055,11 @@ fn inspect_windows_job_processes(
     let mut inspected = WindowsJobInspection::default();
     let mut seen = HashSet::new();
     for &process_id in job_process_ids {
-        if process_id == root_pid || !seen.insert(process_id) || !is_job_member(process_id)? {
+        if process_id == root_pid || !seen.insert(process_id) {
             continue;
         }
         let Some(process) = processes_by_pid.get(&process_id) else {
-            bail!("cannot inspect live Windows job child PID {process_id}");
+            bail!("cannot inspect captured Windows job child PID {process_id}");
         };
         let command_line = process
             .command

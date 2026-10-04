@@ -1398,6 +1398,32 @@ class ShellProcessInventory(unittest.TestCase):
         self.assertNotEqual(first, moved, "moving an invocation must invalidate its review")
         self.assertNotEqual(first, changed_guard, "changing the enclosing guard must invalidate its review")
 
+    def test_flutter_bootstrap_dynamic_commands_need_the_exact_source_review(self):
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        rel_path = "scripts/bootstrap_flutter_sdk.sh"
+        source_path = os.path.join(repo_root, rel_path)
+        with open(source_path, encoding="utf-8") as handle:
+            source = handle.read()
+
+        reviewed = gate.scan_shell_text(rel_path, source)
+        dynamic_commands = [
+            item for item in reviewed if item["executable"] == "<dynamic-shell-command>"
+        ]
+        self.assertEqual(len(dynamic_commands), 2)
+        self.assertTrue(
+            all(item["review_status"] == "reviewed" for item in dynamic_commands)
+        )
+
+        changed_source = source.replace('"$flutter_bin" --version', '"$flutter_bin" --machine')
+        changed = gate.scan_shell_text(rel_path, changed_source)
+        changed_dynamic_commands = [
+            item for item in changed if item["executable"] == "<dynamic-shell-command>"
+        ]
+        self.assertEqual(len(changed_dynamic_commands), 2)
+        self.assertTrue(
+            all(item["review_status"] == "unreviewed" for item in changed_dynamic_commands)
+        )
+
     def test_fixed_mgc_command_alias_is_resolved_but_environment_alias_is_not(self):
         fixed = gate.scan_shell_text(
             "cli/tests/scripts/example.sh",

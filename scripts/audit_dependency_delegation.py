@@ -178,6 +178,19 @@ PYTHON_PROCESS_REVIEWS = {
             1, "Creates the base commit in the isolated temporary Git repository.",
         ),
     },
+    # Windows path tests use only a fake Flutter SDK in a temporary fixture.
+    # Test đường dẫn Windows chỉ dùng Flutter SDK giả trong fixture tạm.
+    "scripts/test_native_pm_verdict.py": {
+        ("subprocess.run", "5e9ac7ba19c830d027ce3dd4bc22e4e275c75c53819664a7909ab069af4a322e"): (
+            1, "Runs the fixed Flutter bootstrap script against fake dart/flutter executables in a temporary SDK tree.",
+        ),
+        ("subprocess.run", "7eac37a9c430d3c49fb7c084dc10bab62b93320a5ac6763270b674284d3c999a"): (
+            1, "Runs a fixed Bash command that sources the repository bootstrap and resolves a constant Windows fixture path.",
+        ),
+        ("subprocess.run", "9b0e4d3eb001046e3fba504d0a935d316337721443c2b7be1150b009660d7e13"): (
+            1, "Compiles a native test-only dart.exe stub with fixed rustc arguments for the Windows Flutter bootstrap fixture; no package or network mutation.",
+        ),
+    },
     "scripts/test_github_action_pin.py": {
         ("subprocess.run", "bdbce93df67d6c33fc876bf6de34d93b23df8ccd025e294832a6cd1774340d4c"): (
             1, "Runs a test-only bash verifier with positional arguments and a fake git on the test PATH.",
@@ -778,6 +791,18 @@ SHELL_EXPLICIT_DYNAMIC_REVIEWS = {
         'if ! version_output=$("$MGC_PATH" --version 2>&1); then',
         'if ! help_output=$("$MGC_PATH" --help 2>&1); then',
         'if version_cmd=$("$MGC_PATH" version 2>&1); then',
+    },
+}
+# These full-source fingerprints narrowly review Flutter SDK bootstrap calls.
+# Các fingerprint toàn source chỉ duyệt hẹp lệnh bootstrap SDK Flutter.
+SHELL_EXACT_DYNAMIC_COMMAND_REVIEWS = {
+    "scripts/bootstrap_flutter_sdk.sh": {
+        "5ff619429bcee3f0f09a19b24a46e57f87894e694794ba93041936169ad6b1ab": (
+            "Resolves Pub dependencies only under Flutter SDK flutter_tools via its SDK-derived Dart executable.",
+        ),
+        "a2e80d90cbe8673a991776e9bb38d6a2f4392061acef291ff63046af2834cb3a": (
+            "Runs the Flutter SDK version probe from the SDK root provisioned by the pinned CI setup action.",
+        ),
     },
 }
 SHELL_SOURCE_INSPECTION_REVIEWS = {
@@ -2110,6 +2135,7 @@ def scan_shell_text(rel_path: str, text: str, scanned_shell_paths=None) -> list:
     (Kiểm kê command gọi tool đã biết; cú pháp lỗi không được xem là sạch.)"""
     findings = []
     seen_dependency_fingerprints = set()
+    seen_exact_dynamic_fingerprints = set()
     command_aliases = _shell_command_aliases(text)
     static_script_aliases = _shell_static_script_aliases(text, rel_path)
     command_segments = list(_shell_command_segments(text))
@@ -2252,6 +2278,16 @@ def scan_shell_text(rel_path: str, text: str, scanned_shell_paths=None) -> list:
             separators=(",", ":"),
         )
         fingerprint = hashlib.sha256(fingerprint_payload.encode("utf-8")).hexdigest()
+        exact_dynamic_review = SHELL_EXACT_DYNAMIC_COMMAND_REVIEWS.get(
+            rel_path, {}
+        ).get(fingerprint)
+        reviewed_exact_dynamic = (
+            dynamic
+            and exact_dynamic_review is not None
+            and fingerprint not in seen_exact_dynamic_fingerprints
+        )
+        if exact_dynamic_review is not None:
+            seen_exact_dynamic_fingerprints.add(fingerprint)
         if dependency_action is not None:
             reviewed = (
                 fingerprint in SHELL_DEPENDENCY_COMMAND_REVIEWS.get(rel_path, set())
@@ -2264,6 +2300,9 @@ def scan_shell_text(rel_path: str, text: str, scanned_shell_paths=None) -> list:
                 if reviewed
                 else f"dependency lifecycle command requires exact source review: {dependency_action}"
             )
+        elif reviewed_exact_dynamic:
+            review_status = "reviewed"
+            review_reason = exact_dynamic_review[0]
         else:
             if reviewed_exact_shell:
                 review_status = "reviewed"
@@ -3234,6 +3273,27 @@ def main() -> int:
                     "executable": "<stale-review>",
                     "review_status": "unreviewed",
                     "review_reason": "review fingerprint no longer matches a live dependency command",
+                    "dependency_action": None,
+                    "command_fingerprint": fingerprint,
+                    "parse_error": None,
+                })
+    observed_exact_dynamic_reviews = {
+        (item["file"], item["command_fingerprint"])
+        for item in shell_process_calls
+        if item.get("review_status") == "reviewed"
+        and item.get("command_fingerprint")
+        in SHELL_EXACT_DYNAMIC_COMMAND_REVIEWS.get(item["file"], {})
+    }
+    for rel_path, reviews in SHELL_EXACT_DYNAMIC_COMMAND_REVIEWS.items():
+        for fingerprint in sorted(reviews):
+            if (rel_path, fingerprint) not in observed_exact_dynamic_reviews:
+                shell_process_calls.append({
+                    "file": rel_path,
+                    "line": 0,
+                    "api": "shell-command-review-record",
+                    "executable": "<stale-review>",
+                    "review_status": "unreviewed",
+                    "review_reason": "source-bound dynamic command review no longer matches a live process command",
                     "dependency_action": None,
                     "command_fingerprint": fingerprint,
                     "parse_error": None,
