@@ -27,9 +27,9 @@ const WINDOWS_COMMAND_LINE_RETRY_DELAY_MS: u64 = 25;
 /// Check child status during short waits so natural exits stay responsive.
 /// Kiểm tra trạng thái child trong lúc chờ ngắn để nhận biết thoát tự nhiên kịp thời.
 const WINDOWS_COMMAND_LINE_RETRY_POLL_INTERVAL_MS: u64 = 1;
-#[cfg(windows)]
+#[cfg(all(windows, test))]
 const WINDOWS_FILETIME_TICKS_PER_SECOND: u64 = 10_000_000;
-#[cfg(windows)]
+#[cfg(all(windows, test))]
 const WINDOWS_FILETIME_UNIX_EPOCH_OFFSET_SECONDS: u64 = 11_644_473_600;
 /// Exact read-only npm shim body; the process guard authenticates these bytes.
 /// Nội dung chính xác của shim npm chỉ đọc; process guard xác thực byte này.
@@ -858,6 +858,7 @@ fn execute_command(
     let process_monitor = ProcessMonitor {
         enabled: monitor_forbidden_children,
         exempt: scoped_exempt,
+        #[cfg(unix)]
         shadow_dir: shadow_path.path(),
         #[cfg(unix)]
         tracking_token: &process_tree_tracking_token,
@@ -1108,6 +1109,7 @@ fn default_timeout() -> Duration {
 struct ProcessMonitor<'a> {
     enabled: bool,
     exempt: &'a [&'a str],
+    #[cfg(unix)]
     shadow_dir: &'a Path,
     #[cfg(unix)]
     tracking_token: &'a str,
@@ -1125,9 +1127,6 @@ fn wait_with_timeout(
     let mut observed_process_groups = std::collections::HashSet::from([child.id()]);
     #[cfg(unix)]
     let mut root_reaped = false;
-    #[cfg(windows)]
-    let mut process_ancestry = WindowsProcessAncestry::default();
-
     // DEADLOCK FIX (2026-09-09): a child writing MORE than the OS pipe
     // buffer (~64 KB) blocks on write until the parent drains the pipe.
     // Polling try_wait WITHOUT draining never sees the child exit — the
@@ -1252,7 +1251,7 @@ fn wait_with_timeout(
                         &mut child,
                         _process_tree_guard,
                         process_monitor.exempt,
-                        &drain,
+                        drain,
                     );
                 }
                 // Close the job so grandchildren cannot outlive a completed root command.
@@ -1344,13 +1343,12 @@ fn wait_with_timeout(
         }
         if process_monitor.enabled {
             #[cfg(windows)]
-            let process_scan = find_forbidden_descendant_with_timeout(
+            let process_scan = find_forbidden_job_descendant_with_timeout(
+                &_process_tree_guard,
                 child.id(),
                 process_monitor.exempt,
-                process_monitor.shadow_dir,
                 started,
                 timeout,
-                &mut process_ancestry,
                 || Ok(child.try_wait()?.is_some()),
             );
             #[cfg(windows)]
@@ -1362,15 +1360,17 @@ fn wait_with_timeout(
                         &mut child,
                         _process_tree_guard,
                         process_monitor.exempt,
-                        &drain,
+                        drain,
                     );
                 }
                 Ok(WindowsProcessScan::MissingCommandLine { .. }) => {
                     unreachable!("retry controller must resolve missing command-line metadata")
                 }
+                #[cfg(test)]
                 Ok(WindowsProcessScan::MissingProcessIdentity { .. }) => {
                     unreachable!("retry controller must resolve process identity metadata")
                 }
+                #[cfg(test)]
                 Ok(WindowsProcessScan::UnverifiableAncestry { .. }) => {
                     unreachable!("retry controller must reject ambiguous process ancestry")
                 }
@@ -1921,11 +1921,26 @@ fn windows_job_descendants(
     root_pid: u32,
     exempt: &[&str],
 ) -> Result<Vec<(u32, Option<String>)>> {
-    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+    let inspection = inspect_windows_job(guard, root_pid, exempt)?;
+    if let Some((pid, image_name)) = inspection.missing_command_line {
+        validate_monitored_child_command_line(&image_name, &[], pid)?;
+    }
+    Ok(inspection.descendants)
+}
+
+/// Inspect process IDs owned by this private Job Object.
+/// Chỉ kiểm tra các PID thuộc Job Object riêng của lệnh đang chạy.
+#[cfg(windows)]
+fn inspect_windows_job(
+    guard: &ProcessTreeGuard,
+    root_pid: u32,
+    exempt: &[&str],
+) -> Result<WindowsJobInspection> {
+    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
     let process_ids = guard.active_process_ids()?;
     if process_ids.is_empty() {
-        return Ok(Vec::new());
+        return Ok(WindowsJobInspection::default());
     }
     let mut system = System::new();
     system.refresh_processes_specifics(
@@ -1933,34 +1948,87 @@ fn windows_job_descendants(
         true,
         ProcessRefreshKind::nothing().with_cmd(UpdateKind::Always),
     );
+    let snapshots = system
+        .processes()
+        .iter()
+        .map(|(pid, process)| WindowsProcessSnapshot {
+            pid: pid.as_u32(),
+            #[cfg(test)]
+            parent_pid: None,
+            #[cfg(test)]
+            creation_time: None,
+            image_name: process.name().to_string_lossy().into_owned(),
+            command: process.cmd().to_vec(),
+        })
+        .collect::<Vec<_>>();
+    inspect_windows_job_processes(root_pid, &process_ids, &snapshots, exempt, |pid| {
+        guard.contains_process(pid)
+    })
+}
 
-    let mut descendants = Vec::new();
-    for process_id in process_ids.into_iter().filter(|pid| *pid != root_pid) {
-        if !guard.contains_process(process_id)? {
+/// Restrict inspection to live members of the supplied Job Object PID list.
+/// Giới hạn việc kiểm tra vào thành viên còn sống trong danh sách PID của Job Object.
+#[cfg(any(windows, test))]
+fn inspect_windows_job_processes(
+    root_pid: u32,
+    job_process_ids: &[u32],
+    processes: &[WindowsProcessSnapshot],
+    exempt: &[&str],
+    mut is_job_member: impl FnMut(u32) -> Result<bool>,
+) -> Result<WindowsJobInspection> {
+    use std::collections::{HashMap, HashSet};
+
+    let processes_by_pid = processes
+        .iter()
+        .map(|process| (process.pid, process))
+        .collect::<HashMap<_, _>>();
+    let mut inspected = WindowsJobInspection::default();
+    let mut seen = HashSet::new();
+    for &process_id in job_process_ids {
+        if process_id == root_pid || !seen.insert(process_id) || !is_job_member(process_id)? {
             continue;
         }
-        let Some(process) = system.process(Pid::from_u32(process_id)) else {
-            if guard.contains_process(process_id)? {
-                bail!("cannot inspect live Windows job child PID {process_id}");
-            }
-            continue;
+        let Some(process) = processes_by_pid.get(&process_id) else {
+            bail!("cannot inspect live Windows job child PID {process_id}");
         };
         let command_line = process
-            .cmd()
+            .command
             .iter()
             .map(|arg| arg.to_string_lossy())
             .collect::<Vec<_>>()
             .join(" ");
-        let image_name = process.name().to_string_lossy().into_owned();
-        if command_line.is_empty() {
-            validate_monitored_child_command_line(&image_name, &[], process_id)?;
+        let image_name = process.image_name.clone();
+        if command_line.is_empty() && inspected.missing_command_line.is_none() {
+            inspected.missing_command_line = Some((process_id, image_name.clone()));
         }
-        descendants.push((
+        inspected.descendants.push((
             process_id,
             forbidden_process_name(&image_name, &command_line, exempt),
         ));
     }
-    Ok(descendants)
+    Ok(inspected)
+}
+
+#[cfg(any(windows, test))]
+#[derive(Default)]
+struct WindowsJobInspection {
+    descendants: Vec<(u32, Option<String>)>,
+    missing_command_line: Option<(u32, String)>,
+}
+
+#[cfg(any(windows, test))]
+fn windows_job_scan_from_inspection(inspection: WindowsJobInspection) -> WindowsProcessScan {
+    if let Some((pid, Some(name))) = inspection
+        .descendants
+        .into_iter()
+        .find(|(_, forbidden)| forbidden.is_some())
+    {
+        return WindowsProcessScan::Forbidden(ForbiddenProcess { pid, name });
+    }
+    if let Some((pid, image_name)) = inspection.missing_command_line {
+        return WindowsProcessScan::MissingCommandLine { pid, image_name };
+    }
+    WindowsProcessScan::Clean
 }
 
 #[cfg(all(unix, test))]
@@ -2546,20 +2614,22 @@ fn next_process_table_field(line: &[u8]) -> Option<(&[u8], &[u8])> {
 #[cfg(any(windows, test))]
 struct WindowsProcessSnapshot {
     pid: u32,
+    #[cfg(test)]
     parent_pid: Option<u32>,
+    #[cfg(test)]
     creation_time: Option<u64>,
     image_name: String,
     command: Vec<OsString>,
 }
 
-#[cfg(any(windows, test))]
+#[cfg(test)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct WindowsProcessIdentity {
     creation_time: u64,
     image_name: String,
 }
 
-#[cfg(any(windows, test))]
+#[cfg(test)]
 impl WindowsProcessSnapshot {
     fn identity(&self, creation_time: u64) -> WindowsProcessIdentity {
         WindowsProcessIdentity {
@@ -2569,7 +2639,7 @@ impl WindowsProcessSnapshot {
     }
 }
 
-#[cfg(any(windows, test))]
+#[cfg(test)]
 #[derive(Default)]
 struct WindowsProcessAncestry {
     known_descendant_instances: std::collections::HashMap<u32, WindowsProcessIdentity>,
@@ -2580,14 +2650,24 @@ struct WindowsProcessAncestry {
 enum WindowsProcessScan {
     Clean,
     Forbidden(ForbiddenProcess),
-    MissingCommandLine { pid: u32, image_name: String },
-    MissingProcessIdentity { pid: u32 },
-    UnverifiableAncestry { parent_pid: u32, child_pid: u32 },
+    MissingCommandLine {
+        pid: u32,
+        image_name: String,
+    },
+    #[cfg(test)]
+    MissingProcessIdentity {
+        pid: u32,
+    },
+    #[cfg(test)]
+    UnverifiableAncestry {
+        parent_pid: u32,
+        child_pid: u32,
+    },
     ChildExited,
     DeadlineReached,
 }
 
-#[cfg(any(windows, test))]
+#[cfg(test)]
 fn scan_windows_process_snapshot(
     root_pid: u32,
     ancestry: &mut WindowsProcessAncestry,
@@ -2737,7 +2817,7 @@ fn scan_windows_process_snapshot(
     })
 }
 
-#[cfg(any(windows, test))]
+#[cfg(test)]
 fn current_windows_process_creation_time(
     process: &WindowsProcessSnapshot,
     query_creation_time: &mut impl FnMut(u32) -> Result<Option<u64>>,
@@ -2805,13 +2885,13 @@ fn retry_windows_process_scan(
                 validate_monitored_child_command_line(&image_name, &[], pid)?;
                 bail!("command line unexpectedly passed validation for monitored child PID {pid}");
             }
+            #[cfg(test)]
             WindowsProcessScan::MissingProcessIdentity { pid }
                 if attempt == WINDOWS_COMMAND_LINE_RETRIES =>
             {
                 bail!("cannot read process creation identity for monitored PID {pid}");
             }
-            WindowsProcessScan::MissingCommandLine { .. }
-            | WindowsProcessScan::MissingProcessIdentity { .. } => {
+            WindowsProcessScan::MissingCommandLine { .. } => {
                 // Refresh and rewalk the entire tree on the next inspection, not just this PID.
                 // Lần kiểm tra sau làm mới và duyệt lại toàn cây, không chỉ hỏi lại PID này.
                 let retry_delay = Duration::from_millis(WINDOWS_COMMAND_LINE_RETRY_DELAY_MS);
@@ -2824,6 +2904,19 @@ fn retry_windows_process_scan(
                     return Ok(stop_reason);
                 }
             }
+            #[cfg(test)]
+            WindowsProcessScan::MissingProcessIdentity { .. } => {
+                let retry_delay = Duration::from_millis(WINDOWS_COMMAND_LINE_RETRY_DELAY_MS);
+                if let Some(stop_reason) = wait_for_windows_process_retry(
+                    retry_delay,
+                    started,
+                    timeout,
+                    &mut child_has_exited,
+                )? {
+                    return Ok(stop_reason);
+                }
+            }
+            #[cfg(test)]
             WindowsProcessScan::UnverifiableAncestry {
                 parent_pid,
                 child_pid,
@@ -2872,6 +2965,22 @@ fn wait_for_windows_process_retry(
 }
 
 #[cfg(windows)]
+fn find_forbidden_job_descendant_with_timeout(
+    guard: &ProcessTreeGuard,
+    root_pid: u32,
+    exempt: &[&str],
+    started: Instant,
+    timeout: Option<Duration>,
+    child_has_exited: impl FnMut() -> Result<bool>,
+) -> Result<WindowsProcessScan> {
+    retry_windows_process_scan(started, timeout, child_has_exited, || {
+        Ok(windows_job_scan_from_inspection(inspect_windows_job(
+            guard, root_pid, exempt,
+        )?))
+    })
+}
+
+#[cfg(all(windows, test))]
 fn find_forbidden_descendant_with_timeout(
     root_pid: u32,
     exempt: &[&str],
@@ -2927,7 +3036,7 @@ fn find_forbidden_descendant_with_timeout(
     })
 }
 
-#[cfg(windows)]
+#[cfg(all(windows, test))]
 #[allow(unsafe_code)]
 fn windows_process_creation_time(pid: u32) -> Option<u64> {
     use windows_sys::Win32::Foundation::{CloseHandle, FILETIME};

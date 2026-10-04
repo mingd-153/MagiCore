@@ -759,6 +759,68 @@ fn command_line_is_required_when_missing_for_any_child_image() {
 }
 
 #[test]
+fn windows_job_scan_ignores_global_processes_outside_job_membership()
+-> Result<(), Box<dyn std::error::Error>> {
+    use std::ffi::OsString;
+
+    let snapshot =
+        |pid, parent_pid, image_name: &str, command: &[&str]| super::WindowsProcessSnapshot {
+            pid,
+            parent_pid,
+            creation_time: Some(pid as u64),
+            image_name: image_name.to_owned(),
+            command: command.iter().map(OsString::from).collect(),
+        };
+    let processes = [
+        snapshot(100, None, "runner.exe", &["runner.exe"]),
+        snapshot(101, Some(100), "npm.exe", &["npm.exe", "install"]),
+        snapshot(102, Some(100), "LsaIso.exe", &[]),
+    ];
+
+    let scanned =
+        super::inspect_windows_job_processes(100, &[100, 101], &processes, &[], |_| Ok(true))?;
+
+    assert_eq!(scanned.descendants, [(101, Some("npm".to_owned()))]);
+    Ok(())
+}
+
+#[test]
+fn windows_job_scan_fails_closed_for_unreadable_job_members()
+-> Result<(), Box<dyn std::error::Error>> {
+    use std::ffi::OsString;
+
+    let processes = [
+        super::WindowsProcessSnapshot {
+            pid: 100,
+            parent_pid: None,
+            creation_time: Some(100),
+            image_name: "runner.exe".to_owned(),
+            command: vec![OsString::from("runner.exe")],
+        },
+        super::WindowsProcessSnapshot {
+            pid: 102,
+            parent_pid: Some(100),
+            creation_time: Some(102),
+            image_name: "LsaIso.exe".to_owned(),
+            command: Vec::new(),
+        },
+    ];
+
+    let error =
+        super::inspect_windows_job_processes(100, &[100, 102], &processes, &[], |_| Ok(true))?;
+
+    assert_eq!(
+        error.missing_command_line,
+        Some((102, "LsaIso.exe".to_owned()))
+    );
+    assert!(matches!(
+        super::windows_job_scan_from_inspection(error),
+        super::WindowsProcessScan::MissingCommandLine { pid: 102, .. }
+    ));
+    Ok(())
+}
+
+#[test]
 fn windows_metadata_retry_rewalks_new_descendants() {
     use std::collections::VecDeque;
     use std::ffi::OsString;
@@ -1128,12 +1190,17 @@ fn root_exit_completion_inspects_and_terminates_a_forbidden_job_child()
         "test root command must exit successfully"
     );
 
-    let result = finish_monitored_root_exit(&mut root, guard, &[], |child, _| ExecOutcome {
-        status: child
-            .wait()
-            .expect("root process status must remain readable"),
-        stdout: Vec::new(),
-        stderr: Vec::new(),
+    let result = finish_monitored_root_exit(&mut root, guard, &[], |child, _| {
+        (
+            ExecOutcome {
+                status: child
+                    .wait()
+                    .expect("root process status must remain readable"),
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+            },
+            true,
+        )
     });
     let error = match result {
         Ok(_) => return Err("root-exit completion accepted a forbidden child".into()),
