@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from contextlib import redirect_stdout
 from unittest.mock import patch
 import lifecycle_capability_matrix as matrix_module
@@ -60,6 +60,23 @@ from lifecycle_capability_matrix import (
 from provenance_chain import _matrix_sha_for_head
 
 
+def bash_compatible_path(path, windows=None):
+    value = os.fspath(path)
+    if windows is None:
+        windows = os.name == "nt"
+    if not windows:
+        return value
+
+    windows_path = PureWindowsPath(value)
+    drive = windows_path.drive.rstrip(":").lower()
+    if not drive:
+        raise ValueError(f"Windows path must include a drive letter: {value}")
+
+    # Git Bash exposes local Windows drives below /<drive>/.
+    # Git Bash hiển thị các ổ đĩa Windows cục bộ dưới /<drive>/.
+    return f"/{drive}/" + "/".join(windows_path.parts[1:])
+
+
 class GitHubWorkflowAnnotationEscaping(unittest.TestCase):
     def test_annotation_data_cannot_inject_another_workflow_command(self):
         self.assertEqual(
@@ -100,6 +117,18 @@ class AdapterConsistencyGate(unittest.TestCase):
 
 
 class LifecycleEnvironmentIsolation(unittest.TestCase):
+    def test_bash_compatible_path_maps_windows_drive_to_msys_mount(self):
+        self.assertEqual(
+            bash_compatible_path(r"D:\a\_temp\fake Flutter SDK", windows=True),
+            "/d/a/_temp/fake Flutter SDK",
+        )
+
+    def test_bash_compatible_path_preserves_posix_paths(self):
+        self.assertEqual(
+            bash_compatible_path("/tmp/fake Flutter SDK", windows=False),
+            "/tmp/fake Flutter SDK",
+        )
+
     def test_flutter_runtime_steps_reuse_the_warmed_sdk_pub_cache(self):
         lane = {"core": "app", "language": "flutter"}
         lane_env = {"HOME": "/tmp/lane/.home", "PUB_CACHE": "/tmp/lane/.cache/pub"}
@@ -257,23 +286,10 @@ class LifecycleEnvironmentIsolation(unittest.TestCase):
             Path(__file__).resolve().parent.parent / "scripts" / "bootstrap_flutter_sdk.sh"
         )
 
-        def bash_path(path):
-            value = os.fspath(path)
-            if os.name != "nt":
-                return value
-            converted = subprocess.run(
-                ["bash", "-c", 'cygpath -u "$1"', "bash-path", value],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            self.assertEqual(converted.returncode, 0, converted.stderr)
-            return converted.stdout.strip()
-
         with tempfile.TemporaryDirectory(prefix="flutter sdk bootstrap ") as tmp:
             temp_root = Path(tmp)
             sdk_root = temp_root / "fake Flutter SDK"
-            bash_sdk_root = bash_path(sdk_root)
+            bash_sdk_root = bash_compatible_path(sdk_root)
             expected_args = [
                 "pub",
                 "--suppress-analytics",
@@ -310,13 +326,13 @@ class LifecycleEnvironmentIsolation(unittest.TestCase):
                 {
                     "FLUTTER_ROOT": bash_sdk_root,
                     "RUNNER_OS": "Linux",
-                    "CAPTURED_ARGS": bash_path(capture),
-                    "FLUTTER_CAPTURED_ARGS": bash_path(flutter_capture),
-                    "BOOTSTRAP_STEPS": bash_path(bootstrap_steps),
+                    "CAPTURED_ARGS": bash_compatible_path(capture),
+                    "FLUTTER_CAPTURED_ARGS": bash_compatible_path(flutter_capture),
+                    "BOOTSTRAP_STEPS": bash_compatible_path(bootstrap_steps),
                 }
             )
             result = subprocess.run(
-                ["bash", bash_path(script)],
+                ["bash", bash_compatible_path(script)],
                 cwd=temp_root,
                 env=env,
                 capture_output=True,
