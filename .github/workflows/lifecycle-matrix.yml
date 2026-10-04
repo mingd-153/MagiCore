@@ -128,12 +128,10 @@ jobs:
           flutter-version: "3.47.4"
           channel: "stable"
 
-      # Warm Flutter with the same job-local HOME/PUB_CACHE later supplied to
-      # its monitored test/build process, so SDK package bootstrap stays stable.
-      # Warm Flutter cùng HOME/PUB_CACHE riêng của job sẽ truyền cho test/build;
-      # nhờ vậy bootstrap package SDK dùng đúng cùng một cache.
+      # Load a real Flutter command before mgc-exec monitors the project steps.
+      # Nạp command Flutter thật trước khi mgc-exec giám sát lifecycle của project.
       - name: Warm Flutter SDK toolchain
-        run: flutter --version
+        run: flutter test --help
         env:
           HOME: ${{ runner.temp }}/flutter-sdk-home
           USERPROFILE: ${{ runner.temp }}/flutter-sdk-home

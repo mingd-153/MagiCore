@@ -161,7 +161,7 @@ class LifecycleEnvironmentIsolation(unittest.TestCase):
         matrix = workflow.index("Generate lifecycle matrix (real binary, real steps)")
         self.assertLess(setup, warm)
         self.assertLess(warm, matrix)
-        self.assertIn("run: flutter --version", workflow[warm:matrix])
+        self.assertIn("run: flutter test --help", workflow[warm:matrix])
         job_cache = "PUB_CACHE: ${{ runner.temp }}/flutter-pub-cache"
         self.assertIn(job_cache, workflow[warm:matrix])
         self.assertIn(job_cache, workflow[matrix:])
@@ -172,6 +172,21 @@ class LifecycleEnvironmentIsolation(unittest.TestCase):
         self.assertIn(
             "USERPROFILE: ${{ runner.temp }}/flutter-sdk-home", workflow[warm:matrix]
         )
+
+    def test_windows_spawn_job_bootstraps_flutter_before_process_guard_tests(self):
+        workflow = (
+            Path(__file__).resolve().parent.parent
+            / ".github"
+            / "workflows"
+            / "ci.yml"
+        ).read_text(encoding="utf-8")
+
+        setup = workflow.index("Setup Flutter (for .bat spawn tests)")
+        warm = workflow.index("Warm Flutter command bootstrap for guarded spawn test")
+        tests = workflow.index("Run Windows spawn tests")
+        self.assertLess(setup, warm)
+        self.assertLess(warm, tests)
+        self.assertIn("run: flutter test --help", workflow[warm:tests])
 
     def test_flutter_sdk_cache_uses_the_explicit_job_local_path(self):
         cache = matrix_module.flutter_sdk_pub_cache_directory(
