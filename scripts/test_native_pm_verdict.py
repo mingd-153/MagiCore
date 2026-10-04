@@ -238,8 +238,8 @@ class LifecycleEnvironmentIsolation(unittest.TestCase):
             Path(__file__).resolve().parent.parent / "scripts" / "bootstrap_flutter_sdk.sh"
         ).read_text(encoding="utf-8")
 
-        self.assertIn('dart_bin="$sdk_root/bin/cache/dart-sdk/bin/dart"', script)
-        self.assertIn('dart_bin="$sdk_root/bin/cache/dart-sdk/bin/dart.exe"', script)
+        self.assertIn('executable="dart.exe"', script)
+        self.assertIn('executable="dart"', script)
         self.assertIn(
             'pub --suppress-analytics --directory "$sdk_root/packages/flutter_tools" get --example',
             script,
@@ -264,48 +264,68 @@ class LifecycleEnvironmentIsolation(unittest.TestCase):
                 "--example",
             ]
 
-            for runner_os, executable in (
-                ("Linux", "dart"),
-                ("Windows", "dart.exe"),
-            ):
-                dart = sdk_root / "bin" / "cache" / "dart-sdk" / "bin" / executable
-                dart.parent.mkdir(parents=True, exist_ok=True)
-                dart.write_text(
-                    "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CAPTURED_ARGS\"\n",
-                    encoding="utf-8",
-                )
-                dart.chmod(0o755)
+            dart = sdk_root / "bin" / "cache" / "dart-sdk" / "bin" / "dart"
+            dart.parent.mkdir(parents=True, exist_ok=True)
+            dart.write_text(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CAPTURED_ARGS\"\n",
+                encoding="utf-8",
+            )
+            dart.chmod(0o755)
 
-                cygpath = fake_bin / "cygpath"
-                cygpath.write_text(
-                    "#!/bin/sh\n[ \"$1\" = -u ] || exit 2\nprintf '%s\\n' \"$2\"\n",
-                    encoding="utf-8",
-                )
-                cygpath.chmod(0o755)
+            capture = temp_root / "args-Linux.txt"
+            env = os.environ.copy()
+            env.update(
+                {
+                    "FLUTTER_ROOT": str(sdk_root),
+                    "RUNNER_OS": "Linux",
+                    "CAPTURED_ARGS": str(capture),
+                }
+            )
+            result = subprocess.run(
+                ["bash", str(script)],
+                cwd=temp_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
 
-                capture = temp_root / f"args-{runner_os}.txt"
-                env = os.environ.copy()
-                env.update(
-                    {
-                        "FLUTTER_ROOT": str(sdk_root),
-                        "RUNNER_OS": runner_os,
-                        "CAPTURED_ARGS": str(capture),
-                    }
-                )
-                if runner_os == "Windows":
-                    env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(capture.read_text(encoding="utf-8").splitlines(), expected_args)
 
-                result = subprocess.run(
-                    ["bash", str(script)],
-                    cwd=temp_root,
-                    env=env,
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                )
-
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(capture.read_text(encoding="utf-8").splitlines(), expected_args)
+            cygpath = fake_bin / "cygpath"
+            cygpath.write_text(
+                "#!/bin/sh\n[ \"$1\" = -u ] || exit 2\nprintf '%s\\n' \"$2\"\n",
+                encoding="utf-8",
+            )
+            cygpath.chmod(0o755)
+            windows_sdk_root = "/c/ci/fake Flutter SDK"
+            env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+            resolve_windows_dart = (
+                'source scripts/bootstrap_flutter_sdk.sh; '
+                'sdk_root="$(normalize_flutter_sdk_root "$1" "$2")"; '
+                'resolve_flutter_sdk_dart_bin "$sdk_root" "$2"'
+            )
+            resolved = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    resolve_windows_dart,
+                    "bootstrap-test",
+                    windows_sdk_root,
+                    "Windows",
+                ],
+                cwd=script.parents[1],
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            expected_windows_bin = (
+                "/c/ci/fake Flutter SDK/bin/cache/dart-sdk/bin/dart.exe"
+            )
+            self.assertEqual(resolved.returncode, 0, resolved.stderr)
+            self.assertEqual(resolved.stdout.strip(), expected_windows_bin)
 
     def test_flutter_sdk_cache_uses_the_explicit_job_local_path(self):
         cache = matrix_module.flutter_sdk_pub_cache_directory(
