@@ -534,12 +534,15 @@ type CachedFileIdentity = (u32, u64);
 type CachedFileIdentity = ();
 
 #[allow(unsafe_code)]
-pub(crate) fn cached_file_identity(file: &File, metadata: &Metadata) -> Option<CachedFileIdentity> {
+pub(crate) fn cached_file_identity(
+    file: &File,
+    _metadata: &Metadata,
+) -> Option<CachedFileIdentity> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
         let _ = file;
-        Some((metadata.dev(), metadata.ino()))
+        Some((_metadata.dev(), _metadata.ino()))
     }
     #[cfg(windows)]
     {
@@ -571,7 +574,7 @@ pub(crate) fn cached_file_identity(file: &File, metadata: &Metadata) -> Option<C
     }
     #[cfg(not(any(unix, windows)))]
     {
-        let _ = (file, metadata);
+        let _ = (file, _metadata);
         Some(())
     }
 }
