@@ -560,7 +560,7 @@ jobs:
           "$MGCBIN" install
           test -f mgc.lock
           test ! -f pubspec.lock
-          "$MGCBIN" test
+          "$MGCBIN" test -- --verbose
           # `web` is the universal CI target (no Android SDK / Xcode).
           # `web` là target CI phổ quát (không cần Android SDK / Xcode).
           "$MGCBIN" build
