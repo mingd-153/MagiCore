@@ -541,8 +541,9 @@ jobs:
           flutter-version: "3.47.4"
           channel: "stable"
 
-      - name: Warm Flutter command bootstrap for guarded app lifecycle
-        run: flutter test --help
+      - name: Resolve Flutter SDK dependencies before MGC process guard
+        shell: bash
+        run: bash scripts/bootstrap_flutter_sdk.sh
 
       - name: Lifecycle app flutter (create → install → test → build)
         shell: bash

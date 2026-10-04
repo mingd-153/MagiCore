@@ -148,7 +148,7 @@ class LifecycleEnvironmentIsolation(unittest.TestCase):
         self.assertEqual(step_env["HOME"], "/tmp/lane/.home")
         self.assertEqual(step_env["PUB_CACHE"], "/tmp/lane/.cache/pub")
 
-    def test_flutter_sdk_is_warmed_before_the_lifecycle_matrix_runs(self):
+    def test_flutter_sdk_dependencies_are_resolved_before_the_lifecycle_matrix_runs(self):
         workflow = (
             Path(__file__).resolve().parent.parent
             / ".github"
@@ -157,11 +157,13 @@ class LifecycleEnvironmentIsolation(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         setup = workflow.index("Setup Flutter (app lane)")
-        warm = workflow.index("Warm Flutter SDK toolchain")
+        warm = workflow.index(
+            "Resolve Flutter SDK dependencies before MGC process guard", setup
+        )
         matrix = workflow.index("Generate lifecycle matrix (real binary, real steps)")
         self.assertLess(setup, warm)
         self.assertLess(warm, matrix)
-        self.assertIn("run: flutter test --help", workflow[warm:matrix])
+        self.assertIn("run: bash scripts/bootstrap_flutter_sdk.sh", workflow[warm:matrix])
         job_cache = "PUB_CACHE: ${{ runner.temp }}/flutter-pub-cache"
         self.assertIn(job_cache, workflow[warm:matrix])
         self.assertIn(job_cache, workflow[matrix:])
@@ -173,7 +175,7 @@ class LifecycleEnvironmentIsolation(unittest.TestCase):
             "USERPROFILE: ${{ runner.temp }}/flutter-sdk-home", workflow[warm:matrix]
         )
 
-    def test_windows_spawn_job_bootstraps_flutter_before_process_guard_tests(self):
+    def test_windows_spawn_job_resolves_flutter_sdk_dependencies_before_guard_tests(self):
         workflow = (
             Path(__file__).resolve().parent.parent
             / ".github"
@@ -182,32 +184,40 @@ class LifecycleEnvironmentIsolation(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         setup = workflow.index("Setup Flutter (for .bat spawn tests)")
-        warm = workflow.index("Warm Flutter command bootstrap for guarded spawn test")
+        warm = workflow.index(
+            "Resolve Flutter SDK dependencies before MGC process guard", setup
+        )
         tests = workflow.index("Run Windows spawn tests")
         self.assertLess(setup, warm)
         self.assertLess(warm, tests)
-        self.assertIn("run: flutter test --help", workflow[warm:tests])
+        self.assertIn("run: bash scripts/bootstrap_flutter_sdk.sh", workflow[warm:tests])
 
-    def test_guarded_flutter_workflows_warm_command_bootstrap(self):
+    def test_guarded_flutter_workflows_resolve_sdk_tool_dependencies(self):
         workflow_dir = Path(__file__).resolve().parent.parent / ".github" / "workflows"
         workflows = [
             (
                 "release-binary-e2e.yml",
                 "Setup Flutter (app lane)",
-                "Warm Flutter command bootstrap for guarded app lifecycle",
+                "Resolve Flutter SDK dependencies before MGC process guard",
                 "Lifecycle app flutter (create → install → test → build)",
             ),
             (
                 "delegated-compatibility-matrix.yml",
                 "Setup Flutter",
-                "Warm Flutter command bootstrap for guarded app lifecycle",
-                "Build mgc binary",
+                "Resolve Flutter SDK dependencies before MGC process guard",
+                "Create app project",
             ),
             (
                 "security.yml",
                 "Setup Flutter",
-                "Warm Flutter command bootstrap for guarded audit",
+                "Resolve Flutter SDK dependencies before MGC process guard",
                 "Install cargo-audit (rust parity lane on this SHA)",
+            ),
+            (
+                "ci.yml",
+                "Setup Flutter SDK",
+                "Resolve Flutter SDK dependencies before MGC process guard",
+                "Run lifecycle tests (MUST PASS - no || true)",
             ),
         ]
 
@@ -215,11 +225,87 @@ class LifecycleEnvironmentIsolation(unittest.TestCase):
             with self.subTest(workflow=filename):
                 workflow = (workflow_dir / filename).read_text(encoding="utf-8")
                 setup = workflow.index(setup_name)
-                warm = workflow.index(warm_name)
+                warm = workflow.index(warm_name, setup)
                 guarded = workflow.index(guarded_step, warm)
                 self.assertLess(setup, warm)
                 self.assertLess(warm, guarded)
-                self.assertIn("run: flutter test --help", workflow[warm:guarded])
+                self.assertIn(
+                    "run: bash scripts/bootstrap_flutter_sdk.sh", workflow[warm:guarded]
+                )
+
+    def test_flutter_sdk_bootstrap_resolves_only_sdk_tool_dependencies(self):
+        script = (
+            Path(__file__).resolve().parent.parent / "scripts" / "bootstrap_flutter_sdk.sh"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('dart_bin="$sdk_root/bin/cache/dart-sdk/bin/dart"', script)
+        self.assertIn('dart_bin="$sdk_root/bin/cache/dart-sdk/bin/dart.exe"', script)
+        self.assertIn(
+            'pub --suppress-analytics --directory "$sdk_root/packages/flutter_tools" get --example',
+            script,
+        )
+        self.assertNotIn("flutter test --help", script)
+
+    def test_flutter_sdk_bootstrap_invokes_dart_for_posix_and_windows_paths(self):
+        script = (
+            Path(__file__).resolve().parent.parent / "scripts" / "bootstrap_flutter_sdk.sh"
+        )
+        with tempfile.TemporaryDirectory(prefix="flutter sdk bootstrap ") as tmp:
+            temp_root = Path(tmp)
+            sdk_root = temp_root / "fake Flutter SDK"
+            fake_bin = temp_root / "mock-bin"
+            fake_bin.mkdir()
+            expected_args = [
+                "pub",
+                "--suppress-analytics",
+                "--directory",
+                str(sdk_root / "packages" / "flutter_tools"),
+                "get",
+                "--example",
+            ]
+
+            for runner_os, executable in (
+                ("Linux", "dart"),
+                ("Windows", "dart.exe"),
+            ):
+                dart = sdk_root / "bin" / "cache" / "dart-sdk" / "bin" / executable
+                dart.parent.mkdir(parents=True, exist_ok=True)
+                dart.write_text(
+                    "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CAPTURED_ARGS\"\n",
+                    encoding="utf-8",
+                )
+                dart.chmod(0o755)
+
+                cygpath = fake_bin / "cygpath"
+                cygpath.write_text(
+                    "#!/bin/sh\n[ \"$1\" = -u ] || exit 2\nprintf '%s\\n' \"$2\"\n",
+                    encoding="utf-8",
+                )
+                cygpath.chmod(0o755)
+
+                capture = temp_root / f"args-{runner_os}.txt"
+                env = os.environ.copy()
+                env.update(
+                    {
+                        "FLUTTER_ROOT": str(sdk_root),
+                        "RUNNER_OS": runner_os,
+                        "CAPTURED_ARGS": str(capture),
+                    }
+                )
+                if runner_os == "Windows":
+                    env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+
+                result = subprocess.run(
+                    ["bash", str(script)],
+                    cwd=temp_root,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(capture.read_text(encoding="utf-8").splitlines(), expected_args)
 
     def test_flutter_sdk_cache_uses_the_explicit_job_local_path(self):
         cache = matrix_module.flutter_sdk_pub_cache_directory(
