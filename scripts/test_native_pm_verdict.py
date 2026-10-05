@@ -618,7 +618,7 @@ fn main() {
         )
         self.assertEqual(
             _materialize_marker("/tmp/lane/project", "pulumi"),
-            ("node_modules", "/tmp/lane/project/node_modules"),
+            ("node_modules", os.path.join("/tmp/lane/project", "node_modules")),
         )
 
     def test_pulumi_dependency_fixture_runs_through_mgc_before_install(self):
