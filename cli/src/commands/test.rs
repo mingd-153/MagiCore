@@ -208,6 +208,19 @@ fn detect_test_runner(project_root: &Path) -> Result<Option<(String, Vec<String>
         )));
     }
 
+    // SwiftPM runs tests only; MGC owns dependency resolution and installation.
+    // (SwiftPM chỉ chạy test; MGC sở hữu resolve và cài dependency.)
+    if read_project_manifest(project_root, "Package.swift")?.is_some() {
+        return Ok(Some((
+            "swift".to_string(),
+            vec![
+                "test".to_string(),
+                "--skip-update".to_string(),
+                "--disable-automatic-resolution".to_string(),
+            ],
+        )));
+    }
+
     // Deno REMOVED from auto-detect (native-engine ruling 2026-09-10):
     // a deno.json project gets the honest migration error, not a silent
     // `deno test` spawn. Same for package.json scripts that used to be
