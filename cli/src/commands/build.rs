@@ -748,6 +748,11 @@ fn cloud_cdk_synth_env(local_bin: &Path) -> Result<Vec<(String, String)>> {
 }
 
 #[cfg(feature = "clo")]
+fn pulumi_preview_args() -> [&'static str; 2] {
+    ["preview", "--skip-plugin-pre-install"]
+}
+
+#[cfg(feature = "clo")]
 async fn build_cloud(root: &Path) -> Result<()> {
     let kind = mgc_cloud_adapter::detect_type(root)
         .ok_or_else(|| crate::error::no_framework_detected("cloud", root))?;
@@ -780,7 +785,7 @@ async fn build_cloud(root: &Path) -> Result<()> {
             if tool_unavailable("pulumi") {
                 return Err(crate::error::build_toolchain_missing("pulumi"));
             }
-            run_allowlisted_tool(root, "pulumi", &["preview"])?;
+            run_allowlisted_tool(root, "pulumi", &pulumi_preview_args())?;
         }
         mgc_cloud_adapter::CloudType::Terraform => {
             if tool_unavailable("terraform") {

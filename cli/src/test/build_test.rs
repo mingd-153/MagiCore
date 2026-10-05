@@ -443,6 +443,15 @@ fn cdk_synth_disables_background_telemetry() {
 
 #[cfg(feature = "clo")]
 #[test]
+fn pulumi_preview_skips_its_package_manager_install() {
+    assert_eq!(
+        super::pulumi_preview_args(),
+        ["preview", "--skip-plugin-pre-install"]
+    );
+}
+
+#[cfg(feature = "clo")]
+#[test]
 fn build_cloud_fails_when_toolchain_missing() {
     let tmp = std::env::temp_dir().join(format!("mgc-build-cloud-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
