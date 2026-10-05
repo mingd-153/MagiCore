@@ -168,14 +168,6 @@ pub struct ContentStore {
     /// bảo mật phải đo được, không đoán mò.)
     #[cfg(unix)]
     memo_counters: std::sync::Arc<AtomicMemoCounters>,
-    /// Non-Unix: no stable file identity → memo disabled structurally (the
-    /// field exists to keep the struct shape stable but is never read; all
-    /// verifies rehash — see `file_identity` for the rationale).
-    /// (Non-Unix: không có stable identity → memo tắt về cấu trúc (field
-    /// tồn tại để giữ shape struct ổn định nhưng không bao giờ đọc; mọi
-    /// verify rehash — xem `file_identity` cho lý do).)
-    #[cfg(not(unix))]
-    verified: std::sync::Arc<parking_lot::Mutex<std::collections::HashMap<VerifiedBlobKey, ()>>>,
 }
 
 /// Default capacity of the bounded verified-blob memo (P1-2 audit vòng-4).
@@ -192,6 +184,7 @@ pub const MEMO_CAPACITY: usize = 4096;
 /// Compile-time proof the memo capacity is usable as `NonZeroUsize` — a
 /// zero value fails the build here instead of panicking at runtime.
 /// (Chứng minh compile-time capacity khác 0 — giá trị 0 rớt build.)
+#[cfg(unix)]
 const MEMO_NONZERO: std::num::NonZeroUsize = match std::num::NonZeroUsize::new(MEMO_CAPACITY) {
     Some(capacity) => capacity,
     None => panic!("MEMO_CAPACITY must be nonzero"),
@@ -315,10 +308,6 @@ impl ContentStore {
             ))),
             #[cfg(unix)]
             memo_counters: std::sync::Arc::new(AtomicMemoCounters::default()),
-            #[cfg(not(unix))]
-            verified: std::sync::Arc::new(
-                parking_lot::Mutex::new(std::collections::HashMap::new()),
-            ),
         })
     }
 

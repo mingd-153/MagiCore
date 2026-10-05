@@ -7,10 +7,13 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::fs::File;
-use std::io::{self, BufRead, Read, Seek, SeekFrom, Write};
+use std::io::{self, BufRead, Write};
+#[cfg(unix)]
+use std::io::{Read, Seek, SeekFrom};
 
 /// Bound command output returned through MCP while keeping disk-backed capture.
 /// Giới hạn output command trả qua MCP, dùng file tạm để không phình bộ nhớ.
+#[cfg(unix)]
 const MAX_MCP_CAPTURE_BYTES: u64 = 1_048_576;
 
 /// Keep the JSON-RPC pipe separate while CLI command output goes to stderr.
@@ -188,32 +191,30 @@ impl McpStdoutCapture {
         }
     }
 
+    #[cfg(unix)]
     fn finish(mut self) -> Result<String> {
-        #[cfg(unix)]
-        {
-            let flush_result = io::stdout().flush();
-            self.restore_stdout();
-            flush_result?;
-            self.output.seek(SeekFrom::Start(0))?;
-            let mut bytes = Vec::new();
-            Read::by_ref(&mut self.output)
-                .take(MAX_MCP_CAPTURE_BYTES + 1)
-                .read_to_end(&mut bytes)?;
-            let truncated = bytes.len() as u64 > MAX_MCP_CAPTURE_BYTES;
-            if truncated {
-                bytes.truncate(MAX_MCP_CAPTURE_BYTES as usize);
-            }
-            let mut text = String::from_utf8_lossy(&bytes).into_owned();
-            if truncated {
-                text.push_str("\n[command output truncated]");
-            }
-            Ok(text)
+        let flush_result = io::stdout().flush();
+        self.restore_stdout();
+        flush_result?;
+        self.output.seek(SeekFrom::Start(0))?;
+        let mut bytes = Vec::new();
+        Read::by_ref(&mut self.output)
+            .take(MAX_MCP_CAPTURE_BYTES + 1)
+            .read_to_end(&mut bytes)?;
+        let truncated = bytes.len() as u64 > MAX_MCP_CAPTURE_BYTES;
+        if truncated {
+            bytes.truncate(MAX_MCP_CAPTURE_BYTES as usize);
         }
+        let mut text = String::from_utf8_lossy(&bytes).into_owned();
+        if truncated {
+            text.push_str("\n[command output truncated]");
+        }
+        Ok(text)
+    }
 
-        #[cfg(not(unix))]
-        {
-            Ok(String::new())
-        }
+    #[cfg(not(unix))]
+    fn finish(self) -> Result<String> {
+        Ok(String::new())
     }
 
     #[cfg(unix)]
