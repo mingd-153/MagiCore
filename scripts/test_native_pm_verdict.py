@@ -5,6 +5,7 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -77,6 +78,27 @@ def bash_compatible_path(path, windows=None):
     return f"/{drive}/" + "/".join(windows_path.parts[1:])
 
 
+def bootstrap_bash_command(platform=None, git_executable=None):
+    if platform is None:
+        platform = os.name
+    if platform != "nt":
+        return "bash"
+    if git_executable is None:
+        git_executable = shutil.which("git")
+    if not git_executable:
+        return None
+
+    # Bind platform choice and Windows shell resolution in one auditable function.
+    # Gộp chọn shell theo hệ điều hành và tìm Bash trên Windows để audit chung.
+    git_path = Path(git_executable).resolve()
+    for install_directory in (git_path.parent, *git_path.parents):
+        for relative_path in (Path("bin/bash.exe"), Path("usr/bin/bash.exe")):
+            candidate = install_directory / relative_path
+            if candidate.is_file():
+                return str(candidate.resolve())
+    return None
+
+
 class GitHubWorkflowAnnotationEscaping(unittest.TestCase):
     def test_annotation_data_cannot_inject_another_workflow_command(self):
         self.assertEqual(
@@ -117,6 +139,22 @@ class AdapterConsistencyGate(unittest.TestCase):
 
 
 class LifecycleEnvironmentIsolation(unittest.TestCase):
+    def test_bootstrap_bash_command_uses_git_for_windows_and_posix_bash(self):
+        with tempfile.TemporaryDirectory(prefix="git bash lookup ") as tmp:
+            git_root = Path(tmp) / "Program Files" / "Git"
+            git_executable = git_root / "cmd" / "git.exe"
+            git_executable.parent.mkdir(parents=True)
+            git_executable.touch()
+            expected_bash = git_root / "bin" / "bash.exe"
+            expected_bash.parent.mkdir(parents=True)
+            expected_bash.touch()
+
+            self.assertEqual(
+                bootstrap_bash_command("nt", git_executable),
+                str(expected_bash.resolve()),
+            )
+            self.assertEqual(bootstrap_bash_command("posix"), "bash")
+
     def test_bash_compatible_path_maps_windows_drive_to_msys_mount(self):
         self.assertEqual(
             bash_compatible_path(r"D:\a\_temp\fake Flutter SDK", windows=True),
@@ -366,8 +404,18 @@ fn main() {
                     "BOOTSTRAP_STEPS": bash_compatible_path(bootstrap_steps),
                 }
             )
+            if os.name == "nt":
+                self.assertIsNotNone(
+                    bootstrap_bash_command(),
+                    "Git Bash was not found beside the Git for Windows installation",
+                )
+                self.assertNotEqual(
+                    bootstrap_bash_command(),
+                    "bash",
+                    "Windows must invoke the selected Git Bash executable",
+                )
             result = subprocess.run(
-                ["bash", bash_compatible_path(script)],
+                [bootstrap_bash_command(), bash_compatible_path(script)],
                 cwd=temp_root,
                 env=env,
                 capture_output=True,
@@ -402,7 +450,7 @@ fn main() {
             )
             resolved = subprocess.run(
                 [
-                    "bash",
+                    bootstrap_bash_command(),
                     "-c",
                     resolve_windows_dart,
                     "bootstrap-test",

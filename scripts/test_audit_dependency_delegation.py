@@ -10,6 +10,8 @@ is still release-blocking.
 `python3 scripts/test_audit_dependency_delegation.py`.)
 """
 
+import ast
+import hashlib
 import json
 import os
 import sys
@@ -603,6 +605,214 @@ class ScanBoundaryCoverage(unittest.TestCase):
 
 class PythonProcessInventory(unittest.TestCase):
     """Python process APIs are inventoried without treating prose as execution."""
+
+    def test_python_process_helper_review_binds_the_selected_executable(self):
+        source = (
+            "def select_shell():\n"
+            "    return 'bash'\n"
+        )
+        function = ast.parse(source).body[0]
+        fingerprint = hashlib.sha256(
+            ast.dump(function, include_attributes=False).encode("utf-8")
+        ).hexdigest()
+        path = "scripts/example.py"
+        reviews = {
+            path: {
+                "select_shell": (
+                    fingerprint,
+                    "Selects the intended shell executable for the platform.",
+                ),
+            },
+        }
+
+        with mock.patch.dict(gate.PYTHON_PROCESS_HELPER_REVIEWS, reviews, clear=True):
+            approved = gate.review_python_process_helpers(
+                {path: source}, expected_files={path}
+            )
+            changed = gate.review_python_process_helpers(
+                {path: source.replace("'bash'", "'sh'")}, expected_files={path}
+            )
+            rebound = gate.review_python_process_helpers(
+                {path: source + "select_shell = lambda: 'attacker.exe'\n"},
+                expected_files={path},
+            )
+            imported = gate.review_python_process_helpers(
+                {path: source + "from attacker import select_shell\n"},
+                expected_files={path},
+            )
+            wildcard = gate.review_python_process_helpers(
+                {path: source + "from attacker import *\n"},
+                expected_files={path},
+            )
+            namespace_write = gate.review_python_process_helpers(
+                {path: source + "globals()['select_shell'] = lambda: 'attacker.exe'\n"},
+                expected_files={path},
+            )
+            function_globals_write = gate.review_python_process_helpers(
+                {
+                    path: source
+                    + "select_shell.__globals__['select_shell'] = "
+                    + "lambda: 'attacker.exe'\n"
+                },
+                expected_files={path},
+            )
+            builtin_alias = gate.review_python_process_helpers(
+                {
+                    path: source
+                    + "from builtins import globals as module_namespace\n"
+                    + "module_namespace()['select_shell'] = lambda: 'attacker.exe'\n"
+                },
+                expected_files={path},
+            )
+            module_attribute = gate.review_python_process_helpers(
+                {
+                    path: source
+                    + "import sys\n"
+                    + "sys.modules[__name__].select_shell = lambda: 'attacker.exe'\n"
+                },
+                expected_files={path},
+            )
+            removed = gate.review_python_process_helpers({}, expected_files={path})
+
+        self.assertEqual([item["review_status"] for item in approved], ["reviewed"])
+        self.assertEqual([item["review_status"] for item in changed], ["stale-review"])
+        self.assertEqual([item["review_status"] for item in rebound], ["stale-review"])
+        self.assertEqual([item["review_status"] for item in imported], ["stale-review"])
+        self.assertEqual([item["review_status"] for item in wildcard], ["stale-review"])
+        self.assertEqual(
+            [item["review_status"] for item in namespace_write], ["stale-review"]
+        )
+        self.assertEqual(
+            [item["review_status"] for item in function_globals_write],
+            ["stale-review"],
+        )
+        self.assertEqual(
+            [item["review_status"] for item in builtin_alias], ["stale-review"]
+        )
+        self.assertEqual(
+            [item["review_status"] for item in module_attribute], ["stale-review"]
+        )
+        self.assertEqual([item["review_status"] for item in removed], ["stale-review"])
+
+    def test_python_process_helper_review_binds_global_import_dependencies(self):
+        source = (
+            "import shutil\n"
+            "from pathlib import Path\n"
+            "def select_shell():\n"
+            "    return shutil.which('git')\n"
+        )
+        function = ast.parse(source).body[2]
+        fingerprint = hashlib.sha256(
+            ast.dump(function, include_attributes=False).encode("utf-8")
+        ).hexdigest()
+        path = "scripts/example.py"
+        reviews = {
+            path: {
+                "select_shell": (
+                    fingerprint,
+                    "Selects the shell using the reviewed shutil import.",
+                ),
+            },
+        }
+        dependencies = {
+            path: {
+                "select_shell": {
+                    "shutil": "shutil",
+                    "Path": "pathlib.Path",
+                },
+            },
+        }
+
+        with mock.patch.dict(gate.PYTHON_PROCESS_HELPER_REVIEWS, reviews, clear=True), \
+             mock.patch.dict(
+                 gate.PYTHON_PROCESS_HELPER_DEPENDENCIES, dependencies, clear=True
+             ):
+            approved = gate.review_python_process_helpers(
+                {path: source}, expected_files={path}
+            )
+            mutated = gate.review_python_process_helpers(
+                {path: source + "shutil.which = lambda _: 'attacker.exe'\n"},
+                expected_files={path},
+            )
+            aliased_module_mutation = gate.review_python_process_helpers(
+                {
+                    path: source
+                    + "import shutil as alternate_shutil\n"
+                    + "alternate_shutil.which = lambda _: 'attacker.exe'\n"
+                },
+                expected_files={path},
+            )
+            assigned_alias_mutation = gate.review_python_process_helpers(
+                {
+                    path: source
+                    + "alternate_shutil = shutil\n"
+                    + "alternate_shutil.which = lambda _: 'attacker.exe'\n"
+                },
+                expected_files={path},
+            )
+            class_alias_mutation = gate.review_python_process_helpers(
+                {
+                    path: source
+                    + "from pathlib import Path as alternate_path\n"
+                    + "alternate_path.resolve = lambda self: self\n"
+                },
+                expected_files={path},
+            )
+            module_registry_mutation = gate.review_python_process_helpers(
+                {
+                    path: source
+                    + "import sys\n"
+                    + "sys.modules['shutil'].which = "
+                    + "lambda _: 'attacker.exe'\n"
+                },
+                expected_files={path},
+            )
+            module_registry_alias_mutation = gate.review_python_process_helpers(
+                {
+                    path: source
+                    + "import sys\n"
+                    + "registry = sys.modules\n"
+                    + "registry['shutil'].which = "
+                    + "lambda _: 'attacker.exe'\n"
+                },
+                expected_files={path},
+            )
+            rebound = gate.review_python_process_helpers(
+                {path: source + "shutil = attacker\n"}, expected_files={path}
+            )
+            substituted = gate.review_python_process_helpers(
+                {
+                    path: source.replace("import shutil", "import attacker as shutil"),
+                },
+                expected_files={path},
+            )
+
+        self.assertEqual([item["review_status"] for item in approved], ["reviewed"])
+        self.assertEqual([item["review_status"] for item in mutated], ["stale-review"])
+        self.assertEqual(
+            [item["review_status"] for item in aliased_module_mutation],
+            ["stale-review"],
+        )
+        self.assertEqual(
+            [item["review_status"] for item in assigned_alias_mutation],
+            ["stale-review"],
+        )
+        self.assertEqual(
+            [item["review_status"] for item in class_alias_mutation],
+            ["stale-review"],
+        )
+        self.assertEqual(
+            [item["review_status"] for item in module_registry_mutation],
+            ["stale-review"],
+        )
+        self.assertEqual(
+            [item["review_status"] for item in module_registry_alias_mutation],
+            ["stale-review"],
+        )
+        self.assertEqual([item["review_status"] for item in rebound], ["stale-review"])
+        self.assertEqual(
+            [item["review_status"] for item in substituted], ["stale-review"]
+        )
 
     def test_import_aliases_and_os_shell_calls_are_reported(self):
         findings = gate.scan_python_text(
@@ -2241,7 +2451,7 @@ class RepoLedgerContract(unittest.TestCase):
         with open(gate.OUTPUT_PATH, "r", encoding="utf-8") as handle:
             ledger = json.load(handle)
         findings = ledger["findings"]
-        self.assertEqual(ledger["schema"], "dependency-delegation-audit/10")
+        self.assertEqual(ledger["schema"], "dependency-delegation-audit/11")
         self.assertEqual(ledger["summary"]["review_required"], 0)
         self.assertEqual(ledger["summary"]["violation"], 0)
         self.assertEqual(ledger["summary"]["blocking"], 0)
@@ -2267,6 +2477,12 @@ class RepoLedgerContract(unittest.TestCase):
         )
         self.assertEqual(
             ledger["python_process_reviewed"], len(ledger["python_process_calls"])
+        )
+        self.assertEqual(ledger["python_process_helper_unreviewed"], 0)
+        self.assertEqual(ledger["python_process_helper_reviewed"], 1)
+        self.assertEqual(
+            [item["function"] for item in ledger["python_process_helper_reviews"]],
+            ["bootstrap_bash_command"],
         )
         self.assertEqual(ledger["shell_scan_roots"], gate.SHELL_SCAN_ROOTS)
         self.assertGreater(ledger["shell_files_scanned"], 0)

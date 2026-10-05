@@ -181,11 +181,11 @@ PYTHON_PROCESS_REVIEWS = {
     # Windows path tests use only a fake Flutter SDK in a temporary fixture.
     # Test đường dẫn Windows chỉ dùng Flutter SDK giả trong fixture tạm.
     "scripts/test_native_pm_verdict.py": {
-        ("subprocess.run", "5e9ac7ba19c830d027ce3dd4bc22e4e275c75c53819664a7909ab069af4a322e"): (
-            1, "Runs the fixed Flutter bootstrap script against fake dart/flutter executables in a temporary SDK tree.",
+        ("subprocess.run", "2f4663841eb2fe471692ce771206ab388c294997b133b185b1b45ffebcea0003"): (
+            1, "Runs the fixed Flutter bootstrap script with POSIX Bash or the selected Git Bash executable and fake dart/flutter executables in a temporary SDK tree.",
         ),
-        ("subprocess.run", "7eac37a9c430d3c49fb7c084dc10bab62b93320a5ac6763270b674284d3c999a"): (
-            1, "Runs a fixed Bash command that sources the repository bootstrap and resolves a constant Windows fixture path.",
+        ("subprocess.run", "0c8bcf6d3154d6c8571f100aace424e4d2b964aa3a93b9e2d2a851425dee76e4"): (
+            1, "Runs a fixed Bash command with the platform-selected shell to source the repository bootstrap and resolve a constant Windows fixture path.",
         ),
         ("subprocess.run", "9b0e4d3eb001046e3fba504d0a935d316337721443c2b7be1150b009660d7e13"): (
             1, "Compiles a native test-only dart.exe stub with fixed rustc arguments for the Windows Flutter bootstrap fixture; no package or network mutation.",
@@ -208,6 +208,29 @@ PYTHON_PROCESS_REVIEWS = {
         ("subprocess.run", "bdbb0096bdaa5a5ad909cc82acc2bbb7a1d7dada88c40ad6715240d8f15802e0"): (
             1, "MCP dispatch passes argv without a shell; subcommands are selected from ARGS_FOR_TOOL and timeout is fixed.",
         ),
+    },
+}
+
+# Source-bound reviews for helpers that select the executable passed through a
+# separately fingerprinted subprocess call. This closes the gap where a call
+# still looks identical while the variable feeding its argv changes behavior.
+# (Review source-bound cho hàm chọn executable đưa vào subprocess; ngăn việc
+# giữ nguyên biểu thức call nhưng đổi hành vi của biến argv.)
+PYTHON_PROCESS_HELPER_REVIEWS = {
+    "scripts/test_native_pm_verdict.py": {
+        "bootstrap_bash_command": (
+            "e824cf885f79b8bd2a97c80c922d538667dfa3f91308098fd68b063193b6fbf6",
+            "Selects POSIX Bash or resolves Git Bash beside Git for Windows for the fixed Flutter bootstrap fixture.",
+        ),
+    },
+}
+PYTHON_PROCESS_HELPER_DEPENDENCIES = {
+    "scripts/test_native_pm_verdict.py": {
+        "bootstrap_bash_command": {
+            "os": "os",
+            "shutil": "shutil",
+            "Path": "pathlib.Path",
+        },
     },
 }
 
@@ -2822,6 +2845,285 @@ def review_python_process_calls(calls: list, expected_files=None) -> list:
     return sorted(reviewed, key=lambda item: (item["file"], item["line"], item["api"]))
 
 
+def _python_binding_root(node):
+    while isinstance(node, (ast.Attribute, ast.Subscript)):
+        node = node.value
+    return node.id if isinstance(node, ast.Name) else None
+
+
+def _python_aliases_reviewed_namespace(node, alias_roots):
+    if isinstance(node, ast.Name):
+        return node.id in alias_roots
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr == "modules"
+        and _python_binding_root(node) in alias_roots
+    )
+
+
+def review_python_process_helpers(sources: dict, expected_files=None) -> list:
+    """Bind executable-selection helpers to exact reviewed function ASTs.
+    (Ràng buộc hàm chọn executable với AST hàm đã được review chính xác.)
+    """
+    expected_paths = (
+        set(expected_files)
+        if expected_files is not None
+        else set(PYTHON_PROCESS_HELPER_REVIEWS)
+    )
+    expected_paths.update(PYTHON_PROCESS_HELPER_REVIEWS)
+    reviewed = []
+    for rel_path in sorted(expected_paths & PYTHON_PROCESS_HELPER_REVIEWS.keys()):
+        source = sources.get(rel_path)
+        tree = None
+        parse_error = None
+        if source is not None:
+            try:
+                tree = ast.parse(source, filename=rel_path)
+            except SyntaxError as error:
+                parse_error = error.msg
+
+        for function_name, (expected_fingerprint, reason) in (
+            PYTHON_PROCESS_HELPER_REVIEWS[rel_path].items()
+        ):
+            dependencies = PYTHON_PROCESS_HELPER_DEPENDENCIES.get(
+                rel_path, {}
+            ).get(function_name, {})
+            dependency_names = set(dependencies)
+            dependency_alias_roots = set(dependency_names)
+            rebindings = []
+            dependency_mutations = []
+            dependency_binding_errors = []
+            namespace_mutations = []
+            candidates = []
+            if tree is not None:
+                nodes = list(ast.walk(tree))
+                namespace_mutators = {
+                    "exec", "eval", "globals", "locals", "vars", "getattr",
+                    "setattr", "delattr",
+                }
+                candidates = [
+                    node for node in nodes
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and node.name == function_name
+                ]
+                imports = []
+                for node in nodes:
+                    if isinstance(node, ast.Import):
+                        imports.extend(
+                            (
+                                alias.asname or alias.name.split(".", 1)[0],
+                                alias.name,
+                                node.lineno,
+                            )
+                            for alias in node.names
+                        )
+                    elif isinstance(node, ast.ImportFrom) and node.module:
+                        imports.extend(
+                            (
+                                alias.asname or alias.name,
+                                f"{node.module}.{alias.name}",
+                                node.lineno,
+                            )
+                            for alias in node.names
+                            if alias.name != "*"
+                        )
+                for dependency, expected_import in dependencies.items():
+                    matching_imports = [
+                        item for item in imports if item[0] == dependency
+                    ]
+                    if (
+                        len(matching_imports) != 1
+                        or matching_imports[0][1] != expected_import
+                    ):
+                        dependency_binding_errors.append(
+                            f"{dependency} must bind once to {expected_import}; "
+                            f"found {matching_imports!r}"
+                        )
+                for bound_name, imported_name, _line in imports:
+                    for expected_import in dependencies.values():
+                        if (
+                            imported_name == expected_import
+                            or expected_import.startswith(imported_name + ".")
+                            or imported_name.startswith(expected_import + ".")
+                        ):
+                            dependency_alias_roots.add(bound_name)
+                    if imported_name in {"sys", "sys.modules"}:
+                        # sys.modules can mutate dependency objects behind stable imports.
+                        # sys.modules có thể sửa dependency dù binding import không đổi.
+                        dependency_alias_roots.add(bound_name)
+                # Propagate simple aliases so `other = shutil; other.which = ...`
+                # cannot mutate a reviewed module through a new local name.
+                # Truyền alias đơn giản để `other = shutil; other.which = ...`
+                # không thể sửa module đã duyệt qua tên cục bộ mới.
+                aliases_changed = True
+                while aliases_changed:
+                    aliases_changed = False
+                    for node in nodes:
+                        if isinstance(node, ast.Assign):
+                            if _python_aliases_reviewed_namespace(
+                                node.value, dependency_alias_roots
+                            ):
+                                for target in node.targets:
+                                    target_names = {
+                                        child.id for child in ast.walk(target)
+                                        if isinstance(child, ast.Name)
+                                    }
+                                    if not target_names <= dependency_alias_roots:
+                                        dependency_alias_roots.update(target_names)
+                                        aliases_changed = True
+                        elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)):
+                            value = node.value
+                            if _python_aliases_reviewed_namespace(
+                                value, dependency_alias_roots
+                            ):
+                                target_names = {
+                                    child.id for child in ast.walk(node.target)
+                                    if isinstance(child, ast.Name)
+                                }
+                                if not target_names <= dependency_alias_roots:
+                                    dependency_alias_roots.update(target_names)
+                                    aliases_changed = True
+                for node in nodes:
+                    if (
+                        isinstance(node, ast.Name)
+                        and node.id == function_name
+                        and isinstance(node.ctx, (ast.Store, ast.Del))
+                    ):
+                        rebindings.append(node.lineno)
+                    elif (
+                        isinstance(node, ast.Attribute)
+                        and node.attr == function_name
+                        and isinstance(node.ctx, (ast.Store, ast.Del))
+                    ):
+                        rebindings.append(node.lineno)
+                    if (
+                        isinstance(node, (ast.Name, ast.Attribute, ast.Subscript))
+                        and isinstance(node.ctx, (ast.Store, ast.Del))
+                        and _python_binding_root(node) in dependency_alias_roots
+                    ):
+                        dependency_mutations.append(node.lineno)
+                    elif isinstance(node, ast.Import):
+                        rebindings.extend(
+                            alias.lineno if hasattr(alias, "lineno") else node.lineno
+                            for alias in node.names
+                            if (alias.asname or alias.name.split(".", 1)[0])
+                            == function_name
+                        )
+                    elif isinstance(node, ast.ImportFrom):
+                        if any(alias.name == "*" for alias in node.names) or (
+                            node.module == "builtins"
+                            and any(
+                                alias.name in namespace_mutators
+                                for alias in node.names
+                            )
+                        ):
+                            namespace_mutations.append(node.lineno)
+                        rebindings.extend(
+                            alias.lineno if hasattr(alias, "lineno") else node.lineno
+                            for alias in node.names
+                            if (alias.asname or alias.name) == function_name
+                        )
+                    elif isinstance(node, ast.Call):
+                        if isinstance(node.func, ast.Name):
+                            if node.func.id in namespace_mutators:
+                                namespace_mutations.append(node.lineno)
+                        elif isinstance(node.func, ast.Attribute):
+                            if (
+                                node.func.attr in namespace_mutators
+                                or node.func.attr in {
+                                    "__dict__", "__setattr__", "__delattr__",
+                                }
+                            ):
+                                namespace_mutations.append(node.lineno)
+                    elif (
+                        isinstance(node, ast.Attribute)
+                        and node.attr in {"__dict__", "__globals__"}
+                    ):
+                        # Helper namespace reflection can replace reviewed globals; fail closed.
+                        # Phản chiếu globals của helper có thể thay nội dung đã duyệt; chặn mặc định.
+                        namespace_mutations.append(node.lineno)
+                    elif isinstance(node, ast.ExceptHandler):
+                        if node.name == function_name:
+                            rebindings.append(node.lineno)
+                    elif isinstance(node, ast.arg):
+                        if node.arg == function_name:
+                            rebindings.append(node.lineno)
+                    elif type(node).__name__ in {
+                        "MatchAs", "MatchStar", "MatchMapping",
+                    }:
+                        if (
+                            getattr(node, "name", None) == function_name
+                            or getattr(node, "rest", None) == function_name
+                        ):
+                            rebindings.append(getattr(node, "lineno", 0))
+                    elif isinstance(node, ast.ClassDef) and node.name == function_name:
+                        rebindings.append(node.lineno)
+            fingerprints = [
+                hashlib.sha256(
+                    ast.dump(node, include_attributes=False).encode("utf-8")
+                ).hexdigest()
+                for node in candidates
+            ]
+            exact_match = (
+                len(candidates) == 1
+                and fingerprints == [expected_fingerprint]
+                and not rebindings
+                and not dependency_mutations
+                and not dependency_binding_errors
+                and not namespace_mutations
+            )
+            if exact_match:
+                status = "reviewed"
+                error = None
+            else:
+                status = "unreviewed" if parse_error else "stale-review"
+                if source is None:
+                    error = "reviewed source file is missing or unreadable"
+                elif parse_error:
+                    error = f"source parse failed: {parse_error}"
+                elif rebindings:
+                    error = (
+                        "reviewed helper name has additional binding(s) at line(s) "
+                        f"{sorted(set(rebindings))}"
+                    )
+                elif dependency_mutations:
+                    error = (
+                        "reviewed helper dependency mutation at line(s) "
+                        f"{sorted(set(dependency_mutations))}"
+                    )
+                elif dependency_binding_errors:
+                    error = "; ".join(dependency_binding_errors)
+                elif namespace_mutations:
+                    error = (
+                        "dynamic namespace mutation or wildcard import at line(s) "
+                        f"{sorted(set(namespace_mutations))}"
+                    )
+                elif not candidates:
+                    error = f"expected function {function_name!r} was not found"
+                else:
+                    error = (
+                        f"expected one exact function fingerprint; found "
+                        f"{len(candidates)} candidate(s) with {fingerprints!r}"
+                    )
+            reviewed.append({
+                "file": rel_path,
+                "line": candidates[0].lineno if len(candidates) == 1 else 0,
+                "function": function_name,
+                "function_fingerprint": (
+                    fingerprints[0] if len(fingerprints) == 1 else None
+                ),
+                "binding_locations": sorted(set(rebindings)),
+                "dependency_alias_roots": sorted(dependency_alias_roots),
+                "dependency_mutation_locations": sorted(set(dependency_mutations)),
+                "dependency_binding_errors": dependency_binding_errors,
+                "namespace_mutation_locations": sorted(set(namespace_mutations)),
+                "review_status": status,
+                "review_reason": reason,
+                "parse_error": error,
+            })
+    return reviewed
+
+
 def scan_python_text(rel_path: str, text: str) -> list:
     """Inventory known Python stdlib process calls; findings need review.
     (Kiểm kê lời gọi process stdlib đã biết; mọi finding cần review.)"""
@@ -3241,6 +3543,18 @@ def main() -> int:
         for abs_path in python_files
         for item in scan_python_file(abs_path, repo_root)
     ], expected_files={os.path.relpath(path, repo_root) for path in python_files})
+    python_process_helper_sources = {}
+    for rel_path in PYTHON_PROCESS_HELPER_REVIEWS:
+        abs_path = os.path.join(repo_root, *rel_path.split("/"))
+        try:
+            with open(abs_path, "r", encoding="utf-8") as handle:
+                python_process_helper_sources[rel_path] = handle.read()
+        except (OSError, UnicodeError):
+            continue
+    python_process_helper_reviews = review_python_process_helpers(
+        python_process_helper_sources,
+        expected_files={os.path.relpath(path, repo_root) for path in python_files},
+    )
     shell_files = _iter_shell_files()
     powershell_files = _iter_files_with_suffixes((".ps1", ".psm1", ".psd1"))
     scanned_shell_sources = {}
@@ -3336,7 +3650,7 @@ def main() -> int:
         working_tree_clean = None
 
     report = {
-        "schema": "dependency-delegation-audit/10",
+        "schema": "dependency-delegation-audit/11",
         "generated_at": datetime.datetime.now(datetime.timezone.utc).strftime(
             "%Y-%m-%dT%H:%M:%SZ"
         ),
@@ -3353,6 +3667,14 @@ def main() -> int:
         ),
         "python_process_unreviewed": sum(
             item["review_status"] != "reviewed" for item in python_process_calls
+        ),
+        "python_process_helper_reviewed": sum(
+            item["review_status"] == "reviewed"
+            for item in python_process_helper_reviews
+        ),
+        "python_process_helper_unreviewed": sum(
+            item["review_status"] != "reviewed"
+            for item in python_process_helper_reviews
         ),
         "shell_scan_roots": SHELL_SCAN_ROOTS,
         "shell_files_scanned": len(shell_files),
@@ -3371,6 +3693,7 @@ def main() -> int:
         "coverage_complete": not UNSCANNED_PROCESS_SURFACES,
         "unscanned_process_surfaces": UNSCANNED_PROCESS_SURFACES,
         "python_process_calls": python_process_calls,
+        "python_process_helper_reviews": python_process_helper_reviews,
         "shell_process_calls": shell_process_calls,
         "javascript_process_calls": javascript_process_calls,
         "powershell_process_calls": powershell_process_calls,
@@ -3407,6 +3730,8 @@ def main() -> int:
         f"python-process-api={len(python_process_calls)} "
         f"reviewed={sum(item['review_status'] == 'reviewed' for item in python_process_calls)} "
         f"unreviewed={sum(item['review_status'] != 'reviewed' for item in python_process_calls)} "
+        f"python-process-helper-review={sum(item['review_status'] == 'reviewed' for item in python_process_helper_reviews)} "
+        f"helper-unreviewed={sum(item['review_status'] != 'reviewed' for item in python_process_helper_reviews)} "
         f"shell-process-surfaces={len(shell_process_calls)} "
         f"shell-dynamic={sum(item['review_status'] == 'unreviewed' for item in shell_process_calls)} "
         f"js-process-api={len(javascript_process_calls)} "
@@ -3454,6 +3779,24 @@ def main() -> int:
             print(
                 f"  [{item['review_status']}] {item['file']}:{item['line']} "
                 f"{item['api']} {item['executable']}",
+                file=sys.stderr,
+            )
+        print(f"ledger: {os.path.relpath(out_path, repo_root)}", file=sys.stderr)
+        return 1
+    python_process_helper_unreviewed = [
+        item for item in python_process_helper_reviews
+        if item["review_status"] != "reviewed"
+    ]
+    if python_process_helper_unreviewed:
+        print(
+            "PYTHON PROCESS HELPER REVIEW REQUIRED — executable-selection "
+            "helpers changed, missing, or unreadable:",
+            file=sys.stderr,
+        )
+        for item in python_process_helper_unreviewed:
+            print(
+                f"  [{item['review_status']}] {item['file']}:{item['line']} "
+                f"{item['function']}: {item['parse_error']}",
                 file=sys.stderr,
             )
         print(f"ledger: {os.path.relpath(out_path, repo_root)}", file=sys.stderr)

@@ -1277,6 +1277,27 @@ fn test_scaffold_is_atomic_no_partial_on_failure() {
 }
 
 #[test]
+fn test_claim_target_reports_existing_directory_and_releases_claim() {
+    let root = tempfile::tempdir().unwrap();
+    let target = root.path().join("claim-existing");
+    std::fs::create_dir(&target).unwrap();
+    std::fs::write(target.join("keep.txt"), "winner").unwrap();
+    let claim = Scaffolder::claim_slot_path(&target);
+
+    let error = Scaffolder::claim_target(&target).unwrap_err();
+
+    assert!(
+        error.to_string().contains("already exists"),
+        "existing target must report a conflict, got: {error}"
+    );
+    assert!(!claim.exists(), "claim slot must be released on conflict");
+    assert_eq!(
+        std::fs::read_to_string(target.join("keep.txt")).unwrap(),
+        "winner"
+    );
+}
+
+#[test]
 fn test_scaffold_rename_conflict_fails_closed() {
     // If the target directory appears between the exists-check and rename
     // (race window), scaffold must fail closed without touching the winner.

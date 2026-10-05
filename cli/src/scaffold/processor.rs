@@ -370,30 +370,7 @@ impl Scaffolder {
 
     pub fn scaffold(config: &ScaffoldConfig) -> Result<PathBuf> {
         let target = Self::target_dir(config);
-        if target.exists() {
-            return Err(crate::error::dir_already_exists(&target));
-        }
-
-        // Atomic claim slot: create_new is exclusive on every platform, so
-        // exactly one racing process wins the right to build this target.
-        // Losers receive a clear "already in progress" error.
-        // Claim-slot nguyên tử: create_new độc quyền trên mọi nền tảng — chỉ
-        // đúng 1 process thắng quyền dựng target; kẻ thua nhận error rõ ràng.
-        let claim = Self::claim_slot_path(&target);
-        let claim_file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&claim)
-            .map_err(|e| {
-                if e.kind() == std::io::ErrorKind::AlreadyExists {
-                    crate::error::create_claim_conflict(&claim)
-                } else {
-                    crate::error::scaffold_staging_failed(&target, anyhow::anyhow!(e))
-                }
-            })?;
-        // Release the handle early — the claim is guarded by its existence.
-        // Giải phóng handle sớm — claim được bảo vệ bởi sự tồn tại của nó.
-        drop(claim_file);
+        let claim = Self::claim_target(&target)?;
 
         // Atomic scaffold: build in a hidden temp dir on the SAME filesystem,
         // rename into place only when fully written. A crash mid-write can
@@ -462,6 +439,56 @@ impl Scaffolder {
             Some(parent) => parent.join(claim_name),
             None => PathBuf::from(claim_name),
         }
+    }
+
+    /// Atomically claim a target name, then check it while holding the claim.
+    /// Claim tên target nguyên tử, rồi kiểm tra khi vẫn đang giữ claim.
+    fn claim_target(target: &Path) -> Result<PathBuf> {
+        // The exclusive claim must precede the target check: checking first lets
+        // a loser acquire the claim after the winner publishes and releases it.
+        // Phải lấy claim độc quyền trước khi kiểm tra target: nếu kiểm tra trước,
+        // process thua có thể lấy claim sau khi process thắng đã tạo target và nhả khóa.
+        let claim = Self::claim_slot_path(target);
+        let claim_file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&claim)
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::AlreadyExists {
+                    crate::error::create_claim_conflict(&claim)
+                } else {
+                    crate::error::scaffold_staging_failed(target, anyhow::anyhow!(e))
+                }
+            })?;
+        // Release the handle early; the claim is guarded by its file's existence.
+        // Nhả handle sớm; claim được giữ bằng sự tồn tại của file khóa.
+        drop(claim_file);
+
+        let target_exists = match target.try_exists() {
+            Ok(exists) => exists,
+            Err(error) => {
+                let _ = std::fs::remove_file(&claim);
+                return Err(crate::error::scaffold_staging_failed(
+                    target,
+                    anyhow::anyhow!(error),
+                ));
+            }
+        };
+        if target_exists {
+            let conflict = crate::error::dir_already_exists(target);
+            if let Err(cleanup_error) = std::fs::remove_file(&claim) {
+                return Err(crate::error::scaffold_staging_failed(
+                    target,
+                    anyhow::anyhow!(
+                        "{conflict}; failed to release claim slot '{}': {cleanup_error}",
+                        claim.display()
+                    ),
+                ));
+            }
+            return Err(conflict);
+        }
+
+        Ok(claim)
     }
 
     pub fn display_name(project_dir: &Path) -> String {
