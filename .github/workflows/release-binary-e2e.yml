@@ -607,6 +607,9 @@ jobs:
           if ($null -eq $toolchain) { throw "Swift 6.4.0 toolchain directory was not installed" }
           $swiftBin = Join-Path $toolchain.FullName "usr\bin"
           if (!(Test-Path (Join-Path $swiftBin "swift.exe"))) { throw "Swift executable is missing from the installed toolchain" }
+          $swiftRuntimeVersion = $toolchain.Name -replace '\+.*$', ''
+          $swiftRuntimeBin = Join-Path (Split-Path -Parent $swiftRoot) "Runtimes\$swiftRuntimeVersion\usr\bin"
+          if (!(Test-Path -LiteralPath (Join-Path $swiftRuntimeBin "swiftCore.dll") -PathType Leaf)) { throw "Swift runtime DLL is missing: $swiftRuntimeBin" }
           # The installer writes SDKROOT at User scope; copy it into later workflow steps.
           # Installer ghi SDKROOT ở cấp User; chuyển nó sang các bước workflow tiếp theo.
           $sdkRoot = [Environment]::GetEnvironmentVariable('SDKROOT', 'User')
@@ -614,6 +617,10 @@ jobs:
           Add-Content -Path $env:GITHUB_ENV -Value "SDKROOT=$sdkRoot" -Encoding utf8
           Write-Host "Swift SDKROOT: $sdkRoot"
           Add-Content -Path $env:GITHUB_PATH -Value $swiftBin -Encoding utf8
+          # Swift packages load DLLs from the separate runtime installation.
+          # Gói Swift nạp DLL từ thư mục runtime cài riêng.
+          Add-Content -Path $env:GITHUB_PATH -Value $swiftRuntimeBin -Encoding utf8
+          Write-Host "Swift runtime directory: $swiftRuntimeBin"
           & (Join-Path $swiftBin "swift.exe") --version
 
       - name: Lifecycle app swift (create → install → test → build)

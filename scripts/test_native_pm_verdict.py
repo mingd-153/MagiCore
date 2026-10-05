@@ -1443,6 +1443,18 @@ class NativePackageManagerVerdict(unittest.TestCase):
                 'Add-Content -Path $env:GITHUB_ENV -Value "SDKROOT=$sdkRoot"',
                 windows_setup,
             )
+            self.assertIn(
+                'Join-Path (Split-Path -Parent $swiftRoot) "Runtimes\\$swiftRuntimeVersion\\usr\\bin"',
+                windows_setup,
+            )
+            self.assertIn(
+                'Join-Path $swiftRuntimeBin "swiftCore.dll"',
+                windows_setup,
+            )
+            self.assertIn(
+                'Add-Content -Path $env:GITHUB_PATH -Value $swiftRuntimeBin',
+                windows_setup,
+            )
         for current_workflow in (workflow, release_workflow):
             key_import = current_workflow.index(
                 "- name: Import Swift.org signing keys (Linux)"
