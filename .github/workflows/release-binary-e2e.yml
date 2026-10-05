@@ -564,8 +564,7 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($pythonPath) -or !(Test-Path -LiteralPath $pythonPath -PathType Leaf)) { throw "setup-python did not return an existing Python executable" }
           $version = & $pythonPath --version
           if ($version -notmatch '^Python 3\.10\.') { throw "Swift requires Python 3.10.x; found $version" }
-          $pythonBin = Split-Path -Parent $pythonPath
-          Add-Content -Path $env:GITHUB_ENV -Value "MGC_SWIFT_PYTHON_BIN=$pythonBin" -Encoding utf8
+          Add-Content -Path $env:GITHUB_ENV -Value "MGC_SWIFT_PYTHON_EXE=$pythonPath" -Encoding utf8
 
       # Import official Swift keys and pin both expected signing fingerprints before verification.
       # Nạp khóa Swift chính thức và đối chiếu hai fingerprint ký dự kiến trước khi xác minh.
@@ -645,10 +644,14 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "$RUNNER_OS" == "Windows" ]]; then
-            if [[ -z "${MGC_SWIFT_PYTHON_BIN:-}" ]]; then echo "Swift Python 3.10 path is missing" >&2; exit 1; fi
-            SWIFT_PYTHON_BIN="$(cygpath -u "$MGC_SWIFT_PYTHON_BIN")"
-            export PATH="$SWIFT_PYTHON_BIN:$PATH"
-            python --version | grep -q '^Python 3\.10\.'
+            if [[ -z "${MGC_SWIFT_PYTHON_EXE:-}" ]]; then echo "Swift Python 3.10 executable is missing" >&2; exit 1; fi
+            SWIFT_PYTHON="$(cygpath -u "$MGC_SWIFT_PYTHON_EXE")"
+            SWIFT_PYTHON_VERSION="$("$SWIFT_PYTHON" --version 2>&1)"
+            if [[ "$SWIFT_PYTHON_VERSION" != "Python 3.10."* ]]; then
+              echo "Expected Swift Python 3.10.x at $SWIFT_PYTHON; found: $SWIFT_PYTHON_VERSION" >&2
+              exit 1
+            fi
+            export PATH="${SWIFT_PYTHON%/*}:$PATH"
             MGCBIN="$HOME/.magicore-test/bin/mgc.exe"
           else
             MGCBIN="$HOME/.magicore-test/bin/mgc"
@@ -659,7 +662,8 @@ jobs:
           "$MGCBIN" create-app swift test-swift-app
           cd test-swift-app
           "$MGCBIN" install
-          test -f mgc.lock
+          # This fixture has no external dependencies, so install has no MGC lock graph to write.
+          # Fixture này không có dependency ngoài, nên install không cần ghi đồ thị vào mgc.lock.
           "$MGCBIN" test -- --verbose 2>&1 | tee swift-test.log
           grep -q "Executed 1 test" swift-test.log
           "$MGCBIN" build
