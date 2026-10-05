@@ -11,7 +11,6 @@ is still release-blocking.
 """
 
 import ast
-import hashlib
 import json
 import os
 import sys
@@ -612,9 +611,7 @@ class PythonProcessInventory(unittest.TestCase):
             "    return 'bash'\n"
         )
         function = ast.parse(source).body[0]
-        fingerprint = hashlib.sha256(
-            ast.dump(function, include_attributes=False).encode("utf-8")
-        ).hexdigest()
+        fingerprint = gate._python_process_helper_fingerprint(function)
         path = "scripts/example.py"
         reviews = {
             path: {
@@ -694,6 +691,23 @@ class PythonProcessInventory(unittest.TestCase):
         )
         self.assertEqual([item["review_status"] for item in removed], ["stale-review"])
 
+    def test_python_helper_fingerprint_is_stable_across_empty_ast_type_params(self):
+        source = "def select_shell():\n    return 'bash'\n"
+        without_type_params = ast.parse(source).body[0]
+        with_type_params = ast.parse(source).body[0]
+        with_type_params.type_params = []
+
+        self.assertEqual(
+            gate._python_process_helper_fingerprint(without_type_params),
+            gate._python_process_helper_fingerprint(with_type_params),
+        )
+
+        with_type_params.type_params = [ast.Name(id="Shell", ctx=ast.Load())]
+        self.assertNotEqual(
+            gate._python_process_helper_fingerprint(without_type_params),
+            gate._python_process_helper_fingerprint(with_type_params),
+        )
+
     def test_python_process_helper_review_binds_global_import_dependencies(self):
         source = (
             "import shutil\n"
@@ -702,9 +716,7 @@ class PythonProcessInventory(unittest.TestCase):
             "    return shutil.which('git')\n"
         )
         function = ast.parse(source).body[2]
-        fingerprint = hashlib.sha256(
-            ast.dump(function, include_attributes=False).encode("utf-8")
-        ).hexdigest()
+        fingerprint = gate._python_process_helper_fingerprint(function)
         path = "scripts/example.py"
         reviews = {
             path: {

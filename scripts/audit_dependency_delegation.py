@@ -219,7 +219,7 @@ PYTHON_PROCESS_REVIEWS = {
 PYTHON_PROCESS_HELPER_REVIEWS = {
     "scripts/test_native_pm_verdict.py": {
         "bootstrap_bash_command": (
-            "e824cf885f79b8bd2a97c80c922d538667dfa3f91308098fd68b063193b6fbf6",
+            "fdf806be04167c38b93b21ab0db79ebc01cac22a5f0c5aacfbc87cfc09ef1032",
             "Selects POSIX Bash or resolves Git Bash beside Git for Windows for the fixed Flutter bootstrap fixture.",
         ),
     },
@@ -2851,6 +2851,32 @@ def _python_binding_root(node):
     return node.id if isinstance(node, ast.Name) else None
 
 
+def _python_ast_fingerprint_dump(value):
+    if isinstance(value, ast.AST):
+        field_names = list(value._fields)
+        if hasattr(value, "type_params") and "type_params" not in field_names:
+            field_names.append("type_params")
+        fields = []
+        for field_name in field_names:
+            field_value = getattr(value, field_name, None)
+            # Empty type_params appears only in newer Python AST schemas.
+            # type_params rỗng chỉ xuất hiện trong schema AST của Python mới hơn.
+            if field_name == "type_params" and not field_value:
+                continue
+            fields.append(
+                f"{field_name}={_python_ast_fingerprint_dump(field_value)}"
+            )
+        return f"{type(value).__name__}({','.join(fields)})"
+    if isinstance(value, (list, tuple)):
+        return "[" + ",".join(_python_ast_fingerprint_dump(item) for item in value) + "]"
+    return repr(value)
+
+
+def _python_process_helper_fingerprint(node):
+    canonical = _python_ast_fingerprint_dump(node)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def _python_aliases_reviewed_namespace(node, alias_roots):
     if isinstance(node, ast.Name):
         return node.id in alias_roots
@@ -3059,10 +3085,7 @@ def review_python_process_helpers(sources: dict, expected_files=None) -> list:
                     elif isinstance(node, ast.ClassDef) and node.name == function_name:
                         rebindings.append(node.lineno)
             fingerprints = [
-                hashlib.sha256(
-                    ast.dump(node, include_attributes=False).encode("utf-8")
-                ).hexdigest()
-                for node in candidates
+                _python_process_helper_fingerprint(node) for node in candidates
             ]
             exact_match = (
                 len(candidates) == 1
