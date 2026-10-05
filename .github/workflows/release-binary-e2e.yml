@@ -554,7 +554,7 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: Capture Swift Python 3.10 path (Windows)
+      - name: Verify Swift Python 3.10 executable (Windows)
         if: matrix.os == 'windows-latest'
         shell: pwsh
         env:
@@ -564,7 +564,6 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($pythonPath) -or !(Test-Path -LiteralPath $pythonPath -PathType Leaf)) { throw "setup-python did not return an existing Python executable" }
           $version = & $pythonPath --version
           if ($version -notmatch '^Python 3\.10\.') { throw "Swift requires Python 3.10.x; found $version" }
-          Add-Content -Path $env:GITHUB_ENV -Value "MGC_SWIFT_PYTHON_EXE=$pythonPath" -Encoding utf8
 
       # Import official Swift keys and pin both expected signing fingerprints before verification.
       # Nạp khóa Swift chính thức và đối chiếu hai fingerprint ký dự kiến trước khi xác minh.
@@ -609,8 +608,26 @@ jobs:
           Add-Content -Path $env:GITHUB_PATH -Value $swiftBin -Encoding utf8
           & (Join-Path $swiftBin "swift.exe") --version
 
-      # Restore the AI lane's pinned Python runtime after Swift's installer.
-      # Khôi phục runtime Python đã ghim của lane AI sau khi cài Swift.
+      - name: Lifecycle app swift (create → install → test → build)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == "Windows" ]]; then MGCBIN="$HOME/.magicore-test/bin/mgc.exe"; else MGCBIN="$HOME/.magicore-test/bin/mgc"; fi
+          WORK="$(mktemp -d)"
+          cd "$WORK"
+          swift --version
+          "$MGCBIN" create-app swift test-swift-app
+          cd test-swift-app
+          "$MGCBIN" install
+          # This fixture has no external dependencies, so install has no MGC lock graph to write.
+          # Fixture này không có dependency ngoài, nên install không cần ghi đồ thị vào mgc.lock.
+          "$MGCBIN" test -- --verbose 2>&1 | tee swift-test.log
+          grep -q "Executed 1 test" swift-test.log
+          "$MGCBIN" build
+          find .build -type f \( -name MagiCoreApp -o -name MagiCoreApp.exe \) -print -quit | grep -q .
+
+      # Restore Python 3.12 after Swift has finished using its pinned Python 3.10 runtime.
+      # Khôi phục Python 3.12 sau khi Swift dùng xong runtime Python 3.10 đã ghim.
       - name: Restore Python runtime (AI lane)
         if: matrix.os == 'windows-latest'
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -638,36 +655,6 @@ jobs:
           # `web` là target CI phổ quát (không cần Android SDK / Xcode).
           "$MGCBIN" build
           test -d build/web
-
-      - name: Lifecycle app swift (create → install → test → build)
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ "$RUNNER_OS" == "Windows" ]]; then
-            if [[ -z "${MGC_SWIFT_PYTHON_EXE:-}" ]]; then echo "Swift Python 3.10 executable is missing" >&2; exit 1; fi
-            SWIFT_PYTHON="$(cygpath -u "$MGC_SWIFT_PYTHON_EXE")"
-            SWIFT_PYTHON_VERSION="$("$SWIFT_PYTHON" --version 2>&1)"
-            if [[ "$SWIFT_PYTHON_VERSION" != "Python 3.10."* ]]; then
-              echo "Expected Swift Python 3.10.x at $SWIFT_PYTHON; found: $SWIFT_PYTHON_VERSION" >&2
-              exit 1
-            fi
-            export PATH="${SWIFT_PYTHON%/*}:$PATH"
-            MGCBIN="$HOME/.magicore-test/bin/mgc.exe"
-          else
-            MGCBIN="$HOME/.magicore-test/bin/mgc"
-          fi
-          WORK="$(mktemp -d)"
-          cd "$WORK"
-          swift --version
-          "$MGCBIN" create-app swift test-swift-app
-          cd test-swift-app
-          "$MGCBIN" install
-          # This fixture has no external dependencies, so install has no MGC lock graph to write.
-          # Fixture này không có dependency ngoài, nên install không cần ghi đồ thị vào mgc.lock.
-          "$MGCBIN" test -- --verbose 2>&1 | tee swift-test.log
-          grep -q "Executed 1 test" swift-test.log
-          "$MGCBIN" build
-          find .build -type f \( -name MagiCoreApp -o -name MagiCoreApp.exe \) -print -quit | grep -q .
 
       - name: Lifecycle lockfile import (bun.lock → mgc.lock → audit, migration path)
         shell: bash
