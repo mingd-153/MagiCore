@@ -1622,6 +1622,27 @@ impl Drop for WindowsOwnedHandle {
 }
 
 #[cfg(windows)]
+impl WindowsOwnedHandle {
+    #[allow(unsafe_code)]
+    fn has_terminated(&self) -> Result<bool> {
+        use windows_sys::Win32::Foundation::STILL_ACTIVE;
+        use windows_sys::Win32::System::Threading::GetExitCodeProcess;
+
+        let mut exit_code = 0;
+        // SAFETY: this handle is open with PROCESS_QUERY_LIMITED_INFORMATION access.
+        // AN TOÀN: handle đang mở với quyền PROCESS_QUERY_LIMITED_INFORMATION.
+        let queried = unsafe { GetExitCodeProcess(self.0, &mut exit_code) };
+        if queried == 0 {
+            bail!(
+                "failed to inspect Windows child process status (error {})",
+                windows_last_error()
+            );
+        }
+        Ok(exit_code != STILL_ACTIVE as u32)
+    }
+}
+
+#[cfg(windows)]
 /// Closing this job handle kills its assigned process tree by OS policy.
 /// Đóng handle job sẽ dừng cây tiến trình đã gắn theo chính sách của OS.
 /// Source: https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects
@@ -1952,11 +1973,11 @@ fn inspect_windows_job(
         return Ok(WindowsJobInspection::default());
     }
     let mut system = System::new();
-    let (captured_job_processes, snapshots) = capture_windows_job_process_snapshots(
+    let captured_snapshots = capture_windows_job_process_snapshots(
         root_pid,
         &process_ids,
         |process_id| guard.capture_job_member_process(process_id),
-        |process_id, _identity_guard| {
+        |process_id, identity_guard| {
             let process_id = Pid::from_u32(process_id);
             let process_ids = [process_id];
             for _ in 0..2 {
@@ -1970,25 +1991,41 @@ fn inspect_windows_job(
                     ProcessRefreshKind::nothing().with_cmd(UpdateKind::Always),
                 );
                 if let Some(process) = system.process(process_id) {
-                    return Ok(Some(WindowsProcessSnapshot {
-                        pid: process_id.as_u32(),
-                        #[cfg(test)]
-                        parent_pid: None,
-                        #[cfg(test)]
-                        creation_time: None,
-                        image_name: process.name().to_string_lossy().into_owned(),
-                        command: process.cmd().to_vec(),
-                    }));
+                    return Ok(WindowsJobMemberMetadata::Available(
+                        WindowsProcessSnapshot {
+                            pid: process_id.as_u32(),
+                            #[cfg(test)]
+                            parent_pid: None,
+                            #[cfg(test)]
+                            creation_time: None,
+                            image_name: process.name().to_string_lossy().into_owned(),
+                            command: process.cmd().to_vec(),
+                        },
+                    ));
+                }
+                if identity_guard.has_terminated()? {
+                    // Live descendants remain separate members of this Job and are inspected in turn.
+                    // Descendant còn sống vẫn là thành viên riêng của Job và sẽ được kiểm tra tiếp.
+                    return Ok(WindowsJobMemberMetadata::Exited);
                 }
             }
-            Ok(None)
+            if identity_guard.has_terminated()? {
+                return Ok(WindowsJobMemberMetadata::Exited);
+            }
+            Ok(WindowsJobMemberMetadata::Unavailable)
         },
     )?;
-    let captured_job_process_ids = captured_job_processes
+    let captured_job_process_ids = captured_snapshots
+        .members
         .iter()
         .map(|(process_id, _)| *process_id)
         .collect::<Vec<_>>();
-    inspect_windows_job_processes(root_pid, &captured_job_process_ids, &snapshots, exempt)
+    inspect_windows_job_processes(
+        root_pid,
+        &captured_job_process_ids,
+        &captured_snapshots.snapshots,
+        exempt,
+    )
 }
 
 /// Capture confirmed Job Object members before metadata refresh and retain their identity evidence.
@@ -2020,8 +2057,8 @@ fn capture_windows_job_process_snapshots<T>(
     root_pid: u32,
     job_process_ids: &[u32],
     mut capture_member: impl FnMut(u32) -> Result<T>,
-    mut snapshot_member: impl FnMut(u32, &T) -> Result<Option<WindowsProcessSnapshot>>,
-) -> Result<(Vec<(u32, T)>, Vec<WindowsProcessSnapshot>)> {
+    mut snapshot_member: impl FnMut(u32, &T) -> Result<WindowsJobMemberMetadata>,
+) -> Result<CapturedWindowsJobSnapshots<T>> {
     use std::collections::HashSet;
 
     let mut seen = HashSet::from([root_pid]);
@@ -2032,13 +2069,21 @@ fn capture_windows_job_process_snapshots<T>(
             continue;
         }
         let identity_guard = capture_member(process_id)?;
-        let snapshot = snapshot_member(process_id, &identity_guard)?.ok_or_else(|| {
-            anyhow::anyhow!("cannot inspect captured Windows job child PID {process_id}")
-        })?;
-        captured.push((process_id, identity_guard));
-        snapshots.push(snapshot);
+        match snapshot_member(process_id, &identity_guard)? {
+            WindowsJobMemberMetadata::Available(snapshot) => {
+                captured.push((process_id, identity_guard));
+                snapshots.push(snapshot);
+            }
+            WindowsJobMemberMetadata::Exited => {}
+            WindowsJobMemberMetadata::Unavailable => {
+                bail!("cannot inspect captured Windows job child PID {process_id}");
+            }
+        }
     }
-    Ok((captured, snapshots))
+    Ok(CapturedWindowsJobSnapshots {
+        members: captured,
+        snapshots,
+    })
 }
 
 /// Inspect snapshots for members confirmed before refresh; do not recheck PID membership afterward.
@@ -2081,6 +2126,19 @@ fn inspect_windows_job_processes(
         ));
     }
     Ok(inspected)
+}
+
+#[cfg(any(windows, test))]
+enum WindowsJobMemberMetadata {
+    Available(WindowsProcessSnapshot),
+    Exited,
+    Unavailable,
+}
+
+#[cfg(any(windows, test))]
+struct CapturedWindowsJobSnapshots<T> {
+    members: Vec<(u32, T)>,
+    snapshots: Vec<WindowsProcessSnapshot>,
 }
 
 #[cfg(any(windows, test))]

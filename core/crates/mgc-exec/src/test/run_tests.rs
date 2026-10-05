@@ -837,7 +837,7 @@ fn windows_job_member_capture_fails_closed_when_membership_cannot_be_verified()
 fn windows_job_member_metadata_is_read_immediately_after_capture()
 -> Result<(), Box<dyn std::error::Error>> {
     let events = std::cell::RefCell::new(Vec::new());
-    let (captured, snapshots) = super::capture_windows_job_process_snapshots(
+    let captured_snapshots = super::capture_windows_job_process_snapshots(
         100,
         &[100, 101, 102, 101],
         |process_id| {
@@ -847,13 +847,15 @@ fn windows_job_member_metadata_is_read_immediately_after_capture()
         |process_id, identity| {
             assert_eq!(*identity, process_id);
             events.borrow_mut().push(format!("snapshot:{process_id}"));
-            Ok(Some(super::WindowsProcessSnapshot {
-                pid: process_id,
-                parent_pid: None,
-                creation_time: None,
-                image_name: "cmd.exe".to_owned(),
-                command: Vec::new(),
-            }))
+            Ok(super::WindowsJobMemberMetadata::Available(
+                super::WindowsProcessSnapshot {
+                    pid: process_id,
+                    parent_pid: None,
+                    creation_time: None,
+                    image_name: "cmd.exe".to_owned(),
+                    command: Vec::new(),
+                },
+            ))
         },
     )?;
 
@@ -862,14 +864,16 @@ fn windows_job_member_metadata_is_read_immediately_after_capture()
         ["capture:101", "snapshot:101", "capture:102", "snapshot:102"]
     );
     assert_eq!(
-        captured
+        captured_snapshots
+            .members
             .iter()
             .map(|(process_id, _)| *process_id)
             .collect::<Vec<_>>(),
         [101, 102]
     );
     assert_eq!(
-        snapshots
+        captured_snapshots
+            .snapshots
             .iter()
             .map(|snapshot| snapshot.pid)
             .collect::<Vec<_>>(),
@@ -884,8 +888,8 @@ fn windows_job_member_without_immediate_metadata_fails_closed()
     let error = match super::capture_windows_job_process_snapshots(
         100,
         &[100, 101],
-        |process_id| Ok(process_id),
-        |_process_id, _identity| Ok(None),
+        Ok,
+        |_process_id, _identity| Ok(super::WindowsJobMemberMetadata::Unavailable),
     ) {
         Ok(_) => panic!("missing child metadata must fail closed"),
         Err(error) => error,
@@ -894,6 +898,50 @@ fn windows_job_member_without_immediate_metadata_fails_closed()
         error
             .to_string()
             .contains("cannot inspect captured Windows job child PID 101")
+    );
+    Ok(())
+}
+
+#[test]
+fn windows_job_member_that_exits_during_metadata_capture_is_skipped()
+-> Result<(), Box<dyn std::error::Error>> {
+    let captured_snapshots = super::capture_windows_job_process_snapshots(
+        100,
+        &[100, 101, 102],
+        Ok,
+        |process_id, _identity| {
+            if process_id == 101 {
+                return Ok(super::WindowsJobMemberMetadata::Exited);
+            }
+            Ok(super::WindowsJobMemberMetadata::Available(
+                super::WindowsProcessSnapshot {
+                    pid: process_id,
+                    parent_pid: None,
+                    creation_time: None,
+                    image_name: "node.exe".to_owned(),
+                    command: vec![std::ffi::OsString::from("node.exe")],
+                },
+            ))
+        },
+    )?;
+
+    // Only the confirmed-live member is sent to policy inspection.
+    // Chỉ thành viên được xác nhận còn sống mới được đưa vào bước kiểm tra chính sách.
+    assert_eq!(
+        captured_snapshots
+            .members
+            .iter()
+            .map(|(pid, _)| *pid)
+            .collect::<Vec<_>>(),
+        [102]
+    );
+    assert_eq!(
+        captured_snapshots
+            .snapshots
+            .iter()
+            .map(|snapshot| snapshot.pid)
+            .collect::<Vec<_>>(),
+        [102]
     );
     Ok(())
 }
