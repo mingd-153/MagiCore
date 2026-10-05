@@ -72,7 +72,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # Swiftly-backed setup-swift v3 installs Swift 6.4 on Ubuntu 24.04.
+        # setup-swift v3 dùng Swiftly để cài Swift 6.4 trên Ubuntu 24.04.
+        os: [ubuntu-24.04, macos-latest, windows-latest]
         include:
           # Windows runners resolve `python` (setup-python shims `python3`
           # unreliably across shells); POSIX runners keep `python3`.
@@ -80,7 +82,7 @@ jobs:
           # giữa các shell); runner POSIX giữ `python3`.)
           - os: windows-latest
             python_cmd: python
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             python_cmd: python3
           - os: macos-latest
             python_cmd: python3
@@ -122,6 +124,7 @@ jobs:
 
       - name: Setup Swift installer Python (Windows)
         if: matrix.os == 'windows-latest'
+        id: swift_python_310
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.10"
@@ -129,18 +132,40 @@ jobs:
       - name: Capture Swift Python 3.10 path (Windows)
         if: matrix.os == 'windows-latest'
         shell: pwsh
+        env:
+          MGC_SWIFT_PYTHON_PATH: ${{ steps.swift_python_310.outputs.python-path }}
         run: |
-          $python = Get-Command python -CommandType Application -ErrorAction Stop
-          $version = & $python.Source --version
+          $pythonPath = $env:MGC_SWIFT_PYTHON_PATH
+          if ([string]::IsNullOrWhiteSpace($pythonPath) -or !(Test-Path -LiteralPath $pythonPath -PathType Leaf)) { throw "setup-python did not return an existing Python executable" }
+          $version = & $pythonPath --version
           if ($version -notmatch '^Python 3\.10\.') { throw "Swift requires Python 3.10.x; found $version" }
-          $pythonBin = Split-Path -Parent $python.Source
+          $pythonBin = Split-Path -Parent $pythonPath
           Add-Content -Path $env:GITHUB_ENV -Value "MGC_SWIFT_PYTHON_BIN=$pythonBin" -Encoding utf8
+
+      # Import official Swift keys and pin both expected signing fingerprints before verification.
+      # Nạp khóa Swift chính thức và đối chiếu hai fingerprint ký dự kiến trước khi xác minh.
+      - name: Import Swift.org signing keys (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --silent --show-error --compressed \
+            https://www.swift.org/keys/all-keys.asc | gpg --batch --import -
+          for expected in \
+            E813C892820A6FA13755B268F167DF1ACF9CE069 \
+            52BB7E3DE28A71BE22EC05FFEF80A866B47A981F; do
+            actual="$(gpg --batch --with-colons --fingerprint "$expected" | awk -F: '$1 == "fpr" { print $10; exit }')"
+            if [[ "$actual" != "$expected" ]]; then
+              echo "Expected official Swift signing key $expected was not imported" >&2
+              exit 1
+            fi
+          done
 
       # Pin SwiftPM to one current stable toolchain on POSIX runners.
       # Cố định SwiftPM ở một toolchain stable hiện hành trên runner POSIX.
       - name: Setup Swift toolchain (Ubuntu/macOS)
         if: runner.os != 'Windows'
-        uses: swift-actions/setup-swift@65540b95f51493d65f5e59e97dcef9629ddf11bf
+        uses: swift-actions/setup-swift@364295d9c23900ce04d4e5cc708387921b4e50f9 # v3.0.0-beta.1
         with:
           swift-version: "6.4.0"
 
@@ -188,7 +213,7 @@ jobs:
           PUB_CACHE: ${{ runner.temp }}/flutter-pub-cache
 
       - name: Install Linux build deps (flutter lane)
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-24.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev

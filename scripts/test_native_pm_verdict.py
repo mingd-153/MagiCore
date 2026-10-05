@@ -1390,7 +1390,42 @@ class NativePackageManagerVerdict(unittest.TestCase):
             / "workflows"
             / "lifecycle-matrix.yml"
         ).read_text(encoding="utf-8")
-        self.assertIn("os: [ubuntu-latest, macos-latest, windows-latest]", workflow)
+        self.assertIn("os: [ubuntu-24.04, macos-latest, windows-latest]", workflow)
+        self.assertIn(
+            "swift-actions/setup-swift@364295d9c23900ce04d4e5cc708387921b4e50f9 # v3.0.0-beta.1",
+            workflow,
+        )
+        self.assertIn("if: matrix.os == 'ubuntu-24.04'", workflow)
+        self.assertIn('swift-version: "6.4.0"', workflow)
+        self.assertIn("id: swift_python_310", workflow)
+        self.assertIn("${{ steps.swift_python_310.outputs.python-path }}", workflow)
+        release_workflow = (
+            Path(__file__).resolve().parent.parent
+            / ".github"
+            / "workflows"
+            / "release-binary-e2e.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("os: [ubuntu-24.04, macos-latest, windows-latest]", release_workflow)
+        self.assertIn(
+            "swift-actions/setup-swift@364295d9c23900ce04d4e5cc708387921b4e50f9 # v3.0.0-beta.1",
+            release_workflow,
+        )
+        self.assertIn("if: matrix.os == 'ubuntu-24.04'", release_workflow)
+        self.assertIn('swift-version: "6.4.0"', release_workflow)
+        self.assertIn("id: swift_python_310", release_workflow)
+        self.assertIn("${{ steps.swift_python_310.outputs.python-path }}", release_workflow)
+        for current_workflow in (workflow, release_workflow):
+            key_import = current_workflow.index(
+                "- name: Import Swift.org signing keys (Linux)"
+            )
+            swift_setup = current_workflow.index(
+                "- name: Setup Swift toolchain (Ubuntu/macOS)"
+            )
+            self.assertLess(key_import, swift_setup)
+            self.assertIn("https://www.swift.org/keys/all-keys.asc", current_workflow)
+            self.assertIn("E813C892820A6FA13755B268F167DF1ACF9CE069", current_workflow)
+            self.assertIn("52BB7E3DE28A71BE22EC05FFEF80A866B47A981F", current_workflow)
+            self.assertNotIn("skip-verify-signature: true", current_workflow)
         self.assertIn("shell: python {0}", workflow)
         self.assertNotIn("shell: ${{ matrix.", workflow)
         self.assertNotIn("if: matrix.os != 'windows-latest'", workflow)
