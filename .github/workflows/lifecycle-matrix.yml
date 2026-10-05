@@ -182,6 +182,12 @@ jobs:
           if ($null -eq $toolchain) { throw "Swift 6.4.0 toolchain directory was not installed" }
           $swiftBin = Join-Path $toolchain.FullName "usr\bin"
           if (!(Test-Path (Join-Path $swiftBin "swift.exe"))) { throw "Swift executable is missing from the installed toolchain" }
+          # The installer writes SDKROOT at User scope; copy it into later workflow steps.
+          # Installer ghi SDKROOT ở cấp User; chuyển nó sang các bước workflow tiếp theo.
+          $sdkRoot = [Environment]::GetEnvironmentVariable('SDKROOT', 'User')
+          if ([string]::IsNullOrWhiteSpace($sdkRoot) -or !(Test-Path -LiteralPath $sdkRoot -PathType Container)) { throw "Swift installer did not configure a usable User SDKROOT: $sdkRoot" }
+          Add-Content -Path $env:GITHUB_ENV -Value "SDKROOT=$sdkRoot" -Encoding utf8
+          Write-Host "Swift SDKROOT: $sdkRoot"
           Add-Content -Path $env:GITHUB_PATH -Value $swiftBin -Encoding utf8
           & (Join-Path $swiftBin "swift.exe") --version
 

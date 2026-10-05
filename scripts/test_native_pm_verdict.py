@@ -1428,6 +1428,22 @@ class NativePackageManagerVerdict(unittest.TestCase):
         self.assertIn("Get-AuthenticodeSignature", swift_windows_setup)
         self.assertNotIn("winget install", swift_windows_setup)
         for current_workflow in (workflow, release_workflow):
+            windows_setup = current_workflow.split(
+                "- name: Setup Swift toolchain (Windows)", 1
+            )[1].split("\n      - name:", 1)[0]
+            self.assertIn(
+                "[Environment]::GetEnvironmentVariable('SDKROOT', 'User')",
+                windows_setup,
+            )
+            self.assertIn(
+                "Test-Path -LiteralPath $sdkRoot -PathType Container",
+                windows_setup,
+            )
+            self.assertIn(
+                'Add-Content -Path $env:GITHUB_ENV -Value "SDKROOT=$sdkRoot"',
+                windows_setup,
+            )
+        for current_workflow in (workflow, release_workflow):
             key_import = current_workflow.index(
                 "- name: Import Swift.org signing keys (Linux)"
             )
