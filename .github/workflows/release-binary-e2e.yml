@@ -73,9 +73,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Swiftly-backed setup-swift v3 installs Swift 6.4 on Ubuntu 24.04.
-        # setup-swift v3 dùng Swiftly để cài Swift 6.4 trên Ubuntu 24.04.
-        os: [ubuntu-24.04, macos-latest, windows-latest]
+        # Swift 6.4 on Windows requires the VS 2022 toolchain and Windows SDK.
+        # Swift 6.4 trên Windows yêu cầu bộ công cụ VS 2022 và Windows SDK.
+        os: [ubuntu-24.04, macos-latest, windows-2022]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -520,17 +520,12 @@ jobs:
           fi
           unset MGC_AUDIT_STRICT
 
-      # App/Flutter lane with the INSTALLED binary — all three OS
-      # (A1, 2026-09-12): windows-latest runners ship Visual Studio
-      # Enterprise 2022, so `flutter test` runs natively there; the
-      # build target stays `web` (universal — no Android SDK / Xcode
-      # / WPF workload dependency) so all three runners prove the same
-      # lifecycle shape.
-      # Lane App/Flutter bằng binary đã cài — cả ba OS (A1): runner
-      # windows-latest có sẵn Visual Studio Enterprise 2022 nên
-      # `flutter test` chạy native; target build giữ `web` (phổ quát —
-      # không phụ thuộc Android SDK / Xcode / workload WPF) để cả ba
-      # runner chứng minh cùng một hình lifecycle.
+      # App/Flutter lane uses the installed binary on all three OS. The Windows
+      # runner is pinned to VS 2022 for Swift's required Windows SDK; `flutter
+      # test` still runs natively, and the `web` build target stays universal.
+      # Lane App/Flutter dùng binary đã cài trên cả ba OS. Runner Windows
+      # ghim VS 2022 theo Windows SDK Swift yêu cầu; `flutter test` vẫn chạy
+      # native và target `web` vẫn phổ quát.
       - name: Install Linux build deps (flutter lane)
         if: matrix.os == 'ubuntu-24.04'
         run: |
@@ -548,14 +543,14 @@ jobs:
         run: bash scripts/bootstrap_flutter_sdk.sh
 
       - name: Setup Swift installer Python (Windows)
-        if: matrix.os == 'windows-latest'
+        if: matrix.os == 'windows-2022'
         id: swift_python_310
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.10"
 
       - name: Verify Swift Python 3.10 executable (Windows)
-        if: matrix.os == 'windows-latest'
+        if: matrix.os == 'windows-2022'
         shell: pwsh
         env:
           MGC_SWIFT_PYTHON_PATH: ${{ steps.swift_python_310.outputs.python-path }}
@@ -595,7 +590,7 @@ jobs:
       # Swift.org's Windows installer is distributed through WinGet.
       # Installer Windows của Swift.org được phân phối qua WinGet.
       - name: Setup Swift toolchain (Windows)
-        if: matrix.os == 'windows-latest'
+        if: matrix.os == 'windows-2022'
         shell: pwsh
         run: |
           winget install --id Swift.Toolchain --exact --source winget --scope user --version 6.4.0 --accept-source-agreements --accept-package-agreements
@@ -629,7 +624,7 @@ jobs:
       # Restore Python 3.12 after Swift has finished using its pinned Python 3.10 runtime.
       # Khôi phục Python 3.12 sau khi Swift dùng xong runtime Python 3.10 đã ghim.
       - name: Restore Python runtime (AI lane)
-        if: matrix.os == 'windows-latest'
+        if: matrix.os == 'windows-2022'
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
@@ -702,7 +697,7 @@ jobs:
         # (fetch project B làm store tăng <1MB lock metadata; mọi byte
         # dep được phục vụ từ store chung). Chạy test integration
         # #[ignore] THẬT với cargo thật trên runner này.
-        if: matrix.os != 'windows-latest'
+        if: matrix.os != 'windows-2022'
         shell: bash
         run: cargo test -p mgc-lib-adapter --test shared_store_tests -- --ignored --nocapture
 
@@ -711,7 +706,7 @@ jobs:
         # store") — honest labeling end to end (B-series).
         # Binary phân phối phải NÊU TÊN nguồn cache ("shared mgc
         # store") — gắn nhãn trung thực đầu cuối (B-series).
-        if: matrix.os != 'windows-latest'
+        if: matrix.os != 'windows-2022'
         shell: bash
         run: |
           set -euo pipefail

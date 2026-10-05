@@ -1405,7 +1405,7 @@ class NativePackageManagerVerdict(unittest.TestCase):
             / "workflows"
             / "release-binary-e2e.yml"
         ).read_text(encoding="utf-8")
-        self.assertIn("os: [ubuntu-24.04, macos-latest, windows-latest]", release_workflow)
+        self.assertIn("os: [ubuntu-24.04, macos-latest, windows-2022]", release_workflow)
         self.assertIn(
             "swift-actions/setup-swift@364295d9c23900ce04d4e5cc708387921b4e50f9 # v3.0.0-beta.1",
             release_workflow,
