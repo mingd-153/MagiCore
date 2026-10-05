@@ -43,6 +43,9 @@ use std::process::Command;
 #[cfg(unix)]
 use tempfile::TempDir;
 
+#[cfg(target_os = "macos")]
+const ENOSPC_PROBE_BYTES: usize = 1024 * 1024;
+
 fn find_mgc_binary() -> String {
     std::env::var("CARGO_BIN_EXE_mgc")
         .expect("CARGO_BIN_EXE_mgc not set — run via `cargo test -p mgc`")
@@ -268,16 +271,21 @@ fn enospc_on_the_store_volume_fails_clean_and_recovers() {
             let _ = f.sync_all();
         }
     }
-    // probe must WRITE (a 0-byte File::create can still succeed on a
-    // full APFS volume — ENOSPC fires on block allocation, not open).
-    // (probe phải GHI — File::create 0-byte vẫn có thể thành công trên
-    // volume APFS đầy — ENOSPC nổ lúc cấp phát block, không phải lúc
-    // open.)
-    let probe_write = std::fs::File::create(mountpoint.join("probe"))
-        .and_then(|mut f| std::io::Write::write_all(&mut f, b"x"));
-    assert!(
-        probe_write.is_err(),
-        "after filling, a 1-byte probe WRITE must FAIL (ENOSPC not reached otherwise)"
+    // CI accepted a 1-byte write after bulk filling stopped; force a larger durable probe.
+    // (CI nhận ghi 1 byte sau khi lần nhồi dừng; probe lớn và sync để xác nhận volume đã cạn.)
+    let mut probe_data = vec![0_u8; ENOSPC_PROBE_BYTES];
+    rng.fill_bytes(&mut probe_data);
+    let probe_write = std::fs::File::create(mountpoint.join("probe")).and_then(|mut f| {
+        std::io::Write::write_all(&mut f, &probe_data)?;
+        std::io::Write::flush(&mut f)?;
+        f.sync_all()
+    });
+    let probe_error =
+        probe_write.expect_err("after filling, a 1 MiB write/flush/sync probe must fail");
+    assert_eq!(
+        probe_error.raw_os_error(),
+        Some(libc::ENOSPC),
+        "the full-volume probe must fail with ENOSPC, not another I/O error: {probe_error}"
     );
 
     // Force the re-install to do REAL store work: remove node_modules
