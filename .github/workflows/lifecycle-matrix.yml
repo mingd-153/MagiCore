@@ -120,6 +120,54 @@ jobs:
           go-version: "1.27.1"
           cache: false
 
+      - name: Setup Swift installer Python (Windows)
+        if: matrix.os == 'windows-latest'
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.10"
+
+      - name: Capture Swift Python 3.10 path (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $python = Get-Command python -CommandType Application -ErrorAction Stop
+          $version = & $python.Source --version
+          if ($version -notmatch '^Python 3\.10\.') { throw "Swift requires Python 3.10.x; found $version" }
+          $pythonBin = Split-Path -Parent $python.Source
+          Add-Content -Path $env:GITHUB_ENV -Value "MGC_SWIFT_PYTHON_BIN=$pythonBin" -Encoding utf8
+
+      # Pin SwiftPM to one current stable toolchain on POSIX runners.
+      # Cố định SwiftPM ở một toolchain stable hiện hành trên runner POSIX.
+      - name: Setup Swift toolchain (Ubuntu/macOS)
+        if: runner.os != 'Windows'
+        uses: swift-actions/setup-swift@65540b95f51493d65f5e59e97dcef9629ddf11bf
+        with:
+          swift-version: "6.4.0"
+
+      # Swift.org's Windows installer is distributed through WinGet.
+      # Installer Windows của Swift.org được phân phối qua WinGet.
+      - name: Setup Swift toolchain (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          winget install --id Swift.Toolchain --exact --source winget --scope user --version 6.4.0 --accept-source-agreements --accept-package-agreements
+          if ($LASTEXITCODE -ne 0) { throw "WinGet failed to install Swift 6.4.0" }
+          $swiftRoot = Join-Path $env:LOCALAPPDATA "Programs\Swift\Toolchains"
+          $toolchain = Get-ChildItem -Path $swiftRoot -Directory | Where-Object { $_.Name -like "6.4.0*" } | Select-Object -First 1
+          if ($null -eq $toolchain) { throw "Swift 6.4.0 toolchain directory was not installed" }
+          $swiftBin = Join-Path $toolchain.FullName "usr\bin"
+          if (!(Test-Path (Join-Path $swiftBin "swift.exe"))) { throw "Swift executable is missing from the installed toolchain" }
+          Add-Content -Path $env:GITHUB_PATH -Value $swiftBin -Encoding utf8
+          & (Join-Path $swiftBin "swift.exe") --version
+
+      # Restore the Python lane's pinned runtime after Swift's installer.
+      # Khôi phục runtime Python của lane sau khi cài Swift.
+      - name: Restore Python runtime (AI/Lib lanes)
+        if: matrix.os == 'windows-latest'
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
       # App lane: flutter toolchain for create→install→test→build.
       # Lane App: toolchain flutter cho create→install→test→build.
       - name: Setup Flutter (app lane)

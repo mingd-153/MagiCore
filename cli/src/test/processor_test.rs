@@ -306,6 +306,26 @@ fn test_flutter_scaffold_has_testable_package_contract() {
 }
 
 #[test]
+fn swift_scaffold_has_a_real_test_target() {
+    let root = tempfile::tempdir().unwrap();
+    let target = root.path().join("test-swift-app");
+
+    crate::scaffold::processors::app::AppProcessor::files(&target, "test-swift-app", "swift")
+        .unwrap();
+
+    let manifest = std::fs::read_to_string(target.join("Package.swift")).unwrap();
+    assert!(manifest.contains(".executableTarget(name: \"MagiCoreApp\")"));
+    assert!(
+        manifest
+            .contains(".testTarget(name: \"MagiCoreAppTests\", dependencies: [\"MagiCoreApp\"])")
+    );
+    assert!(target.join("Sources/MagiCoreApp/App.swift").is_file());
+    let tests =
+        std::fs::read_to_string(target.join("Tests/MagiCoreAppTests/AppTests.swift")).unwrap();
+    assert!(tests.contains("XCTAssertEqual(greeting(), \"MagiCore Swift app scaffold\")"));
+}
+
+#[test]
 fn embedded_flutter_scaffold_has_test_and_web_lifecycle_files() {
     let root = tempfile::tempdir().unwrap();
     let target = root.path().join("embedded-flutter");

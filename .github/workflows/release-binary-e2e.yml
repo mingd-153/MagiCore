@@ -545,6 +545,54 @@ jobs:
         shell: bash
         run: bash scripts/bootstrap_flutter_sdk.sh
 
+      - name: Setup Swift installer Python (Windows)
+        if: matrix.os == 'windows-latest'
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.10"
+
+      - name: Capture Swift Python 3.10 path (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $python = Get-Command python -CommandType Application -ErrorAction Stop
+          $version = & $python.Source --version
+          if ($version -notmatch '^Python 3\.10\.') { throw "Swift requires Python 3.10.x; found $version" }
+          $pythonBin = Split-Path -Parent $python.Source
+          Add-Content -Path $env:GITHUB_ENV -Value "MGC_SWIFT_PYTHON_BIN=$pythonBin" -Encoding utf8
+
+      # Pin SwiftPM to one current stable toolchain on POSIX runners.
+      # Cố định SwiftPM ở một toolchain stable hiện hành trên runner POSIX.
+      - name: Setup Swift toolchain (Ubuntu/macOS)
+        if: runner.os != 'Windows'
+        uses: swift-actions/setup-swift@65540b95f51493d65f5e59e97dcef9629ddf11bf
+        with:
+          swift-version: "6.4.0"
+
+      # Swift.org's Windows installer is distributed through WinGet.
+      # Installer Windows của Swift.org được phân phối qua WinGet.
+      - name: Setup Swift toolchain (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          winget install --id Swift.Toolchain --exact --source winget --scope user --version 6.4.0 --accept-source-agreements --accept-package-agreements
+          if ($LASTEXITCODE -ne 0) { throw "WinGet failed to install Swift 6.4.0" }
+          $swiftRoot = Join-Path $env:LOCALAPPDATA "Programs\Swift\Toolchains"
+          $toolchain = Get-ChildItem -Path $swiftRoot -Directory | Where-Object { $_.Name -like "6.4.0*" } | Select-Object -First 1
+          if ($null -eq $toolchain) { throw "Swift 6.4.0 toolchain directory was not installed" }
+          $swiftBin = Join-Path $toolchain.FullName "usr\bin"
+          if (!(Test-Path (Join-Path $swiftBin "swift.exe"))) { throw "Swift executable is missing from the installed toolchain" }
+          Add-Content -Path $env:GITHUB_PATH -Value $swiftBin -Encoding utf8
+          & (Join-Path $swiftBin "swift.exe") --version
+
+      # Restore the AI lane's pinned Python runtime after Swift's installer.
+      # Khôi phục runtime Python đã ghim của lane AI sau khi cài Swift.
+      - name: Restore Python runtime (AI lane)
+        if: matrix.os == 'windows-latest'
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
       - name: Lifecycle app flutter (create → install → test → build)
         shell: bash
         run: |
@@ -566,6 +614,31 @@ jobs:
           # `web` là target CI phổ quát (không cần Android SDK / Xcode).
           "$MGCBIN" build
           test -d build/web
+
+      - name: Lifecycle app swift (create → install → test → build)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            if [[ -z "${MGC_SWIFT_PYTHON_BIN:-}" ]]; then echo "Swift Python 3.10 path is missing" >&2; exit 1; fi
+            SWIFT_PYTHON_BIN="$(cygpath -u "$MGC_SWIFT_PYTHON_BIN")"
+            export PATH="$SWIFT_PYTHON_BIN:$PATH"
+            python --version | grep -q '^Python 3\.10\.'
+            MGCBIN="$HOME/.magicore-test/bin/mgc.exe"
+          else
+            MGCBIN="$HOME/.magicore-test/bin/mgc"
+          fi
+          WORK="$(mktemp -d)"
+          cd "$WORK"
+          swift --version
+          "$MGCBIN" create-app swift test-swift-app
+          cd test-swift-app
+          "$MGCBIN" install
+          test -f mgc.lock
+          "$MGCBIN" test -- --verbose 2>&1 | tee swift-test.log
+          grep -q "Executed 1 test" swift-test.log
+          "$MGCBIN" build
+          find .build -type f \( -name MagiCoreApp -o -name MagiCoreApp.exe \) -print -quit | grep -q .
 
       - name: Lifecycle lockfile import (bun.lock → mgc.lock → audit, migration path)
         shell: bash
