@@ -755,7 +755,7 @@ fn windows_final_path(file: &File) -> std::io::Result<PathBuf> {
 }
 
 #[cfg(windows)]
-fn windows_opened_path_is_within(root: &Path, target: &Path) -> bool {
+pub(crate) fn windows_opened_path_is_within(root: &Path, target: &Path) -> bool {
     use std::os::windows::ffi::OsStrExt;
 
     let root = root.as_os_str().encode_wide().collect::<Vec<_>>();
