@@ -466,6 +466,10 @@ LANES = [
         # lockfile carries a genuine resolve + hash and `mgc install-ai`
         # must actually materialize it — no uv pre-steps, no uv.lock.
         # (Native: thêm dep thật bằng `mgc add-ai`, không uv.)
+        "dependency_fixture": {
+            "command": "add-ai",
+            "package": "six@1.17.0",
+        },
         "pre_steps": [
             "mgc_add_real_dependency",
             # pytest runs `mgc test`; `build` runs `python -m build`.
@@ -703,7 +707,20 @@ LANES = [
         "framework_id": "pulumi",
         "scaffold": ["create-clo", "pulumi", "test-cloud-pulumi"],
         "toolchain_probes": ["pulumi"],
-        "pre_steps": ["initialize_local_pulumi_stack"],
+        "pre_steps": ["initialize_local_pulumi_stack", "mgc_add_real_dependency"],
+        # Pulumi's Node.js SDK must be in the package manifest before its
+        # CLI can preview the program; use MGC's native Cloud/Web resolver
+        # only when the generated template did not already declare it.
+        # (SDK Node.js của Pulumi phải có trong manifest trước khi CLI
+        # preview; chỉ dùng resolver Cloud/Web native của MGC khi template
+        # chưa khai báo sẵn.)
+        "dependency_fixture": {
+            "command": "add-clo",
+            "package": "@pulumi/pulumi@^3.0.0",
+            "manifest_path": "package.json",
+            "manifest_name": "@pulumi/pulumi",
+            "skip_if_declared": True,
+        },
         "steps": [("install", ["install"]), ("test", ["test"]), ("build", ["build"])],
         "delegated": [],
         "required_dims": ["create", "install", "test", "build"],
@@ -1636,7 +1653,7 @@ def _lockfile_candidates(project_dir: str, language: str) -> list:
     danh sách (tên, kiểu) theo thứ tự ưu tiên bằng chứng. Danh sách rỗng =
     không có artifact nào biết — dimension lock/resolve giữ `unverified`
     cho ngôn ngữ đó, không bao giờ đoán pass.)"""
-    if language in ("javascript", "typescript"):
+    if language in ("javascript", "typescript", "pulumi"):
         # mgc.lock is written as TOML `[[package]]` on disk (see
         # core/crates/mgc-lockfile/src/writer.rs — toml::to_string_pretty);
         # the JSON spelling is a legacy fallback probe, never a guess.
@@ -1742,7 +1759,7 @@ def _materialize_marker(
     (Trả về (nhãn, đường_dẫn) mà việc không-rỗng CHỨNG MINH cây dependency
     đã thật sự về sau install, hoặc (None, None) khi ecosystem không có
     marker quan sát được — ghi `unverified`, không bao giờ pass.)"""
-    if language in ("javascript", "typescript"):
+    if language in ("javascript", "typescript", "pulumi"):
         return ("node_modules", os.path.join(project_dir, "node_modules"))
     if language == "python":
         return (".venv", os.path.join(project_dir, ".venv"))
@@ -3234,17 +3251,88 @@ def run_lane(mgc_bin: str, lane: dict) -> dict:
         if dims.get("create") != STATUS_NATIVE:
             break
         if step == "mgc_add_real_dependency":
-            # Inject a REAL direct dependency through mgc itself BEFORE
-            # install: `mgc add-ai six` (universal pure-Python wheel; native PyPI resolve-first +
-            # mgc-side pyproject edit) so mgc.lock carries a genuine
-            # resolve + hash and `mgc install-ai` must materialize a real
-            # package. No uv anywhere — an exit-0 with zero packages
-            # proves nothing. A failure here is a network/product problem
-            # recorded honestly.
-            # (Bơm dependency THẬT bằng `mgc add-ai`, không uv.)
+            # Run the lane-declared fixture through mgc before install. If
+            # it already exists in the manifest, leave resolution to native
+            # install and do not claim an add operation ran. A failed add
+            # blocks lifecycle steps so an empty project cannot pass.
+            # (Chạy fixture do lane khai báo qua mgc trước install. Nếu
+            # dependency đã có trong manifest, để native install xử lý và
+            # không claim đã chạy add. Add lỗi chặn lifecycle để project
+            # rỗng không thể được tính pass.)
+            fixture = lane.get("dependency_fixture")
+            if not isinstance(fixture, dict):
+                _fail("pre_step 'mgc_add_real_dependency' requires dependency_fixture metadata")
+            command = fixture.get("command")
+            package = fixture.get("package")
+            if (
+                not isinstance(command, str)
+                or not command
+                or not isinstance(package, str)
+                or not package
+            ):
+                _fail("dependency_fixture requires non-empty command and package strings")
+
+            if "skip_if_declared" in fixture and not isinstance(
+                fixture["skip_if_declared"], bool
+            ):
+                _fail("dependency_fixture skip_if_declared must be a boolean")
+            if fixture.get("skip_if_declared"):
+                manifest_path = fixture.get("manifest_path")
+                manifest_name = fixture.get("manifest_name")
+                if (
+                    not isinstance(manifest_path, str)
+                    or not manifest_path
+                    or os.path.isabs(manifest_path)
+                    or not isinstance(manifest_name, str)
+                    or not manifest_name
+                ):
+                    _fail(
+                        "dependency_fixture skip_if_declared requires a relative manifest_path "
+                        "and manifest_name"
+                    )
+                project_root = os.path.abspath(project_path)
+                manifest_file = os.path.abspath(
+                    os.path.join(project_root, manifest_path)
+                )
+                try:
+                    if os.path.commonpath((project_root, manifest_file)) != project_root:
+                        _fail("dependency_fixture manifest_path must stay inside the project")
+                except ValueError:
+                    _fail("dependency_fixture manifest_path must stay inside the project")
+                try:
+                    with open(manifest_file, "r", encoding="utf-8") as manifest_stream:
+                        manifest = json.load(manifest_stream)
+                except (OSError, json.JSONDecodeError) as exc:
+                    dims["add"] = STATUS_FAILED
+                    detail["add_output"] = (
+                        f"dependency fixture manifest {manifest_path!r} could not be read: {exc}"
+                    )[-2000:]
+                    for lifecycle_step, _ in lane["steps"]:
+                        blocked_lifecycle_steps[lifecycle_step] = (
+                            "required dependency fixture manifest was unreadable; "
+                            "this step was not run without its prerequisite"
+                        )
+                    continue
+
+                dependency_sections = (
+                    manifest.get("dependencies", {}),
+                    manifest.get("devDependencies", {}),
+                    manifest.get("optionalDependencies", {}),
+                    manifest.get("peerDependencies", {}),
+                ) if isinstance(manifest, dict) else ()
+                if any(
+                    isinstance(section, dict) and manifest_name in section
+                    for section in dependency_sections
+                ):
+                    detail["add_output"] = (
+                        f"{manifest_name} is already declared in {manifest_path}; "
+                        "MGC install will resolve and materialize it"
+                    )
+                    continue
+
             try:
                 proc = run_text_capture(
-                    [mgc_bin, "add-ai", "six@1.17.0"],
+                    [mgc_bin, command, package],
                     capture_output=True,
                     text=True,
                     cwd=project_path, env=lane_env, timeout=timeout_s,
@@ -3252,11 +3340,11 @@ def run_lane(mgc_bin: str, lane: dict) -> dict:
             except FileNotFoundError:
                 _fail("pre_step 'mgc_add_real_dependency' requires the mgc binary — provisioning bug")
             except subprocess.TimeoutExpired:
-                _fail(f"mgc add-ai prep timed out after {timeout_s}s")
+                _fail(f"{command} dependency fixture setup timed out after {timeout_s}s")
             if proc.returncode != 0:
                 dims["add"] = STATUS_FAILED
                 detail["add_output"] = (
-                    "mgc add-ai (real dependency fixture) failed: "
+                    f"mgc {command} {package} (dependency fixture) failed: "
                     + (proc.stdout or "") + (proc.stderr or "")
                 )[-2000:]
                 for lifecycle_step, _ in lane["steps"]:
@@ -3267,7 +3355,7 @@ def run_lane(mgc_bin: str, lane: dict) -> dict:
             else:
                 dims["add"] = _owner_pass_status(lane)
                 detail["add_output"] = (
-                    "MagiCore added the required real dependency fixture"
+                    f"MagiCore added dependency fixture {package}"
                 )
         elif step == "provision_py_build_tools":
             # `python -m build` needs the build module; `mgc test`
