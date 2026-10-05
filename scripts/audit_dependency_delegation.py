@@ -2880,10 +2880,92 @@ def _python_process_helper_fingerprint(node):
 def _python_aliases_reviewed_namespace(node, alias_roots):
     if isinstance(node, ast.Name):
         return node.id in alias_roots
-    return (
+    if isinstance(node, ast.Attribute):
+        if node.attr == "modules" and _python_binding_root(node) in alias_roots:
+            return True
+        return (
+            node.attr in {
+                "__getitem__", "copy", "get", "items", "pop", "setdefault",
+                "values",
+            }
+            and _python_aliases_reviewed_namespace(node.value, alias_roots)
+        )
+    if isinstance(node, ast.Subscript):
+        return _python_aliases_reviewed_namespace(node.value, alias_roots)
+    if isinstance(
+        node,
+        (ast.Dict, ast.DictComp, ast.GeneratorExp, ast.List, ast.ListComp, ast.Set,
+         ast.SetComp, ast.Tuple),
+    ):
+        # Follow module references through shallow copies and containers.
+        # Theo dấu tham chiếu module qua bản sao nông và biểu thức chứa mapping.
+        if isinstance(node, ast.Dict):
+            values = node.values
+        elif isinstance(
+            node, (ast.DictComp, ast.GeneratorExp, ast.ListComp, ast.SetComp)
+        ):
+            values = (
+                [node.key, node.value]
+                if isinstance(node, ast.DictComp)
+                else [node.elt]
+            )
+            for generator in node.generators:
+                values.append(generator.iter)
+                values.extend(generator.ifs)
+        else:
+            values = node.elts
+        return any(
+            value is not None
+            and _python_aliases_reviewed_namespace(value, alias_roots)
+            for value in values
+        )
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+        return (
+            _python_aliases_reviewed_namespace(node.left, alias_roots)
+            or _python_aliases_reviewed_namespace(node.right, alias_roots)
+        )
+    if isinstance(node, ast.Call):
+        if isinstance(node.func, ast.Attribute):
+            if node.func.attr == "copy" and any(
+                _python_aliases_reviewed_namespace(argument, alias_roots)
+                for argument in node.args
+            ):
+                return True
+            if (
+                node.func.attr in {
+                    "__getitem__", "copy", "get", "items", "pop",
+                    "setdefault", "values",
+                }
+                and _python_aliases_reviewed_namespace(
+                    node.func.value, alias_roots
+                )
+            ):
+                return True
+        if isinstance(node.func, ast.Name) and node.func.id in {
+            "dict", "frozenset", "list", "set", "tuple",
+        }:
+            return any(
+                _python_aliases_reviewed_namespace(argument, alias_roots)
+                for argument in (*node.args, *(kw.value for kw in node.keywords))
+            )
+    return False
+
+
+def _python_references_module_registry(node, sys_aliases, registry_aliases):
+    """Find expressions derived from sys.modules aliases.
+    (Tìm biểu thức xuất phát từ alias của sys.modules.)
+    """
+    if isinstance(node, ast.Name) and node.id in registry_aliases:
+        return True
+    if (
         isinstance(node, ast.Attribute)
         and node.attr == "modules"
-        and _python_binding_root(node) in alias_roots
+        and _python_binding_root(node) in sys_aliases
+    ):
+        return True
+    return any(
+        _python_references_module_registry(child, sys_aliases, registry_aliases)
+        for child in ast.iter_child_nodes(node)
     )
 
 
@@ -2925,8 +3007,15 @@ def review_python_process_helpers(sources: dict, expected_files=None) -> list:
                 nodes = list(ast.walk(tree))
                 namespace_mutators = {
                     "exec", "eval", "globals", "locals", "vars", "getattr",
-                    "setattr", "delattr",
+                    "setattr", "delattr", "__import__", "import_module",
+                    "resolve_name", "locate", "getmodule", "__getattribute__",
+                    "attrgetter", "methodcaller", "getattr_static", "getmembers",
+                    "getmembers_static", "get_objects", "get_referrers",
+                    "get_referents", "getargvalues", "find_spec", "load_module",
+                    "getclosurevars", "module_from_spec", "reload",
                 }
+                namespace_sensitive_imports = namespace_mutators | {"dict"}
+                namespace_callable_alias_roots = set()
                 candidates = [
                     node for node in nodes
                     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
@@ -2953,6 +3042,16 @@ def review_python_process_helpers(sources: dict, expected_files=None) -> list:
                             for alias in node.names
                             if alias.name != "*"
                         )
+                sys_module_roots = {
+                    bound_name
+                    for bound_name, imported_name, _line in imports
+                    if imported_name == "sys"
+                }
+                module_registry_alias_roots = {
+                    bound_name
+                    for bound_name, imported_name, _line in imports
+                    if imported_name == "sys.modules"
+                }
                 for dependency, expected_import in dependencies.items():
                     matching_imports = [
                         item for item in imports if item[0] == dependency
@@ -2986,29 +3085,93 @@ def review_python_process_helpers(sources: dict, expected_files=None) -> list:
                     aliases_changed = False
                     for node in nodes:
                         if isinstance(node, ast.Assign):
+                            target_names = {
+                                child.id for target in node.targets
+                                for child in ast.walk(target)
+                                if isinstance(child, ast.Name)
+                            }
+                            namespace_callable_alias = (
+                                isinstance(node.value, ast.Attribute)
+                                and node.value.attr in namespace_mutators
+                            ) or (
+                                isinstance(node.value, ast.Name)
+                                and node.value.id in (
+                                    namespace_mutators
+                                    | namespace_callable_alias_roots
+                                )
+                            )
+                            if (
+                                namespace_callable_alias
+                                and not target_names <= namespace_callable_alias_roots
+                            ):
+                                # Track resolver aliases through local assignments.
+                                # Theo dõi alias resolver qua các phép gán cục bộ.
+                                namespace_callable_alias_roots.update(target_names)
+                                aliases_changed = True
                             if _python_aliases_reviewed_namespace(
                                 node.value, dependency_alias_roots
                             ):
-                                for target in node.targets:
-                                    target_names = {
-                                        child.id for child in ast.walk(target)
-                                        if isinstance(child, ast.Name)
-                                    }
-                                    if not target_names <= dependency_alias_roots:
-                                        dependency_alias_roots.update(target_names)
-                                        aliases_changed = True
-                        elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)):
-                            value = node.value
-                            if _python_aliases_reviewed_namespace(
-                                value, dependency_alias_roots
-                            ):
-                                target_names = {
-                                    child.id for child in ast.walk(node.target)
-                                    if isinstance(child, ast.Name)
-                                }
                                 if not target_names <= dependency_alias_roots:
                                     dependency_alias_roots.update(target_names)
                                     aliases_changed = True
+                            if _python_references_module_registry(
+                                node.value,
+                                sys_module_roots,
+                                module_registry_alias_roots,
+                            ):
+                                if not target_names <= module_registry_alias_roots:
+                                    module_registry_alias_roots.update(target_names)
+                                    aliases_changed = True
+                            if (
+                                isinstance(node.value, ast.Name)
+                                and node.value.id in sys_module_roots
+                                and not target_names <= sys_module_roots
+                            ):
+                                sys_module_roots.update(target_names)
+                                aliases_changed = True
+                        elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)):
+                            value = node.value
+                            target_names = {
+                                child.id for child in ast.walk(node.target)
+                                if isinstance(child, ast.Name)
+                            }
+                            namespace_callable_alias = (
+                                isinstance(value, ast.Attribute)
+                                and value.attr in namespace_mutators
+                            ) or (
+                                isinstance(value, ast.Name)
+                                and value.id in (
+                                    namespace_mutators
+                                    | namespace_callable_alias_roots
+                                )
+                            )
+                            if (
+                                namespace_callable_alias
+                                and not target_names <= namespace_callable_alias_roots
+                            ):
+                                namespace_callable_alias_roots.update(target_names)
+                                aliases_changed = True
+                            if _python_aliases_reviewed_namespace(
+                                value, dependency_alias_roots
+                            ):
+                                if not target_names <= dependency_alias_roots:
+                                    dependency_alias_roots.update(target_names)
+                                    aliases_changed = True
+                            if _python_references_module_registry(
+                                value,
+                                sys_module_roots,
+                                module_registry_alias_roots,
+                            ):
+                                if not target_names <= module_registry_alias_roots:
+                                    module_registry_alias_roots.update(target_names)
+                                    aliases_changed = True
+                            if (
+                                isinstance(value, ast.Name)
+                                and value.id in sys_module_roots
+                                and not target_names <= sys_module_roots
+                            ):
+                                sys_module_roots.update(target_names)
+                                aliases_changed = True
                 for node in nodes:
                     if (
                         isinstance(node, ast.Name)
@@ -3025,7 +3188,15 @@ def review_python_process_helpers(sources: dict, expected_files=None) -> list:
                     if (
                         isinstance(node, (ast.Name, ast.Attribute, ast.Subscript))
                         and isinstance(node.ctx, (ast.Store, ast.Del))
-                        and _python_binding_root(node) in dependency_alias_roots
+                        and (
+                            _python_binding_root(node) in dependency_alias_roots
+                            or (
+                                isinstance(node, (ast.Attribute, ast.Subscript))
+                                and _python_aliases_reviewed_namespace(
+                                    node.value, dependency_alias_roots
+                                )
+                            )
+                        )
                     ):
                         dependency_mutations.append(node.lineno)
                     elif isinstance(node, ast.Import):
@@ -3037,12 +3208,17 @@ def review_python_process_helpers(sources: dict, expected_files=None) -> list:
                         )
                     elif isinstance(node, ast.ImportFrom):
                         if any(alias.name == "*" for alias in node.names) or (
-                            node.module == "builtins"
+                            node.module in {
+                                "builtins", "importlib", "importlib.util",
+                                "inspect", "pkgutil", "operator", "pydoc", "gc",
+                            }
                             and any(
-                                alias.name in namespace_mutators
+                                alias.name in namespace_sensitive_imports
                                 for alias in node.names
                             )
                         ):
+                            # Explicit builtin aliases can hide namespace reads and mutations.
+                            # Alias builtin tường minh có thể che thao tác trên namespace.
                             namespace_mutations.append(node.lineno)
                         rebindings.extend(
                             alias.lineno if hasattr(alias, "lineno") else node.lineno
@@ -3050,8 +3226,24 @@ def review_python_process_helpers(sources: dict, expected_files=None) -> list:
                             if (alias.asname or alias.name) == function_name
                         )
                     elif isinstance(node, ast.Call):
+                        call_arguments = (
+                            *node.args,
+                            *(keyword.value for keyword in node.keywords),
+                        )
+                        if any(
+                            _python_references_module_registry(
+                                argument,
+                                sys_module_roots,
+                                module_registry_alias_roots,
+                            )
+                            for argument in call_arguments
+                        ):
+                            namespace_mutations.append(node.lineno)
                         if isinstance(node.func, ast.Name):
-                            if node.func.id in namespace_mutators:
+                            if (
+                                node.func.id in namespace_mutators
+                                or node.func.id in namespace_callable_alias_roots
+                            ):
                                 namespace_mutations.append(node.lineno)
                         elif isinstance(node.func, ast.Attribute):
                             if (
@@ -3063,7 +3255,10 @@ def review_python_process_helpers(sources: dict, expected_files=None) -> list:
                                 namespace_mutations.append(node.lineno)
                     elif (
                         isinstance(node, ast.Attribute)
-                        and node.attr in {"__dict__", "__globals__"}
+                        and node.attr in {
+                            "__dict__", "__globals__", "f_globals", "f_locals",
+                            "f_builtins",
+                        }
                     ):
                         # Helper namespace reflection can replace reviewed globals; fail closed.
                         # Phản chiếu globals của helper có thể thay nội dung đã duyệt; chặn mặc định.
