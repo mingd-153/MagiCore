@@ -58,6 +58,14 @@ pub fn detect_runtimes(project_root: &Path, core: &str) -> Vec<DetectedRuntime> 
         "app" => {
             runtimes.extend(detect_app_runtime(project_root));
         }
+        "clo" | "cloud" if detect_cloud_node_runtime(project_root) => {
+            // Cloud IaC projects use Node.js for Pulumi/CDK manifests; keep the
+            // runtime identity separate from the package-manager choice.
+            // (Pulumi/CDK chạy trên Node.js; phân biệt runtime với package manager.)
+            runtimes.push(DetectedRuntime::NodeJs {
+                package_manager: detect_package_manager(project_root),
+            });
+        }
         _ => {
             // Game/iot/cloud/cicd — generic detection or fallback — phát hiện chung hoặc dự phòng
             if project_root.join("Cargo.toml").exists() {
@@ -71,6 +79,29 @@ pub fn detect_runtimes(project_root: &Path, core: &str) -> Vec<DetectedRuntime> 
     }
 
     runtimes
+}
+
+fn detect_cloud_node_runtime(project_root: &Path) -> bool {
+    let Some(content) = project_text(project_root, "package.json") else {
+        return false;
+    };
+    let Ok(package) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return false;
+    };
+    let dependency_names = ["dependencies", "devDependencies", "optionalDependencies"]
+        .into_iter()
+        .filter_map(|section| package.get(section).and_then(serde_json::Value::as_object));
+    let dependency_names: Vec<_> = dependency_names
+        .flat_map(|dependencies| dependencies.keys().map(String::as_str))
+        .collect();
+
+    let has_pulumi_sdk = project_text(project_root, "Pulumi.yaml").is_some()
+        && dependency_names.contains(&"@pulumi/pulumi");
+    let has_cdk_node_sdk = dependency_names
+        .iter()
+        .any(|name| *name == "aws-cdk-lib" || name.starts_with("@aws-cdk/"));
+
+    has_pulumi_sdk || has_cdk_node_sdk
 }
 
 fn detect_web_runtime(project_root: &Path) -> Vec<DetectedRuntime> {
