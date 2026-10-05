@@ -587,14 +587,21 @@ jobs:
         with:
           swift-version: "6.4.0"
 
-      # Swift.org's Windows installer is distributed through WinGet.
-      # Installer Windows của Swift.org được phân phối qua WinGet.
+      # Install the official signed Swift 6.4.0 bundle; Windows Server 2022 has no WinGet.
+      # Cài bundle Swift 6.4.0 chính thức có chữ ký; Windows Server 2022 không có WinGet.
       - name: Setup Swift toolchain (Windows)
         if: matrix.os == 'windows-2022'
         shell: pwsh
         run: |
-          winget install --id Swift.Toolchain --exact --source winget --scope user --version 6.4.0 --accept-source-agreements --accept-package-agreements
-          if ($LASTEXITCODE -ne 0) { throw "WinGet failed to install Swift 6.4.0" }
+          $installerPath = Join-Path $env:RUNNER_TEMP "swift-6.4.0-RELEASE-windows10.exe"
+          Invoke-WebRequest -Uri "https://download.swift.org/swift-6.4.0-release/windows10/swift-6.4.0-RELEASE/swift-6.4.0-RELEASE-windows10.exe" -OutFile $installerPath
+          $expectedSha256 = "76169A85BCBA82854A0CD8F9655FFB74B3758D60C35A245457510095F2823C03"
+          $actualSha256 = (Get-FileHash -Algorithm SHA256 -Path $installerPath).Hash
+          if ($actualSha256 -ne $expectedSha256) { throw "Swift 6.4.0 installer SHA-256 mismatch: $actualSha256" }
+          $signature = Get-AuthenticodeSignature -FilePath $installerPath
+          if ($signature.Status -ne 'Valid') { throw "Swift installer Authenticode signature is not valid: $($signature.Status)" }
+          $install = Start-Process -FilePath $installerPath -ArgumentList @('/quiet', '/norestart') -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Swift installer failed with exit code $($install.ExitCode)" }
           $swiftRoot = Join-Path $env:LOCALAPPDATA "Programs\Swift\Toolchains"
           $toolchain = Get-ChildItem -Path $swiftRoot -Directory | Where-Object { $_.Name -like "6.4.0*" } | Select-Object -First 1
           if ($null -eq $toolchain) { throw "Swift 6.4.0 toolchain directory was not installed" }

@@ -1414,6 +1414,19 @@ class NativePackageManagerVerdict(unittest.TestCase):
         self.assertIn('swift-version: "6.4.0"', release_workflow)
         self.assertIn("id: swift_python_310", release_workflow)
         self.assertIn("${{ steps.swift_python_310.outputs.python-path }}", release_workflow)
+        swift_windows_setup = release_workflow.split(
+            "- name: Setup Swift toolchain (Windows)", 1
+        )[1].split("- name: Lifecycle app swift", 1)[0]
+        self.assertIn(
+            "https://download.swift.org/swift-6.4.0-release/windows10/swift-6.4.0-RELEASE/swift-6.4.0-RELEASE-windows10.exe",
+            swift_windows_setup,
+        )
+        self.assertIn(
+            "76169A85BCBA82854A0CD8F9655FFB74B3758D60C35A245457510095F2823C03",
+            swift_windows_setup,
+        )
+        self.assertIn("Get-AuthenticodeSignature", swift_windows_setup)
+        self.assertNotIn("winget install", swift_windows_setup)
         for current_workflow in (workflow, release_workflow):
             key_import = current_workflow.index(
                 "- name: Import Swift.org signing keys (Linux)"
