@@ -842,7 +842,7 @@ fn windows_job_member_metadata_is_read_immediately_after_capture()
         &[100, 101, 102, 101],
         |process_id| {
             events.borrow_mut().push(format!("capture:{process_id}"));
-            Ok(process_id)
+            Ok(super::WindowsJobMemberCapture::Captured(process_id))
         },
         |process_id, identity| {
             assert_eq!(*identity, process_id);
@@ -857,6 +857,7 @@ fn windows_job_member_metadata_is_read_immediately_after_capture()
                 },
             ))
         },
+        || Ok(vec![101, 102]),
     )?;
 
     assert_eq!(
@@ -888,8 +889,9 @@ fn windows_job_member_without_immediate_metadata_fails_closed()
     let error = match super::capture_windows_job_process_snapshots(
         100,
         &[100, 101],
-        Ok,
+        |process_id| Ok(super::WindowsJobMemberCapture::Captured(process_id)),
         |_process_id, _identity| Ok(super::WindowsJobMemberMetadata::Unavailable),
+        || Ok(vec![101]),
     ) {
         Ok(_) => panic!("missing child metadata must fail closed"),
         Err(error) => error,
@@ -908,7 +910,7 @@ fn windows_job_member_that_exits_during_metadata_capture_is_skipped()
     let captured_snapshots = super::capture_windows_job_process_snapshots(
         100,
         &[100, 101, 102],
-        Ok,
+        |process_id| Ok(super::WindowsJobMemberCapture::Captured(process_id)),
         |process_id, _identity| {
             if process_id == 101 {
                 return Ok(super::WindowsJobMemberMetadata::Exited);
@@ -923,6 +925,7 @@ fn windows_job_member_that_exits_during_metadata_capture_is_skipped()
                 },
             ))
         },
+        || Ok(vec![102]),
     )?;
 
     // Only the confirmed-live member is sent to policy inspection.
@@ -944,6 +947,172 @@ fn windows_job_member_that_exits_during_metadata_capture_is_skipped()
         [102]
     );
     Ok(())
+}
+
+#[test]
+fn windows_job_member_that_exits_before_capture_is_skipped()
+-> Result<(), Box<dyn std::error::Error>> {
+    let events = std::cell::RefCell::new(Vec::new());
+    let captured_snapshots = super::capture_windows_job_process_snapshots(
+        100,
+        &[100, 101, 102],
+        |process_id| {
+            events.borrow_mut().push(format!("capture:{process_id}"));
+            if process_id == 101 {
+                return Ok(super::WindowsJobMemberCapture::Exited);
+            }
+            Ok(super::WindowsJobMemberCapture::Captured(process_id))
+        },
+        |process_id, _identity| {
+            events.borrow_mut().push(format!("snapshot:{process_id}"));
+            Ok(super::WindowsJobMemberMetadata::Available(
+                super::WindowsProcessSnapshot {
+                    pid: process_id,
+                    parent_pid: None,
+                    creation_time: None,
+                    image_name: "node.exe".to_owned(),
+                    command: vec![std::ffi::OsString::from("node.exe")],
+                },
+            ))
+        },
+        || Ok(vec![102]),
+    )?;
+
+    // A member that left the active Job before opening has no live metadata to inspect.
+    // Thành viên đã rời Job trước khi mở không còn metadata tiến trình sống để kiểm tra.
+    assert_eq!(
+        *events.borrow(),
+        ["capture:101", "capture:102", "snapshot:102"]
+    );
+    assert_eq!(
+        captured_snapshots
+            .members
+            .iter()
+            .map(|(pid, _)| *pid)
+            .collect::<Vec<_>>(),
+        [102]
+    );
+    Ok(())
+}
+
+#[test]
+fn windows_job_snapshot_reenumerates_descendants_after_a_member_exits()
+-> Result<(), Box<dyn std::error::Error>> {
+    let refreshed =
+        std::cell::RefCell::new(std::collections::VecDeque::from([vec![102], vec![102]]));
+    let captured_snapshots = super::capture_windows_job_process_snapshots(
+        100,
+        &[100, 101],
+        |process_id| {
+            if process_id == 101 {
+                return Ok(super::WindowsJobMemberCapture::Exited);
+            }
+            Ok(super::WindowsJobMemberCapture::Captured(process_id))
+        },
+        |process_id, _identity| {
+            Ok(super::WindowsJobMemberMetadata::Available(
+                super::WindowsProcessSnapshot {
+                    pid: process_id,
+                    parent_pid: Some(101),
+                    creation_time: None,
+                    image_name: "npm.exe".to_owned(),
+                    command: vec![
+                        std::ffi::OsString::from("npm.exe"),
+                        std::ffi::OsString::from("install"),
+                    ],
+                },
+            ))
+        },
+        || {
+            Ok(refreshed
+                .borrow_mut()
+                .pop_front()
+                .unwrap_or_else(|| vec![102]))
+        },
+    )?;
+
+    // Re-enumeration finds a new Job member whose parent exited after the first PID snapshot.
+    // Liệt kê lại phát hiện thành viên Job mới có parent thoát sau snapshot PID đầu tiên.
+    assert_eq!(
+        captured_snapshots
+            .snapshots
+            .iter()
+            .map(|snapshot| snapshot.pid)
+            .collect::<Vec<_>>(),
+        [102]
+    );
+    assert_eq!(captured_snapshots.snapshots[0].image_name, "npm.exe");
+    Ok(())
+}
+
+#[test]
+fn windows_job_snapshot_reenumerates_members_after_a_clean_first_pass()
+-> Result<(), Box<dyn std::error::Error>> {
+    let refreshed = std::cell::RefCell::new(std::collections::VecDeque::from([
+        vec![101, 102],
+        vec![101, 102],
+    ]));
+    let captured_snapshots = super::capture_windows_job_process_snapshots(
+        100,
+        &[100, 101],
+        |process_id| Ok(super::WindowsJobMemberCapture::Captured(process_id)),
+        |process_id, _identity| {
+            Ok(super::WindowsJobMemberMetadata::Available(
+                super::WindowsProcessSnapshot {
+                    pid: process_id,
+                    parent_pid: Some(100),
+                    creation_time: None,
+                    image_name: "node.exe".to_owned(),
+                    command: vec![std::ffi::OsString::from("node.exe")],
+                },
+            ))
+        },
+        || {
+            Ok(refreshed
+                .borrow_mut()
+                .pop_front()
+                .unwrap_or_else(|| vec![101, 102]))
+        },
+    )?;
+
+    assert_eq!(
+        captured_snapshots
+            .snapshots
+            .iter()
+            .map(|snapshot| snapshot.pid)
+            .collect::<Vec<_>>(),
+        [101, 102]
+    );
+    Ok(())
+}
+
+#[test]
+fn windows_job_snapshot_fails_closed_when_membership_never_stabilizes()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut next_pid = 102;
+    let error = match super::capture_windows_job_process_snapshots(
+        100,
+        &[100, 101],
+        |_process_id| Ok(super::WindowsJobMemberCapture::<()>::Exited),
+        |_process_id, _identity| unreachable!(),
+        || {
+            let pid = next_pid;
+            next_pid += 1;
+            Ok(vec![pid])
+        },
+    ) {
+        Ok(_) => panic!("a continuously changing Job must fail closed"),
+        Err(error) => error,
+    };
+
+    assert!(error.to_string().contains("membership kept changing"));
+    Ok(())
+}
+
+#[test]
+fn windows_job_completion_rejects_a_descendant_seen_after_the_snapshot() {
+    assert!(!super::windows_job_has_active_descendants(100, &[100]));
+    assert!(super::windows_job_has_active_descendants(100, &[100, 101]));
 }
 
 #[test]

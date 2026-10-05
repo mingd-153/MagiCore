@@ -21,6 +21,10 @@ const ROOT_VISIBILITY_RETRIES: usize = 5;
 /// Chờ tối đa 500 ms tổng thời gian ngủ và liên tục làm mới metadata tiến trình con.
 #[cfg(any(windows, test))]
 const WINDOWS_COMMAND_LINE_RETRIES: usize = 20;
+/// Bound Job Object re-enumeration while descendants are changing during inspection.
+/// Giới hạn số lần liệt kê lại Job Object khi descendants thay đổi trong lúc kiểm tra.
+#[cfg(any(windows, test))]
+const WINDOWS_JOB_MEMBER_SNAPSHOT_RETRIES: usize = 20;
 #[cfg(any(windows, test))]
 const WINDOWS_COMMAND_LINE_RETRY_DELAY_MS: u64 = 25;
 #[cfg(any(windows, test))]
@@ -1566,6 +1570,26 @@ fn finish_monitored_root_exit(
 ) -> Result<ExecOutcome> {
     let survivors = windows_job_descendants(&guard, child.id(), exempt)?;
     if survivors.is_empty() {
+        let active_process_ids = guard.active_process_ids()?;
+        if windows_job_has_active_descendants(child.id(), &active_process_ids) {
+            let termination = guard.terminate();
+            drop(guard);
+            let (out, _) = drain(child, Some(Duration::from_millis(POST_KILL_DRAIN_MS)));
+            if let Err(error) = termination {
+                return Err(error.context("failed to terminate late Windows job descendants"));
+            }
+            let child_ids = active_process_ids
+                .iter()
+                .copied()
+                .filter(|process_id| *process_id != child.id())
+                .map(|process_id| process_id.to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            bail!(
+                "command root exited while uninspected child process(es) {child_ids} appeared in its Windows job; the process tree was terminated (status: {})",
+                out.status
+            );
+        }
         drop(guard);
         return Ok(drain(child, Some(Duration::from_millis(POST_KILL_DRAIN_MS))).0);
     }
@@ -1903,7 +1927,7 @@ impl ProcessTreeGuard {
     }
 
     #[allow(unsafe_code)]
-    fn capture_job_member_process(&self, process_id: u32) -> Result<WindowsOwnedHandle> {
+    fn capture_job_member_process(&self, process_id: u32) -> Result<Option<WindowsOwnedHandle>> {
         use windows_sys::Win32::System::JobObjects::IsProcessInJob;
         use windows_sys::Win32::System::Threading::{
             OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
@@ -1917,8 +1941,13 @@ impl ProcessTreeGuard {
         if process.is_null() {
             let error = windows_last_error();
             if error == 87 {
+                if !self.active_process_ids()?.contains(&process_id) {
+                    // A fresh Job query confirms this PID is no longer an active member.
+                    // Truy vấn Job mới xác nhận PID này không còn là thành viên đang chạy.
+                    return Ok(None);
+                }
                 bail!(
-                    "cannot capture Windows job child PID {process_id}: it exited or became unavailable before identity verification"
+                    "cannot capture Windows job child PID {process_id}: it remains active but unavailable before identity verification"
                 );
             }
             bail!("failed to open Windows job child PID {process_id} (error {error})");
@@ -1941,7 +1970,7 @@ impl ProcessTreeGuard {
         }
         // Keep this handle alive through metadata capture so Windows cannot reuse its PID.
         // Giữ handle này tới khi chụp metadata để Windows không tái sử dụng PID.
-        Ok(process)
+        Ok(Some(process))
     }
 }
 
@@ -1976,7 +2005,12 @@ fn inspect_windows_job(
     let captured_snapshots = capture_windows_job_process_snapshots(
         root_pid,
         &process_ids,
-        |process_id| guard.capture_job_member_process(process_id),
+        |process_id| {
+            Ok(match guard.capture_job_member_process(process_id)? {
+                Some(process) => WindowsJobMemberCapture::Captured(process),
+                None => WindowsJobMemberCapture::Exited,
+            })
+        },
         |process_id, identity_guard| {
             let process_id = Pid::from_u32(process_id);
             let process_ids = [process_id];
@@ -2014,6 +2048,7 @@ fn inspect_windows_job(
             }
             Ok(WindowsJobMemberMetadata::Unavailable)
         },
+        || guard.active_process_ids(),
     )?;
     let captured_job_process_ids = captured_snapshots
         .members
@@ -2056,34 +2091,61 @@ fn capture_windows_job_members<T>(
 fn capture_windows_job_process_snapshots<T>(
     root_pid: u32,
     job_process_ids: &[u32],
-    mut capture_member: impl FnMut(u32) -> Result<T>,
+    mut capture_member: impl FnMut(u32) -> Result<WindowsJobMemberCapture<T>>,
     mut snapshot_member: impl FnMut(u32, &T) -> Result<WindowsJobMemberMetadata>,
+    mut refresh_members: impl FnMut() -> Result<Vec<u32>>,
 ) -> Result<CapturedWindowsJobSnapshots<T>> {
     use std::collections::HashSet;
 
-    let mut seen = HashSet::from([root_pid]);
+    let mut inspected = HashSet::from([root_pid]);
+    let mut pending = job_process_ids.to_vec();
     let mut captured = Vec::new();
+    let mut _retained_exited_members = Vec::new();
     let mut snapshots = Vec::new();
-    for &process_id in job_process_ids {
-        if !seen.insert(process_id) {
-            continue;
+    for attempt in 0..=WINDOWS_JOB_MEMBER_SNAPSHOT_RETRIES {
+        let mut attempted_this_pass = HashSet::new();
+        for process_id in pending.drain(..) {
+            if inspected.contains(&process_id) || !attempted_this_pass.insert(process_id) {
+                continue;
+            }
+            let identity_guard = match capture_member(process_id)? {
+                WindowsJobMemberCapture::Captured(identity_guard) => identity_guard,
+                WindowsJobMemberCapture::Exited => continue,
+            };
+            match snapshot_member(process_id, &identity_guard)? {
+                WindowsJobMemberMetadata::Available(snapshot) => {
+                    inspected.insert(process_id);
+                    captured.push((process_id, identity_guard));
+                    snapshots.push(snapshot);
+                }
+                WindowsJobMemberMetadata::Exited => {
+                    // Retain the process handle so its PID cannot be recycled during re-enumeration.
+                    // Giữ handle để PID không bị tái sử dụng trong lúc liệt kê lại Job.
+                    inspected.insert(process_id);
+                    _retained_exited_members.push(identity_guard);
+                }
+                WindowsJobMemberMetadata::Unavailable => {
+                    bail!("cannot inspect captured Windows job child PID {process_id}");
+                }
+            }
         }
-        let identity_guard = capture_member(process_id)?;
-        match snapshot_member(process_id, &identity_guard)? {
-            WindowsJobMemberMetadata::Available(snapshot) => {
-                captured.push((process_id, identity_guard));
-                snapshots.push(snapshot);
-            }
-            WindowsJobMemberMetadata::Exited => {}
-            WindowsJobMemberMetadata::Unavailable => {
-                bail!("cannot inspect captured Windows job child PID {process_id}");
-            }
+
+        pending = refresh_members()?
+            .into_iter()
+            .filter(|process_id| !inspected.contains(process_id))
+            .collect();
+        if pending.is_empty() {
+            return Ok(CapturedWindowsJobSnapshots {
+                members: captured,
+                _retained_exited_members,
+                snapshots,
+            });
+        }
+        if attempt == WINDOWS_JOB_MEMBER_SNAPSHOT_RETRIES {
+            bail!("Windows Job membership kept changing during process inspection");
         }
     }
-    Ok(CapturedWindowsJobSnapshots {
-        members: captured,
-        snapshots,
-    })
+    unreachable!("bounded Windows Job snapshot loop must return")
 }
 
 /// Inspect snapshots for members confirmed before refresh; do not recheck PID membership afterward.
@@ -2136,8 +2198,20 @@ enum WindowsJobMemberMetadata {
 }
 
 #[cfg(any(windows, test))]
+enum WindowsJobMemberCapture<T> {
+    Captured(T),
+    Exited,
+}
+
+#[cfg(any(windows, test))]
+fn windows_job_has_active_descendants(root_pid: u32, process_ids: &[u32]) -> bool {
+    process_ids.iter().any(|process_id| *process_id != root_pid)
+}
+
+#[cfg(any(windows, test))]
 struct CapturedWindowsJobSnapshots<T> {
     members: Vec<(u32, T)>,
+    _retained_exited_members: Vec<T>,
     snapshots: Vec<WindowsProcessSnapshot>,
 }
 
