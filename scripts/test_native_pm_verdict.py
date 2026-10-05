@@ -1399,6 +1399,20 @@ class NativePackageManagerVerdict(unittest.TestCase):
         self.assertIn('swift-version: "6.4.0"', workflow)
         self.assertIn("id: swift_python_310", workflow)
         self.assertIn("${{ steps.swift_python_310.outputs.python-path }}", workflow)
+        self.assertIn("- name: Preserve Swift Python 3.10 runtime (Windows)", workflow)
+        preserved_python = workflow.split(
+            "- name: Preserve Swift Python 3.10 runtime (Windows)", 1
+        )[1].split("- name:", 1)[0]
+        self.assertIn("$PSNativeCommandUseErrorActionPreference = $false", preserved_python)
+        self.assertIn("robocopy.exe $sourceBin $pythonBin /E", preserved_python)
+        self.assertIn("if ($LASTEXITCODE -gt 7)", preserved_python)
+        self.assertIn('Join-Path $pythonBin "python.exe"', preserved_python)
+        self.assertIn("$preservedPython --version", preserved_python)
+        self.assertIn("MGC_SWIFT_PYTHON_BIN=$pythonBin", preserved_python)
+        self.assertLess(
+            workflow.index("- name: Preserve Swift Python 3.10 runtime (Windows)"),
+            workflow.index("- name: Setup Swift toolchain (Windows)"),
+        )
         release_workflow = (
             Path(__file__).resolve().parent.parent
             / ".github"
