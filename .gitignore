@@ -124,7 +124,6 @@ ARCHITECTURE_AUDIT.md
 SECURITY_AUDIT.md
 MAGICORE_P2_REPORT.md
 OPTIMIZATION_SUMMARY.md
-CODEBASE_REVIEW.md
 REPORT.md
 
 # Internal specs, guides and notes
@@ -164,3 +163,8 @@ data/registry/
 # Root docs are private project notes and stay ignored, including README files.
 # docs/ ở repo root là ghi chú nội bộ, tiếp tục bị ignore kể cả README.
 /docs/
+
+# Shared repository-review guides explicitly approved for Git.
+# Hướng dẫn cấu trúc và rà soát được user cho phép đưa vào Git.
+!/CODEBASE_REVIEW.md
+!/codebaseRoadmap.md
