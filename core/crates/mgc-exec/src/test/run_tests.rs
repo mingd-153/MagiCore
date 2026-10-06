@@ -605,6 +605,106 @@ fn windows_npm_shim_never_interpolates_caller_arguments() {
     );
 }
 
+#[cfg(windows)]
+#[test]
+fn windows_npm_probe_exemption_requires_exact_native_shim_and_arguments() {
+    use std::ffi::OsString;
+
+    let root = tempfile::tempdir().expect("create Windows native npm shim fixture");
+    let shim = root.path().join("npm.exe");
+    std::fs::copy(
+        std::env::current_exe().expect("resolve test executable"),
+        &shim,
+    )
+    .expect("copy test executable as native shim fixture");
+    let shadow_path = super::ShadowPath {
+        dir: root.path().to_path_buf(),
+    };
+    let probe = super::WindowsProcessSnapshot {
+        pid: 201,
+        parent_pid: Some(200),
+        creation_time: Some(201),
+        image_name: "npm.exe".to_owned(),
+        command: vec![shim.as_os_str().to_os_string(), OsString::from("--version")],
+    };
+
+    assert!(super::is_shadow_windows_npm_version_probe(
+        &probe,
+        &shim,
+        &shadow_path
+    ));
+
+    let install = super::WindowsProcessSnapshot {
+        pid: 201,
+        parent_pid: Some(200),
+        creation_time: Some(201),
+        image_name: "npm.exe".to_owned(),
+        command: vec![shim.as_os_str().to_os_string(), OsString::from("install")],
+    };
+    assert!(!super::is_shadow_windows_npm_version_probe(
+        &install,
+        &shim,
+        &shadow_path
+    ));
+
+    let actual_image = root.path().join("actual-npm.exe");
+    std::fs::write(&actual_image, b"different image path")
+        .expect("create spoofed image-path fixture");
+    assert!(!super::is_shadow_windows_npm_version_probe(
+        &probe,
+        &actual_image,
+        &shadow_path
+    ));
+
+    let snapshots = [
+        super::WindowsProcessSnapshot {
+            pid: 200,
+            parent_pid: None,
+            creation_time: Some(200),
+            image_name: "runner.exe".to_owned(),
+            command: vec![OsString::from("runner.exe")],
+        },
+        probe,
+    ];
+    let image_paths = std::collections::HashMap::from([(201, shim.clone())]);
+    let inspected = super::inspect_windows_job_processes_with_image_paths(
+        200,
+        &[200, 201],
+        &snapshots,
+        &[],
+        Some(&shadow_path),
+        &image_paths,
+    )
+    .expect("inspect verified Windows probe");
+    assert_eq!(inspected.descendants, [(201, None)]);
+
+    let spoofed_image_paths = std::collections::HashMap::from([(201, actual_image.clone())]);
+    let inspected = super::inspect_windows_job_processes_with_image_paths(
+        200,
+        &[200, 201],
+        &snapshots,
+        &[],
+        Some(&shadow_path),
+        &spoofed_image_paths,
+    )
+    .expect("inspect process with spoofed argv[0]");
+    assert_eq!(inspected.descendants, [(201, Some("npm".to_owned()))]);
+
+    std::fs::write(&shim, b"replaced by a different executable")
+        .expect("replace shim identity fixture");
+    assert!(!super::is_shadow_windows_npm_version_probe(
+        &super::WindowsProcessSnapshot {
+            pid: 202,
+            parent_pid: Some(200),
+            creation_time: Some(202),
+            image_name: "npm.exe".to_owned(),
+            command: vec![shim.as_os_str().to_os_string(), OsString::from("--version")],
+        },
+        &shim,
+        &shadow_path
+    ));
+}
+
 #[test]
 fn cargo_compile_is_allowed_only_with_locked_offline_flags() {
     assert!(reject_external_dependency_resolution("cargo", &["build".into()], &[]).is_err());
@@ -777,7 +877,8 @@ fn windows_job_scan_ignores_global_processes_outside_job_membership()
         snapshot(102, Some(100), "LsaIso.exe", &[]),
     ];
 
-    let scanned = super::inspect_windows_job_processes(100, &[100, 101], &processes, &[])?;
+    let scanned =
+        super::inspect_windows_job_processes_with_shadow(100, &[100, 101], &processes, &[], None)?;
 
     assert_eq!(scanned.descendants, [(101, Some("npm".to_owned()))]);
     Ok(())
@@ -805,7 +906,8 @@ fn windows_job_scan_fails_closed_for_unreadable_job_members()
         },
     ];
 
-    let error = super::inspect_windows_job_processes(100, &[100, 102], &processes, &[])?;
+    let error =
+        super::inspect_windows_job_processes_with_shadow(100, &[100, 102], &processes, &[], None)?;
 
     assert_eq!(
         error.missing_command_line,
@@ -1135,8 +1237,13 @@ fn windows_job_snapshot_scans_a_captured_child_that_exits_after_membership_check
 
     // Captured identity evidence remains authoritative after the process leaves the job.
     // Bằng chứng danh tính đã chụp vẫn có hiệu lực sau khi process rời Job.
-    let inspection =
-        super::inspect_windows_job_processes(100, &captured_pids, &process_snapshot, &[])?;
+    let inspection = super::inspect_windows_job_processes_with_shadow(
+        100,
+        &captured_pids,
+        &process_snapshot,
+        &[],
+        None,
+    )?;
     assert_eq!(inspection.descendants, [(101, Some("npm".to_owned()))]);
     Ok(())
 }
@@ -1149,10 +1256,12 @@ fn windows_job_scan_fails_closed_for_captured_child_missing_snapshot()
         .iter()
         .map(|(process_id, _)| *process_id)
         .collect::<Vec<_>>();
-    let error = match super::inspect_windows_job_processes(100, &captured_pids, &[], &[]) {
-        Ok(_) => panic!("a captured Job Object member without metadata must fail closed"),
-        Err(error) => error,
-    };
+    let error =
+        match super::inspect_windows_job_processes_with_shadow(100, &captured_pids, &[], &[], None)
+        {
+            Ok(_) => panic!("a captured Job Object member without metadata must fail closed"),
+            Err(error) => error,
+        };
     assert!(
         error
             .to_string()
@@ -1519,6 +1628,9 @@ fn root_exit_completion_inspects_and_terminates_a_forbidden_job_child()
     let forbidden_child = forbidden_command.spawn()?;
     guard.activate(&forbidden_child)?;
     std::thread::sleep(Duration::from_millis(150));
+    let shadow_path = super::ShadowPath {
+        dir: temp.path().to_path_buf(),
+    };
 
     let mut root_command = Command::new(comspec);
     root_command
@@ -1531,7 +1643,7 @@ fn root_exit_completion_inspects_and_terminates_a_forbidden_job_child()
         "test root command must exit successfully"
     );
 
-    let result = finish_monitored_root_exit(&mut root, guard, &[], |child, _| {
+    let result = finish_monitored_root_exit(&mut root, guard, &[], &shadow_path, |child, _| {
         (
             ExecOutcome {
                 status: child

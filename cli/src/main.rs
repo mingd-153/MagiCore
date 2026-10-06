@@ -2,7 +2,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
 /// MagiCore CLI - Universal Package Manager
-use std::path::PathBuf;
+use std::{ffi::OsStr, ffi::OsString, path::PathBuf};
 
 use clap::Parser;
 
@@ -57,6 +57,24 @@ pub(crate) use crate::commands::definitions::Commands;
 
 #[tokio::main]
 async fn main() {
+    // Windows framework builds probe npm's version. The mgc executable doubles as a
+    // native, argument-safe shim and refuses every request except that exact read-only probe.
+    // Build framework trên Windows hỏi phiên bản npm. Executable mgc làm shim native an toàn
+    // tham số và từ chối mọi yêu cầu trừ đúng probe chỉ đọc đó.
+    let argv = std::env::args_os().collect::<Vec<_>>();
+    if let Some(action) = npm_shim_action(&argv) {
+        match action {
+            NpmShimAction::VersionProbe => {
+                println!("0.0.0");
+                std::process::exit(0);
+            }
+            NpmShimAction::Blocked => {
+                eprintln!("MagiCore blocked forbidden package manager: npm");
+                std::process::exit(126);
+            }
+        }
+    }
+
     tracing_subscriber::fmt::init();
     // Print the FULL error chain — bare anyhow print hides the context frames
     // (source path, operation) that make CI failures diagnosable.
@@ -74,4 +92,24 @@ async fn main() {
             .unwrap_or(1);
         std::process::exit(exit_code);
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NpmShimAction {
+    VersionProbe,
+    Blocked,
+}
+
+fn npm_shim_action(argv: &[OsString]) -> Option<NpmShimAction> {
+    let program = argv.first()?;
+    let name = std::path::Path::new(program).file_stem()?.to_str()?;
+    if !name.eq_ignore_ascii_case("npm") {
+        return None;
+    }
+
+    Some(if argv.len() == 2 && argv[1] == OsStr::new("--version") {
+        NpmShimAction::VersionProbe
+    } else {
+        NpmShimAction::Blocked
+    })
 }

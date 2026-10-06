@@ -67,6 +67,8 @@ const MAX_CAPTURE_LINES: usize = 40;
 /// Giới hạn retry khi tên thư mục shim sinh ra bị trùng.
 const MAX_SHADOW_PATH_ATTEMPTS: usize = 16;
 static SHADOW_PATH_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+#[cfg(windows)]
+static CURRENT_EXECUTABLE_SHA256: std::sync::OnceLock<[u8; 32]> = std::sync::OnceLock::new();
 #[cfg(unix)]
 const PROCESS_TREE_TRACKING_ENV: &str = "MGC_EXEC_PROCESS_TREE_ID";
 #[cfg(unix)]
@@ -864,6 +866,8 @@ fn execute_command(
         exempt: scoped_exempt,
         #[cfg(unix)]
         shadow_dir: shadow_path.path(),
+        #[cfg(windows)]
+        shadow_path: &shadow_path,
         #[cfg(unix)]
         tracking_token: &process_tree_tracking_token,
     };
@@ -1037,6 +1041,32 @@ fn write_blocker(dir: &Path, tool: &str) -> Result<()> {
 fn write_blocker(dir: &Path, tool: &str) -> Result<()> {
     use std::io::Write;
 
+    // The shipped mgc executable is a native argv parser, so it can safely answer
+    // exactly `npm --version` without routing untrusted arguments through CMD.
+    // Executable mgc được phát hành phân tích argv native nên chỉ trả lời chính xác
+    // `npm --version`, không đưa tham số không tin cậy qua CMD.
+    if tool == "npm" {
+        let executable = std::env::current_exe().context("resolve current mgc executable")?;
+        let is_mgc_cli = executable
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.eq_ignore_ascii_case("mgc"));
+        if is_mgc_cli {
+            let shim = dir.join("npm.exe");
+            // Prefer a hard link so each guarded invocation does not duplicate the CLI image.
+            // Ưu tiên hard link để mỗi lệnh được giám sát không phải nhân bản file CLI.
+            if std::fs::hard_link(&executable, &shim).is_err() {
+                std::fs::copy(&executable, &shim).with_context(|| {
+                    format!(
+                        "create native npm version-probe shim from '{}'",
+                        executable.display()
+                    )
+                })?;
+            }
+            return Ok(());
+        }
+    }
+
     let path = dir.join(format!("{tool}.cmd"));
     // Keep Windows deny-only: CMD argument expansion is unsafe to interpolate into script syntax.
     // Windows luôn chặn npm: nội suy tham số CMD vào cú pháp script có thể tạo command injection.
@@ -1049,6 +1079,30 @@ fn write_blocker(dir: &Path, tool: &str) -> Result<()> {
         .open(path)?;
     file.write_all(content.as_bytes())?;
     Ok(())
+}
+
+#[cfg(windows)]
+fn windows_current_executable_sha256() -> Result<[u8; 32]> {
+    if let Some(digest) = CURRENT_EXECUTABLE_SHA256.get() {
+        return Ok(*digest);
+    }
+
+    let executable = std::env::current_exe().context("resolve current mgc executable")?;
+    let digest = windows_sha256_file(&executable)?;
+    let _ = CURRENT_EXECUTABLE_SHA256.set(digest);
+    Ok(*CURRENT_EXECUTABLE_SHA256.get().unwrap_or(&digest))
+}
+
+#[cfg(windows)]
+fn windows_sha256_file(path: &Path) -> Result<[u8; 32]> {
+    use sha2::{Digest, Sha256};
+
+    let mut file = std::fs::File::open(path)
+        .with_context(|| format!("open executable for identity check '{}'", path.display()))?;
+    let mut digest = Sha256::new();
+    std::io::copy(&mut file, &mut digest)
+        .with_context(|| format!("hash executable identity '{}'", path.display()))?;
+    Ok(digest.finalize().into())
 }
 
 fn is_path_env_key(key: &str) -> bool {
@@ -1115,6 +1169,8 @@ struct ProcessMonitor<'a> {
     exempt: &'a [&'a str],
     #[cfg(unix)]
     shadow_dir: &'a Path,
+    #[cfg(windows)]
+    shadow_path: &'a ShadowPath,
     #[cfg(unix)]
     tracking_token: &'a str,
 }
@@ -1255,6 +1311,7 @@ fn wait_with_timeout(
                         &mut child,
                         _process_tree_guard,
                         process_monitor.exempt,
+                        process_monitor.shadow_path,
                         drain,
                     );
                 }
@@ -1351,6 +1408,7 @@ fn wait_with_timeout(
                 &_process_tree_guard,
                 child.id(),
                 process_monitor.exempt,
+                process_monitor.shadow_path,
                 started,
                 timeout,
                 || Ok(child.try_wait()?.is_some()),
@@ -1364,6 +1422,7 @@ fn wait_with_timeout(
                         &mut child,
                         _process_tree_guard,
                         process_monitor.exempt,
+                        process_monitor.shadow_path,
                         drain,
                     );
                 }
@@ -1566,9 +1625,10 @@ fn finish_monitored_root_exit(
     child: &mut std::process::Child,
     guard: ProcessTreeGuard,
     exempt: &[&str],
+    shadow_path: &ShadowPath,
     drain: impl Fn(&mut std::process::Child, Option<Duration>) -> (ExecOutcome, bool),
 ) -> Result<ExecOutcome> {
-    let survivors = windows_job_descendants(&guard, child.id(), exempt)?;
+    let survivors = windows_job_descendants(&guard, child.id(), exempt, shadow_path)?;
     if survivors.is_empty() {
         let active_process_ids = guard.active_process_ids()?;
         if windows_job_has_active_descendants(child.id(), &active_process_ids) {
@@ -1979,8 +2039,9 @@ fn windows_job_descendants(
     guard: &ProcessTreeGuard,
     root_pid: u32,
     exempt: &[&str],
+    shadow_path: &ShadowPath,
 ) -> Result<Vec<(u32, Option<String>)>> {
-    let inspection = inspect_windows_job(guard, root_pid, exempt)?;
+    let inspection = inspect_windows_job(guard, root_pid, exempt, Some(shadow_path))?;
     if let Some((pid, image_name)) = inspection.missing_command_line {
         validate_monitored_child_command_line(&image_name, &[], pid)?;
     }
@@ -1994,9 +2055,11 @@ fn inspect_windows_job(
     guard: &ProcessTreeGuard,
     root_pid: u32,
     exempt: &[&str],
+    shadow_path: Option<&ShadowPath>,
 ) -> Result<WindowsJobInspection> {
     use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
+    let mut executable_paths = std::collections::HashMap::new();
     let process_ids = guard.active_process_ids()?;
     if process_ids.is_empty() {
         return Ok(WindowsJobInspection::default());
@@ -2022,9 +2085,14 @@ fn inspect_windows_job(
                 system.refresh_processes_specifics(
                     ProcessesToUpdate::Some(&process_ids),
                     true,
-                    ProcessRefreshKind::nothing().with_cmd(UpdateKind::Always),
+                    ProcessRefreshKind::nothing()
+                        .with_cmd(UpdateKind::Always)
+                        .with_exe(UpdateKind::Always),
                 );
                 if let Some(process) = system.process(process_id) {
+                    if let Some(executable) = process.exe() {
+                        executable_paths.insert(process_id.as_u32(), executable.to_path_buf());
+                    }
                     return Ok(WindowsJobMemberMetadata::Available(
                         WindowsProcessSnapshot {
                             pid: process_id.as_u32(),
@@ -2055,11 +2123,13 @@ fn inspect_windows_job(
         .iter()
         .map(|(process_id, _)| *process_id)
         .collect::<Vec<_>>();
-    inspect_windows_job_processes(
+    inspect_windows_job_processes_with_image_paths(
         root_pid,
         &captured_job_process_ids,
         &captured_snapshots.snapshots,
         exempt,
+        shadow_path,
+        &executable_paths,
     )
 }
 
@@ -2150,12 +2220,32 @@ fn capture_windows_job_process_snapshots<T>(
 
 /// Inspect snapshots for members confirmed before refresh; do not recheck PID membership afterward.
 /// Kiểm snapshot của thành viên đã xác nhận trước refresh; không kiểm tra lại membership sau đó.
-#[cfg(any(windows, test))]
-fn inspect_windows_job_processes(
+#[cfg(test)]
+fn inspect_windows_job_processes_with_shadow(
     root_pid: u32,
     job_process_ids: &[u32],
     processes: &[WindowsProcessSnapshot],
     exempt: &[&str],
+    shadow_path: Option<&ShadowPath>,
+) -> Result<WindowsJobInspection> {
+    inspect_windows_job_processes_with_image_paths(
+        root_pid,
+        job_process_ids,
+        processes,
+        exempt,
+        shadow_path,
+        &std::collections::HashMap::new(),
+    )
+}
+
+#[cfg(any(windows, test))]
+fn inspect_windows_job_processes_with_image_paths(
+    root_pid: u32,
+    job_process_ids: &[u32],
+    processes: &[WindowsProcessSnapshot],
+    exempt: &[&str],
+    shadow_path: Option<&ShadowPath>,
+    executable_paths: &std::collections::HashMap<u32, PathBuf>,
 ) -> Result<WindowsJobInspection> {
     use std::collections::{HashMap, HashSet};
 
@@ -2182,10 +2272,21 @@ fn inspect_windows_job_processes(
         if command_line.is_empty() && inspected.missing_command_line.is_none() {
             inspected.missing_command_line = Some((process_id, image_name.clone()));
         }
-        inspected.descendants.push((
-            process_id,
-            forbidden_process_name(&image_name, &command_line, exempt),
-        ));
+        let forbidden = forbidden_process_name(&image_name, &command_line, exempt).filter(|name| {
+            name != "npm"
+                || !shadow_path.is_some_and(|shadow_path| {
+                    executable_paths
+                        .get(&process_id)
+                        .is_some_and(|executable_path| {
+                            is_shadow_windows_npm_version_probe(
+                                process,
+                                executable_path,
+                                shadow_path,
+                            )
+                        })
+                })
+        });
+        inspected.descendants.push((process_id, forbidden));
     }
     Ok(inspected)
 }
@@ -3175,13 +3276,17 @@ fn find_forbidden_job_descendant_with_timeout(
     guard: &ProcessTreeGuard,
     root_pid: u32,
     exempt: &[&str],
+    shadow_path: &ShadowPath,
     started: Instant,
     timeout: Option<Duration>,
     child_has_exited: impl FnMut() -> Result<bool>,
 ) -> Result<WindowsProcessScan> {
     retry_windows_process_scan(started, timeout, child_has_exited, || {
         Ok(windows_job_scan_from_inspection(inspect_windows_job(
-            guard, root_pid, exempt,
+            guard,
+            root_pid,
+            exempt,
+            Some(shadow_path),
         )?))
     })
 }
@@ -3289,6 +3394,49 @@ fn find_forbidden_descendant(
 ) -> Result<Option<ForbiddenProcess>> {
     ensure_process_inspection_available(true, false)?;
     Ok(None)
+}
+
+#[cfg(windows)]
+fn is_shadow_windows_npm_version_probe(
+    process: &WindowsProcessSnapshot,
+    executable_path: &Path,
+    shadow_path: &ShadowPath,
+) -> bool {
+    use std::ffi::OsStr;
+
+    let Ok(expected_digest) = windows_current_executable_sha256() else {
+        return false;
+    };
+    if !process.image_name.eq_ignore_ascii_case("npm.exe")
+        || process.command.len() != 2
+        || process.command[1].as_os_str() != OsStr::new("--version")
+    {
+        return false;
+    }
+
+    let shim_path = shadow_path.path().join("npm.exe");
+    let Some(program) = process.command.first() else {
+        return false;
+    };
+    let (Ok(program_path), Ok(image_path), Ok(expected_path)) = (
+        std::fs::canonicalize(program),
+        std::fs::canonicalize(executable_path),
+        std::fs::canonicalize(&shim_path),
+    ) else {
+        return false;
+    };
+    program_path == expected_path
+        && image_path == expected_path
+        && windows_sha256_file(&shim_path).is_ok_and(|digest| digest == expected_digest)
+}
+
+#[cfg(all(test, not(windows)))]
+fn is_shadow_windows_npm_version_probe(
+    _process: &WindowsProcessSnapshot,
+    _executable_path: &Path,
+    _shadow_path: &ShadowPath,
+) -> bool {
+    false
 }
 
 #[cfg(unix)]
