@@ -1,0 +1,26 @@
+{
+  "pm": "pnpm",
+  "run": 3,
+  "timestamp": "20260904_162741",
+  "machine": {
+  "cpu": "Apple M2",
+  "cores": 8,
+  "memory_gb": 16,
+  "os": "Darwin 25.5.0",
+  "node_version": "v25.9.0",
+  "timestamp": "20260904_162741"
+},
+  "cold_install": {
+    "duration_seconds": 37.316040000,
+    "disk_mb": 362,
+    "memory_delta_mb": 0
+  },
+  "warm_install": {
+    "duration_seconds": 1.631937000
+  },
+  "package_count": 20,
+  "logs": {
+    "cold": "Progress: resolved 1, reused 0, downloaded 0, added 0 [WARN] deprecated eslint@8.57.1: This version is no longer supported. Please see https://eslint.org/version-support for other options. Progress: resolved 11, reused 0, downloaded 5, added 0 Progress: resolved 11, reused 0, downloaded 6, added 0 Progress: resolved 13, reused 0, downloaded 7, added 0 Progress: resolved 14, reused 0, downloaded 11, added 0 Progress: resolved 15, reused 0, downloaded 15, added 0 Progress: resolved 17, reused 0, downloaded 17, added 0 Progress: resolved 18, reused 0, downloaded 17, added 0 Progress: resolved 31, reused 0, downloaded 17, added 0 Progress: resolved 103, reused 0, downloaded 73, added 0 [WARN] Tarball download average speed 41 KiB/s (size 57 KiB) is below 50 KiB/s: https://registry.npmjs.org/graphemer/-/graphemer-1.4.0.tgz (GET) Progress: resolved 112, reused 0, downloaded 96, added 0 [WARN] Tarball download average speed 6 KiB/s (size 7 KiB) is below 50 KiB/s: https://registry.npmjs.org/@nodelib/fs.walk/-/fs.walk-1.2.8.tgz (GET) Progress: resolved 118, reused 0, downloaded 111, added 0 [WARN] Tarball download average speed 48 KiB/s (size 162 KiB) is below 50 KiB/s: https://registry.npmjs.org/esquery/-/esquery-1.7.0.tgz (GET) Progress: resolved 120, reused 0, downloaded 113, added 0 [WARN] Tarball download average speed 5 KiB/s (size 20 KiB) is below 50 KiB/s: https://registry.npmjs.org/undici-types/-/undici-types-6.21.0.tgz (GET) Progress: resolved 125, reused 0, downloaded 115, added 0 Progress: resolved 126, reused 0, downloaded 116, added 0 ",
+    "warm": "✓ Lockfile passes supply-chain policies (verified 2s ago) Lockfile is up to date, resolution step is skipped Progress: resolved 1, reused 0, downloaded 0, added 0 Packages: +286 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ Packages are cloned from the content-addressable store to the virtual store.   Content-addressable store is at: /Users/doanmihh/Library/pnpm/store/v11   Virtual store is at:             node_modules/.pnpm Progress: resolved 286, reused 286, downloaded 0, added 285 Progress: resolved 286, reused 286, downloaded 0, added 286, done  dependencies: + axios 1.20.0 + clsx 2.1.1 + date-fns 2.30.0 + framer-motion 10.18.0 + lodash 4.18.1 + next 14.2.35 + react 18.3.1 + react-dom 18.3.1 "
+  }
+}

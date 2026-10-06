@@ -1,0 +1,47 @@
+# `mgc-audit` — Shared security-audit engine for ALL cores (Tech Lead
+# 2026-09-09 §11). Adapters detect manifests and build an AuditPlan;
+# this engine executes scanners, aggregates reports, and enforces one
+# policy/exit/output contract — no more copy-pasted per-adapter logic.
+# Engine audit chia sẻ cho mọi core: adapter detect manifest rồi dựng
+# AuditPlan; engine chạy scanner, tổng hợp report, giữ đúng một
+# policy/exit/output contract.
+
+[package]
+name = "mgc-audit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Shared audit engine: plan execution, aggregation, policy, evidence"
+
+[dependencies]
+mgc-types = { workspace = true }
+mgc-lockfile = { workspace = true }
+# Shared HTTP transport (RULE §8 — no direct reqwest in audit).
+# HTTP transport dùng chung (RULE §8 — không reqwest trực tiếp).
+mgc-http = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# First-poll completion driver for the polyglot engine steps.
+# Bộ chạy poll-đầu-hoàn-tất cho các bước engine polyglot.
+futures-util = { workspace = true }
+# OSV API client for ecosystem scanners without a native CLI scanner
+# (Swift/SPM, CocoaPods, Dart/pub) — one shared HTTP client.
+# Client OSV API cho ecosystem scanner không có CLI riêng (Swift/SPM,
+# CocoaPods, Dart/pub) — một HTTP client dùng chung.
+reqwest = { workspace = true }
+toml = { workspace = true }
+
+[dev-dependencies]
+# Tempdir for the 10-test/lane scanner suites (malformed output, large
+# payloads, offline, concurrency).
+# Tempdir cho bộ test/lane 10 mục (output malformed, payload lớn,
+# offline, đồng thời).
+tempfile = { workspace = true }
+# Async test runtime for the polyglot engine tests.
+# Runtime async cho test engine polyglot.
+tokio = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,7 +1,7 @@
 //! (Lệnh template: publish/fetch kernel-làm registry — Bun/pnpm create thành mgc-create-*, Q13)
 //! publish: pack templates/{core}/{name} thành tarball mgc-create-<core>-<name>
 //! fetch: tải tarball → ~/.mgc/templates/{core}/{name} (cache; resolve sẽ thấy Disk)
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use clap::Parser;
 use mgc_config::npmrc::NpmRc;
 use mgc_publish::auth::resolve_auth;
@@ -26,6 +26,42 @@ pub fn templates_cache_dir() -> PathBuf {
     }
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
     home.join(".mgc").join("templates")
+}
+
+/// Serialize embedded-layer refreshes across MagiCore processes. Without this
+/// lock, concurrent first-run processes can each remove/extract the same
+/// shared cache directory and observe a partially materialized layer.
+/// (Tuần tự hóa refresh layer embedded giữa các process MagiCore.)
+fn lock_embedded_cache_layer(cache_root: &Path, rel: &str) -> Result<fs::File> {
+    let lock_dir = cache_root.join(".locks");
+    fs::create_dir_all(&lock_dir)?;
+    let lock_dir_metadata = fs::symlink_metadata(&lock_dir)?;
+    if lock_dir_metadata.file_type().is_symlink() || !lock_dir_metadata.is_dir() {
+        bail!("embedded template cache lock directory is not a real directory");
+    }
+    let key = blake3::hash(rel.as_bytes()).to_hex().to_string();
+    let lock_path = lock_dir.join(format!("embedded-{key}.lock"));
+    let mut options = fs::OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // FILE_FLAG_OPEN_REPARSE_POINT: open the lock object, not its target.
+        // (Mở chính lock, không đi theo reparse point trên Windows.)
+        options.custom_flags(0x0020_0000);
+    }
+    let file = options.open(&lock_path)?;
+    let metadata = fs::symlink_metadata(&lock_path)?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() || !file.metadata()?.is_file() {
+        bail!("embedded template cache lock is not a regular file");
+    }
+    fs2::FileExt::lock_exclusive(&file)?;
+    Ok(file)
 }
 
 /// Rel path của layer trong templates/ — name flat (react-vite → web/frontend/react-vite)
@@ -255,29 +291,254 @@ pub async fn fetch(args: TemplateFetchArgs) -> Result<PathBuf> {
 
 /// Đảm bảo template layer có sẵn (disk / cache) — nếu thiếu và registry có config,
 /// tự fetch. Registry-first: klass pnpm đua `create-*` từ registry.
-/// Trả về true nếu template khả dụng (có template.toml + sources).
-pub async fn ensure_layer(rel: &str) -> bool {
-    // Check disk / cache trước (TemplateRoot::resolve đã theo đúng priority
-    // env → workspace disk → cache).
-    let root = crate::scaffold::template_root::TemplateRoot::resolve(rel);
-    if root.exists("") && root.exists("template.toml") && root.exists("sources") {
-        return true;
-    }
-    // Registry fetch khi chưa có. Core lấy từ segment đầu của rel (web/... → web,
-    // game/bevy → game) để package name khớp mgc-create-<core>-<name>.
-    let core = rel.split('/').next().unwrap_or("web").to_string();
-    if let Ok(registry) = select_registry(None) {
-        let args = TemplateFetchArgs {
-            core,
-            name: rel.to_string(),
-            registry: Some(registry),
-            tag: None,
-        };
-        if fetch(args).await.is_ok() {
-            return true;
+///
+/// Returns typed ScaffoldResolveStatus thay vì bool - KHÔNG được bỏ qua!
+pub async fn ensure_layer(
+    rel: &str,
+) -> Result<
+    crate::scaffold::resolver::ScaffoldResolveStatus,
+    crate::scaffold::resolver::ScaffoldResolveError,
+> {
+    use crate::scaffold::embedded::EmbeddedKernel;
+    use crate::scaffold::resolver::{ScaffoldResolveError, ScaffoldResolveStatus};
+    use crate::scaffold::spec::{CoreKind, parse_scaffold_spec};
+
+    // Parse layer path để lấy core/name (web/frontend/nextjs → core=web, name=nextjs)
+    // Layer rel có thể là:
+    // - "web/frontend/nextjs" → name="nextjs"
+    // - "web/shared/partials/base" → full path
+    // - "app/flutter@stable" → name="flutter@stable" (đã có @tag)
+    let segments: Vec<&str> = rel.split('/').collect();
+    let core_str = segments.first().unwrap_or(&"web");
+    let core = CoreKind::from_str_core(core_str)
+        .ok_or_else(|| ScaffoldResolveError::Other(format!("Unknown core: {}", core_str)))?;
+
+    let name_segment = segments.last().unwrap_or(&"unknown");
+
+    /// Legacy embedded-cache freshness: a `.mgc-embedded-version` marker
+    /// records which embedded version was extracted. Missing marker (caches
+    /// from before versioning) or version mismatch → re-extract, so template
+    /// updates are never shadowed by stale caches.
+    /// (Tươi cache embedded: marker version, lệch thì giải nén lại.)
+    fn embedded_cache_fresh(cache_target: &std::path::Path, version: Option<&str>) -> bool {
+        let marker = cache_target.join(".mgc-embedded-version");
+        let cached = std::fs::read_to_string(&marker)
+            .ok()
+            .map(|v| v.trim().to_string());
+        match (cached, version) {
+            (Some(cached), Some(version)) => cached == version,
+            _ => false,
         }
     }
-    false
+
+    /// Record the extracted embedded version in the cache (best-effort —
+    /// a missing marker just re-extracts next time).
+    /// (Ghi marker version embedded vào cache.)
+    fn stamp_embedded_cache(
+        cache_target: &std::path::Path,
+        version: Option<&str>,
+    ) -> anyhow::Result<()> {
+        if let Some(version) = version {
+            std::fs::create_dir_all(cache_target)?;
+            std::fs::write(cache_target.join(".mgc-embedded-version"), version)?;
+        }
+        Ok(())
+    }
+
+    /// Remove only a stale real directory. A symlink or non-directory cache
+    /// entry is an error; cleanup failures must not be followed by overlaying
+    /// new embedded files and stamping the result as fresh.
+    /// (Chỉ xóa thư mục cache cũ thật; lỗi dọn phải dừng, không ghi đè chồng.)
+    fn remove_stale_embedded_cache(cache_target: &std::path::Path) -> anyhow::Result<()> {
+        match std::fs::symlink_metadata(cache_target) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error.into()),
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+                anyhow::bail!(
+                    "refusing to replace non-directory or linked embedded cache '{}'",
+                    cache_target.display()
+                )
+            }
+            Ok(_) => {
+                std::fs::remove_dir_all(cache_target)?;
+                Ok(())
+            }
+        }
+    }
+    // 1. Check embedded kernel first
+    // Try full path first (web/shared/base), then short form (web/vanilla)
+    if EmbeddedKernel::has_layer_path(rel) {
+        let cache_root = crate::commands::template::templates_cache_dir();
+        // Hold a per-layer OS lock across freshness check, replacement, and
+        // version stamping. The lock file lives outside the directory being
+        // refreshed, so another process cannot unlink the lock inode.
+        // (Giữ OS lock xuyên kiểm tra, thay cache và ghi version marker.)
+        let _cache_lock = lock_embedded_cache_layer(&cache_root, rel).map_err(|error| {
+            ScaffoldResolveError::Other(format!("Failed to lock embedded template cache: {error}"))
+        })?;
+        // Extract embedded to legacy cache location so processor can find it.
+        let cache_target = cache_root.join(rel);
+        let version = EmbeddedKernel::layer_version_path(rel);
+        if !embedded_cache_fresh(&cache_target, version) {
+            remove_stale_embedded_cache(&cache_target).map_err(|error| {
+                ScaffoldResolveError::Other(format!(
+                    "Failed to replace stale embedded template cache: {error}"
+                ))
+            })?;
+            EmbeddedKernel::extract_layer_path(rel, &cache_target).map_err(|e| {
+                ScaffoldResolveError::Other(format!("Failed to extract embedded kernel: {}", e))
+            })?;
+            stamp_embedded_cache(&cache_target, version).map_err(|error| {
+                ScaffoldResolveError::Other(format!(
+                    "Failed to stamp embedded template cache: {error}"
+                ))
+            })?;
+        }
+        return Ok(ScaffoldResolveStatus::Embedded {
+            layer: rel.to_string(),
+        });
+    }
+
+    let base_name = name_segment.split('@').next().unwrap_or(name_segment);
+    if EmbeddedKernel::has_layer(core_str, base_name) {
+        let cache_root = crate::commands::template::templates_cache_dir();
+        // Short-form embedded entries use the same cross-process protection.
+        // (Layer embedded dạng rút gọn dùng cùng khóa liên-process.)
+        let _cache_lock = lock_embedded_cache_layer(&cache_root, rel).map_err(|error| {
+            ScaffoldResolveError::Other(format!("Failed to lock embedded template cache: {error}"))
+        })?;
+        let cache_target = cache_root.join(rel);
+        let version = EmbeddedKernel::layer_version(core_str, base_name);
+        if !embedded_cache_fresh(&cache_target, version) {
+            remove_stale_embedded_cache(&cache_target).map_err(|error| {
+                ScaffoldResolveError::Other(format!(
+                    "Failed to replace stale embedded template cache: {error}"
+                ))
+            })?;
+            EmbeddedKernel::extract_layer(core_str, base_name, &cache_target).map_err(|e| {
+                ScaffoldResolveError::Other(format!("Failed to extract embedded kernel: {}", e))
+            })?;
+            stamp_embedded_cache(&cache_target, version).map_err(|error| {
+                ScaffoldResolveError::Other(format!(
+                    "Failed to stamp embedded template cache: {error}"
+                ))
+            })?;
+        }
+        return Ok(ScaffoldResolveStatus::Embedded {
+            layer: rel.to_string(),
+        });
+    }
+
+    // 2. Parse spec for registry lookup
+    // Nếu name_segment đã có @tag (flutter@stable) → dùng nguyên
+    // Nếu không có @tag (flutter) → thêm @latest
+    let spec_input = if name_segment.contains('@') {
+        name_segment.to_string()
+    } else {
+        format!("{}@latest", name_segment)
+    };
+
+    let spec = parse_scaffold_spec(core, &spec_input).map_err(|e| {
+        ScaffoldResolveError::Other(format!("Failed to parse scaffold spec: {}", e))
+    })?;
+
+    // 3. Check versioned cache (Phase 2 - NEW)
+    use crate::scaffold::cache::ScaffoldCache;
+    let cached_versions = ScaffoldCache::list_versions(&spec);
+    if let Some(version) = cached_versions.first() {
+        let path = ScaffoldCache::path(&spec, version);
+        return Ok(ScaffoldResolveStatus::CacheHit {
+            layer: rel.to_string(),
+            version: Some(version.clone()),
+            path,
+        });
+    }
+
+    // 4. Legacy cache fallback (old ~/.mgc/templates/{rel})
+    let root = crate::scaffold::template_root::TemplateRoot::resolve(rel);
+    if root.exists("") && root.exists("template.toml") && root.exists("sources") {
+        let version = extract_cached_version(&root);
+        return Ok(ScaffoldResolveStatus::CacheHit {
+            layer: rel.to_string(),
+            version,
+            path: root.path().to_path_buf(),
+        });
+    }
+
+    // 5. Registry fetch (Phase 2 - NEW)
+    use crate::scaffold::registry::ScaffoldRegistry;
+    let registry_client = ScaffoldRegistry::new().map_err(|error| {
+        crate::scaffold::resolver::ScaffoldResolveError::Other(format!(
+            "cannot reach the template registry: {error}"
+        ))
+    })?;
+
+    // Resolve version from dist-tag (latest → 15.5.0)
+    let version = match registry_client.resolve_version(&spec).await {
+        Ok(v) => v,
+        Err(e) => {
+            return Err(ScaffoldResolveError::RequiredLayerMissing {
+                layer: rel.to_string(),
+                core: core_str.to_string(),
+                template: spec.name.clone(),
+                tag: "latest".to_string(),
+                attempted_sources: format!(
+                    "- Embedded kernel: not available\n\
+                     - Versioned cache: empty\n\
+                     - Legacy cache: empty\n\
+                     - Registry fetch failed: {}",
+                    e
+                ),
+            });
+        }
+    };
+
+    // Fetch tarball
+    let tarball = match registry_client.fetch(&spec, &version).await {
+        Ok(data) => data,
+        Err(e) => {
+            return Err(ScaffoldResolveError::RequiredLayerMissing {
+                layer: rel.to_string(),
+                core: core_str.to_string(),
+                template: spec.name.clone(),
+                tag: version.clone(),
+                attempted_sources: format!(
+                    "- Registry fetch failed for version {}: {}",
+                    version, e
+                ),
+            });
+        }
+    };
+
+    // Write to versioned cache
+    ScaffoldCache::write(&spec, &version, &tarball)
+        .map_err(|e| ScaffoldResolveError::Other(format!("Failed to write cache: {}", e)))?;
+
+    let path = ScaffoldCache::path(&spec, &version);
+    Ok(ScaffoldResolveStatus::Fetched {
+        layer: rel.to_string(),
+        version: version.clone(),
+        path,
+    })
+}
+
+/// Extract version từ cache metadata file
+fn extract_cached_version(root: &crate::scaffold::template_root::TemplateRoot) -> Option<String> {
+    let metadata_path = root.path().join(".mgc-version");
+    std::fs::read_to_string(metadata_path)
+        .ok()
+        .and_then(|content| content.lines().next().map(|s| s.trim().to_string()))
+}
+
+/// Write version metadata vào cache directory
+#[allow(dead_code)] // Used by legacy cache path, kept for backward compatibility
+fn write_cache_version_metadata(
+    root: &crate::scaffold::template_root::TemplateRoot,
+    version: &str,
+) -> Result<()> {
+    let metadata_path = root.path().join(".mgc-version");
+    std::fs::write(metadata_path, format!("{}\n", version))?;
+    Ok(())
 }
 
 /// Extract tarball entries vào target, bỏ segment đầu của entry name
@@ -314,15 +575,17 @@ fn select_registry(flag: Option<&str>) -> Result<String> {
     if let Some(url) = flag {
         return Ok(url.to_string());
     }
-    if let Ok(url) = std::env::var("MGC_NPM_REGISTRY") {
-        if !url.is_empty() {
-            return Ok(url);
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Ok(url) = std::env::var("MGC_NPM_REGISTRY")
+        && !url.is_empty()
+    {
+        return Ok(url);
     }
-    if let Ok(npmrc) = NpmRc::load(Path::new(".")) {
-        if let Some(url) = npmrc.registry_for(None) {
-            return Ok(url);
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Ok(npmrc) = NpmRc::load(Path::new("."))
+        && let Some(url) = npmrc.registry_for(None)
+    {
+        return Ok(url);
     }
     Ok(DEFAULT_REGISTRY.to_string())
 }

@@ -1,25 +1,29 @@
 #![cfg(test)]
 #![allow(clippy::unwrap_used, clippy::await_holding_lock)]
+// Tests mutate env single-threaded (edition 2024 unsafe rule) — test đổi env 1 luồng.
+#![allow(unsafe_code)]
 use super::*;
+use crate::audit::parse_advisory_bulk_response;
 use base64::Engine;
-use flate2::write::GzEncoder;
 use flate2::Compression;
+use flate2::write::GzEncoder;
 use mgc_lockfile::Lockfile;
 use mgc_resolver::DependencyProvider;
 use mgc_store::{Layout, PackageCache};
+use mgc_types::DependencySpec;
 use sha2::{Digest, Sha512};
 use std::io::ErrorKind;
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
     Arc,
+    atomic::{AtomicUsize, Ordering},
 };
-use std::sync::{Mutex, OnceLock};
 use tar::{Builder, Header};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
 use crate::cache::*;
 use crate::install::extract::*;
+use crate::install::fetch::{publish_downloaded_tarball, unique_tarball_staging_path};
 use crate::install::materialize::*;
 use crate::install::{should_run_lifecycle_scripts, trust_allows_script};
 use crate::lockfile::*;
@@ -27,6 +31,9 @@ use crate::manifest::*;
 use crate::profile::*;
 use crate::provider::*;
 use crate::update::*;
+
+#[path = "unit_tests/warm_cache_tests.rs"]
+mod warm_cache_tests;
 
 async fn bind_test_listener() -> Option<TcpListener> {
     match TcpListener::bind("127.0.0.1:0").await {
@@ -39,10 +46,142 @@ async fn bind_test_listener() -> Option<TcpListener> {
     }
 }
 
+#[tokio::test]
+async fn install_fails_closed_when_project_has_unapplied_patch_specs() {
+    let dir = tempdir_real().unwrap();
+    let mut config = mgc_config::project::ProjectConfig::new("patched-web", "web");
+    config.patches.push(mgc_types::PatchSpec::new(
+        "example".to_string(),
+        mgc_types::VersionRange::star(),
+        "example.patch".to_string(),
+        "sha256-deadbeef".to_string(),
+    ));
+    config.save(dir.path()).unwrap();
+
+    let result = crate::install::run_install(
+        "https://registry.example",
+        None,
+        None,
+        None,
+        None,
+        &ResolvedGraph::empty(),
+        dir.path(),
+        InstallOptions::default(),
+    )
+    .await;
+
+    let error = result.expect_err("configured patches must never be silently ignored");
+    assert!(error.to_string().contains("patch"));
+    assert!(
+        !dir.path().join("node_modules").exists(),
+        "install must reject before creating or mutating the dependency tree"
+    );
+}
+
 #[test]
 fn test_web_adapter() {
-    assert_eq!(WebAdapter::new().registry_url, "https://registry.npmjs.org");
+    assert_eq!(
+        WebAdapter::new().unwrap().registry_url,
+        "https://registry.npmjs.org"
+    );
 }
+
+#[test]
+fn web_writer_refuses_signed_lock_and_preserves_signature_pair() {
+    let dir = tempdir_real().unwrap();
+    let path = dir.path().join("mgc.lock");
+    let mut signed = Lockfile::new();
+    let mut package = mgc_lockfile::Package::new(
+        "old-web-dep".to_string(),
+        "1.0.0".to_string(),
+        "https://registry.example/old-web-dep.tgz".to_string(),
+        "sha512-old".to_string(),
+    );
+    package.ecosystem = mgc_lockfile::EcosystemTag::Web;
+    package.owner_core = Some("web".to_string());
+    signed.packages.push(package);
+    let key = mgc_crypto::keyring::KeyPair::generate().unwrap();
+    mgc_lockfile::sign_and_write_lockfile(&mut signed, &path, &key).unwrap();
+    let lock_before = std::fs::read(&path).unwrap();
+    let signature_path = path.with_extension("lock.sig");
+    let signature_before = std::fs::read(&signature_path).unwrap();
+    let graph = ResolvedGraph::empty();
+
+    let result = crate::lockfile::write_web_lockfile_with_state(
+        dir.path(),
+        &graph,
+        "https://registry.example",
+    );
+
+    assert!(result.unwrap_err().to_string().contains("signed mgc.lock"));
+    assert_eq!(std::fs::read(&path).unwrap(), lock_before);
+    assert_eq!(std::fs::read(&signature_path).unwrap(), signature_before);
+    assert_eq!(
+        mgc_lockfile::verify_lockfile(&path).unwrap(),
+        mgc_lockfile::VerificationStatus::Valid
+    );
+}
+
+#[test]
+fn web_writer_leaves_an_unchanged_signed_lock_byte_identical() {
+    let dir = tempdir_real().unwrap();
+    let path = dir.path().join("mgc.lock");
+    let mut existing = Lockfile::new();
+    let mut package = mgc_lockfile::Package::new(
+        "stable-web-dep".to_string(),
+        "1.0.0".to_string(),
+        "https://registry.example/stable-web-dep.tgz".to_string(),
+        "sha512-stable".to_string(),
+    );
+    package.ecosystem = mgc_lockfile::EcosystemTag::Web;
+    package.owner_core = Some("web".to_string());
+    existing.packages.push(package);
+    let key = mgc_crypto::keyring::KeyPair::generate().unwrap();
+    mgc_lockfile::sign_and_write_lockfile(&mut existing, &path, &key).unwrap();
+    let lock_before = std::fs::read(&path).unwrap();
+    let signature_path = path.with_extension("lock.sig");
+    let signature_before = std::fs::read(&signature_path).unwrap();
+    let graph = ResolvedGraph {
+        packages: vec![ResolvedPackage {
+            id: PackageId::new(
+                PackageName::new("stable-web-dep").unwrap(),
+                Version::parse("1.0.0").unwrap(),
+            ),
+            integrity: "sha512-stable".to_string(),
+            tarball_url: "https://registry.example/stable-web-dep.tgz".to_string(),
+            deps: vec![],
+            peer_deps: vec![],
+            direct: true,
+            dev: false,
+        }],
+    };
+
+    crate::lockfile::write_web_lockfile_with_state(dir.path(), &graph, "https://registry.example")
+        .unwrap();
+
+    assert_eq!(std::fs::read(&path).unwrap(), lock_before);
+    assert_eq!(std::fs::read(&signature_path).unwrap(), signature_before);
+    assert_eq!(
+        mgc_lockfile::verify_lockfile(&path).unwrap(),
+        mgc_lockfile::VerificationStatus::Valid
+    );
+}
+
+/// Symlink-free temp dir (P0-A contract, 2026-09-13): the CAS now rejects
+/// any symlinked ancestor, and macOS temp lives under /var — a SYSTEM
+/// symlink. Create the temp dir under the CANONICALIZED temp base so every
+/// store/CAS path in these tests is real. Mirrors the convention already
+/// used by core/crates/mgc-store/tests/adversarial_integrity.rs.
+/// (Temp dir không symlink (hợp đồng P0-A): CAS giờ từ chối mọi ancestor
+/// là symlink, mà temp macOS nằm dưới /var — symlink HỆ THỐNG. Tạo temp
+/// dưới base temp ĐÃ CANONICALIZE để mọi path store/CAS trong các test
+/// này là đường dẫn thật. Phản chiếu quy ước mà test adversarial của
+/// mgc-store đã dùng.)
+fn tempdir_real() -> std::io::Result<tempfile::TempDir> {
+    let canonical = std::env::temp_dir().canonicalize()?;
+    tempfile::tempdir_in(canonical)
+}
+
 #[test]
 fn test_package_json() {
     let p = PackageJson::new("t".into(), "1.0.0".into());
@@ -50,16 +189,40 @@ fn test_package_json() {
 }
 #[test]
 fn test_can_handle() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     PackageJson::new("t".into(), "1.0.0".into())
         .save(&dir.path().join("package.json"))
         .unwrap();
-    assert!(WebAdapter::new().can_handle(dir.path()));
+    assert!(WebAdapter::new().unwrap().can_handle(dir.path()));
 }
 
 #[tokio::test]
-async fn test_add_writes_manifest_and_install_creates_node_modules() {
-    let dir = tempfile::tempdir().unwrap();
+async fn direct_web_adapter_mutations_fail_closed_without_touching_manifest() {
+    let dir = tempdir_real().unwrap();
+    let manifest = r#"{"name":"demo","version":"1.0.0","dependencies":{"left-pad":"1.0.0"}}"#;
+    std::fs::write(dir.path().join("package.json"), manifest).unwrap();
+    let adapter = WebAdapter::new().unwrap();
+    let name = PackageName::new("left-pad").unwrap();
+    let range = VersionRange::parse("^1.0.0").unwrap();
+
+    assert!(
+        adapter
+            .add(dir.path(), &name, Some(&range), AddOptions::default())
+            .await
+            .is_err()
+    );
+    assert!(adapter.remove(dir.path(), &name).await.is_err());
+    assert!(adapter.update(dir.path(), Some(&name)).await.is_err());
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("package.json")).unwrap(),
+        manifest
+    );
+    assert!(!dir.path().join(".magicore").exists());
+}
+
+#[tokio::test]
+async fn test_install_materializes_manifest_dependency_into_node_modules() {
+    let dir = tempdir_real().unwrap();
     std::fs::write(
         dir.path().join("package.json"),
         serde_json::json!({
@@ -67,6 +230,7 @@ async fn test_add_writes_manifest_and_install_creates_node_modules() {
             "version": "0.1.0",
             "private": true,
             "type": "module",
+            "dependencies": { "tailwindcss": "^3.4.0" },
             "scripts": {
                 "dev": "mgc web dev"
             }
@@ -75,20 +239,15 @@ async fn test_add_writes_manifest_and_install_creates_node_modules() {
     )
     .unwrap();
 
-    let adapter = WebAdapter::new();
+    let adapter = WebAdapter::new().unwrap();
     let name = PackageName::new("tailwindcss").unwrap();
-    let range = VersionRange::parse("^3.4.0").unwrap();
-    adapter
-        .add(dir.path(), &name, Some(&range), AddOptions::default())
-        .await
-        .unwrap();
-
     let manifest = adapter.parse_manifest(dir.path()).await.unwrap();
     assert!(manifest.find_dep("tailwindcss").is_some());
     let package_json = std::fs::read_to_string(dir.path().join("package.json")).unwrap();
-    assert!(package_json.contains("\"private\": true"));
-    assert!(package_json.contains("\"type\": \"module\""));
-    assert!(package_json.contains("\"dev\": \"mgc web dev\""));
+    let package_json: serde_json::Value = serde_json::from_str(&package_json).unwrap();
+    assert_eq!(package_json["private"], true);
+    assert_eq!(package_json["type"], "module");
+    assert_eq!(package_json["scripts"]["dev"], "mgc web dev");
 
     let package_id = PackageId::new(name, Version::parse("3.4.0").unwrap());
     let integrity = seed_cached_tarball(dir.path(), &package_id);
@@ -108,22 +267,26 @@ async fn test_add_writes_manifest_and_install_creates_node_modules() {
         .await
         .unwrap();
     assert_eq!(summary.added, vec![package_id]);
-    assert!(dir
-        .path()
-        .join("node_modules")
-        .join("tailwindcss")
-        .join("package.json")
-        .exists());
-    assert!(dir
-        .path()
-        .join("node_modules")
-        .join("tailwindcss")
-        .join("index.css")
-        .exists());
+    assert!(
+        dir.path()
+            .join("node_modules")
+            .join("tailwindcss")
+            .join("package.json")
+            .exists()
+    );
+    assert!(
+        dir.path()
+            .join("node_modules")
+            .join("tailwindcss")
+            .join("index.css")
+            .exists()
+    );
 
     let lock = std::fs::read_to_string(dir.path().join("mgc.lock")).unwrap();
     let parsed: Lockfile = mgc_lockfile::parse_lockfile(&lock).unwrap();
-    assert_eq!(parsed.version, "2");
+    // Deliberate v3 bump (Phase 1): the web writer now emits schema v3.
+    // Nâng lên v3 có chủ đích (Phase 1): web writer giờ ghi schema v3.
+    assert_eq!(parsed.version, "3");
     assert_eq!(parsed.packages.len(), 1);
     assert_eq!(parsed.packages[0].name, "tailwindcss");
     assert_eq!(parsed.packages[0].version, "3.4.0");
@@ -131,8 +294,8 @@ async fn test_add_writes_manifest_and_install_creates_node_modules() {
 
 #[tokio::test]
 async fn test_audit_fix_bumps_vulnerable_packages_and_rewrites_lockfile() {
-    let shared = tempfile::tempdir().unwrap();
-    let dir = tempfile::tempdir().unwrap();
+    let shared = tempdir_real().unwrap();
+    let dir = tempdir_real().unwrap();
 
     seed_shared_metadata(
         shared.path(),
@@ -198,16 +361,18 @@ async fn test_audit_fix_bumps_vulnerable_packages_and_rewrites_lockfile() {
 
     let lock = std::fs::read_to_string(dir.path().join("mgc.lock")).unwrap();
     let parsed: Lockfile = mgc_lockfile::parse_lockfile(&lock).unwrap();
-    assert!(parsed
-        .packages
-        .iter()
-        .any(|p| p.name == "react" && p.version == "19.0.0"));
+    assert!(
+        parsed
+            .packages
+            .iter()
+            .any(|p| p.name == "react" && p.version == "19.0.0")
+    );
 }
 
 #[tokio::test]
 async fn test_audit_fix_fail_closed_keeps_manifest_and_lockfile_when_resolve_fails() {
-    let shared = tempfile::tempdir().unwrap();
-    let dir = tempfile::tempdir().unwrap();
+    let shared = tempdir_real().unwrap();
+    let dir = tempdir_real().unwrap();
 
     std::fs::write(
         dir.path().join("package.json"),
@@ -251,7 +416,7 @@ async fn test_audit_fix_fail_closed_keeps_manifest_and_lockfile_when_resolve_fai
 
 #[test]
 fn test_write_web_lockfile_with_state_skips_rewrite_when_unchanged() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     let package_id = PackageId::new(
         PackageName::new("react").unwrap(),
         Version::parse("18.2.0").unwrap(),
@@ -268,21 +433,572 @@ fn test_write_web_lockfile_with_state_skips_rewrite_when_unchanged() {
         }],
     };
 
-    write_web_lockfile_with_state(dir.path(), &graph, "locked").unwrap();
+    write_web_lockfile_with_state(dir.path(), &graph, "https://registry.npmjs.org").unwrap();
     let lock_path = dir.path().join("mgc.lock");
     let first_lock_modified = std::fs::metadata(&lock_path).unwrap().modified().unwrap();
 
     std::thread::sleep(std::time::Duration::from_secs(1));
 
-    write_web_lockfile_with_state(dir.path(), &graph, "locked").unwrap();
+    write_web_lockfile_with_state(dir.path(), &graph, "https://registry.npmjs.org").unwrap();
     let second_lock_modified = std::fs::metadata(&lock_path).unwrap().modified().unwrap();
 
     assert_eq!(first_lock_modified, second_lock_modified);
 }
 
+#[test]
+fn web_writer_persists_owner_scoped_roots_and_versioned_peer_edges() {
+    let dir = tempdir_real().unwrap();
+    let package_id = |name: &str, version: &str| {
+        PackageId::new(
+            PackageName::new(name).unwrap(),
+            Version::parse(version).unwrap(),
+        )
+    };
+    let button = package_id("button", "1.0.0");
+    let react = package_id("react", "18.2.0");
+    let graph = ResolvedGraph {
+        packages: vec![
+            ResolvedPackage {
+                id: button,
+                integrity: "sha512-button".into(),
+                tarball_url: "https://registry.example/button.tgz".into(),
+                deps: vec![],
+                peer_deps: vec![react.clone()],
+                direct: true,
+                dev: false,
+            },
+            ResolvedPackage {
+                id: react,
+                integrity: "sha512-react".into(),
+                tarball_url: "https://registry.example/react.tgz".into(),
+                deps: vec![],
+                peer_deps: vec![],
+                direct: false,
+                dev: false,
+            },
+        ],
+    };
+
+    write_web_lockfile_with_state(dir.path(), &graph, "https://registry.example").unwrap();
+    let lock = mgc_lockfile::parser::load_lockfile(&dir.path().join("mgc.lock")).unwrap();
+    assert_eq!(
+        lock.root_dependencies_by_owner["web"],
+        vec![mgc_lockfile::format_root_pin(
+            mgc_lockfile::EcosystemTag::Web,
+            "button@1.0.0",
+        )]
+    );
+    let button = lock
+        .packages
+        .iter()
+        .find(|package| package.name == "button")
+        .unwrap();
+    assert_eq!(
+        button.peers.as_deref(),
+        Some(["react@18.2.0".to_string()].as_slice())
+    );
+}
+
+#[test]
+fn web_direct_root_classification_checks_the_manifest_range() {
+    let mut manifest = Manifest::new("demo", mgc_types::ecosystem::Ecosystem::Web);
+    manifest.add_dep(
+        DependencySpec::new(
+            PackageName::new("react").unwrap(),
+            mgc_types::VersionRange::parse("^19.3.0").unwrap(),
+        ),
+        false,
+        false,
+        false,
+    );
+    let react_19 = PackageId::new(
+        PackageName::new("react").unwrap(),
+        Version::parse("19.3.0").unwrap(),
+    );
+    let react_18_peer = PackageId::new(
+        PackageName::new("react").unwrap(),
+        Version::parse("18.3.1").unwrap(),
+    );
+
+    assert!(is_manifest_root_package(&manifest, &react_19));
+    assert!(!is_manifest_root_package(&manifest, &react_18_peer));
+}
+
+#[test]
+fn web_root_normalization_collapses_duplicate_direct_versions() {
+    let mut manifest = Manifest::new("demo", mgc_types::ecosystem::Ecosystem::Web);
+    manifest.add_dep(
+        DependencySpec::new(
+            PackageName::new("postcss").unwrap(),
+            mgc_types::VersionRange::parse("^8.5.0").unwrap(),
+        ),
+        false,
+        false,
+        false,
+    );
+    manifest.add_dep(
+        DependencySpec::new(
+            PackageName::new("plugin").unwrap(),
+            mgc_types::VersionRange::parse("^1.0.0").unwrap(),
+        ),
+        false,
+        false,
+        false,
+    );
+
+    let older = PackageId::parse("postcss@8.5.23").unwrap();
+    let newer = PackageId::parse("postcss@8.5.28").unwrap();
+    let plugin = PackageId::parse("plugin@1.0.0").unwrap();
+    let package = |id: PackageId, direct: bool, deps: Vec<PackageId>| ResolvedPackage {
+        id,
+        integrity: String::new(),
+        tarball_url: String::new(),
+        deps,
+        peer_deps: vec![],
+        direct,
+        dev: false,
+    };
+    let graph = normalize_resolved_graph(
+        &manifest,
+        ResolvedGraph {
+            packages: vec![
+                package(older.clone(), true, vec![]),
+                package(newer.clone(), true, vec![]),
+                package(plugin.clone(), true, vec![older.clone()]),
+            ],
+        },
+    );
+    let packages: std::collections::HashMap<_, _> = graph
+        .packages
+        .iter()
+        .map(|package| (package.id.clone(), package))
+        .collect();
+
+    assert!(
+        packages.contains_key(&older),
+        "the transitive version stays installed"
+    );
+    assert!(
+        packages[&newer].direct,
+        "only the latest matching root stays direct"
+    );
+    assert!(!packages[&older].direct);
+    let root_ids: Vec<_> = select_root_packages(&graph)
+        .into_iter()
+        .filter(|package| package.id.name_str() == "postcss")
+        .map(|package| package.id.clone())
+        .collect();
+    assert_eq!(root_ids, vec![newer]);
+}
+
+#[test]
+fn web_root_normalization_preserves_a_unique_locked_root_version() {
+    let mut manifest = Manifest::new("demo", mgc_types::ecosystem::Ecosystem::Web);
+    manifest.add_dep(
+        DependencySpec::new(
+            PackageName::new("postcss").unwrap(),
+            mgc_types::VersionRange::parse("^8.5.0").unwrap(),
+        ),
+        false,
+        false,
+        false,
+    );
+    manifest.add_dep(
+        DependencySpec::new(
+            PackageName::new("plugin").unwrap(),
+            mgc_types::VersionRange::parse("^1.0.0").unwrap(),
+        ),
+        false,
+        false,
+        false,
+    );
+
+    let older = PackageId::parse("postcss@8.5.23").unwrap();
+    let newer = PackageId::parse("postcss@8.5.28").unwrap();
+    let plugin = PackageId::parse("plugin@1.0.0").unwrap();
+    let package = |id: PackageId, direct: bool, deps: Vec<PackageId>| ResolvedPackage {
+        id,
+        integrity: String::new(),
+        tarball_url: String::new(),
+        deps,
+        peer_deps: vec![],
+        direct,
+        dev: false,
+    };
+    let graph = normalize_resolved_graph(
+        &manifest,
+        ResolvedGraph {
+            packages: vec![
+                package(older.clone(), true, vec![]),
+                package(newer.clone(), false, vec![]),
+                package(plugin.clone(), true, vec![newer.clone()]),
+            ],
+        },
+    );
+    let packages: std::collections::HashMap<_, _> = graph
+        .packages
+        .iter()
+        .map(|package| (package.id.clone(), package))
+        .collect();
+
+    assert!(
+        packages[&older].direct,
+        "a unique lock root remains selected"
+    );
+    assert!(
+        !packages[&newer].direct,
+        "the matching transitive version stays nested"
+    );
+    let root_ids: Vec<_> = select_root_packages(&graph)
+        .into_iter()
+        .filter(|package| package.id.name_str() == "postcss")
+        .map(|package| package.id.clone())
+        .collect();
+    assert_eq!(root_ids, vec![older]);
+}
+
+#[test]
+fn web_resolver_prunes_lock_orphans_but_keeps_dependency_and_peer_closure() {
+    let package_id = |name: &str, version: &str| {
+        PackageId::new(
+            PackageName::new(name).unwrap(),
+            Version::parse(version).unwrap(),
+        )
+    };
+    let root = package_id("root", "1.0.0");
+    let child = package_id("child", "2.0.0");
+    let peer = package_id("react", "19.3.0");
+    let orphan = package_id("strip-ansi-cjs", "6.0.1");
+    let mut graph = ResolvedGraph {
+        packages: vec![
+            ResolvedPackage {
+                id: root,
+                integrity: String::new(),
+                tarball_url: String::new(),
+                deps: vec![child.clone()],
+                peer_deps: vec![peer.clone()],
+                direct: true,
+                dev: false,
+            },
+            ResolvedPackage {
+                id: child.clone(),
+                integrity: String::new(),
+                tarball_url: String::new(),
+                deps: vec![],
+                peer_deps: vec![],
+                direct: false,
+                dev: false,
+            },
+            ResolvedPackage {
+                id: peer.clone(),
+                integrity: String::new(),
+                tarball_url: String::new(),
+                deps: vec![],
+                peer_deps: vec![],
+                direct: false,
+                dev: false,
+            },
+            ResolvedPackage {
+                id: orphan,
+                integrity: String::new(),
+                tarball_url: String::new(),
+                deps: vec![],
+                peer_deps: vec![],
+                direct: false,
+                dev: false,
+            },
+        ],
+    };
+
+    prune_unreachable_packages(&mut graph);
+
+    let retained: std::collections::HashSet<_> = graph
+        .packages
+        .iter()
+        .map(|package| package.id.to_string())
+        .collect();
+    assert_eq!(retained.len(), 3);
+    assert!(retained.contains(&child.to_string()));
+    assert!(retained.contains(&peer.to_string()));
+    assert!(!retained.contains("strip-ansi-cjs@6.0.1"));
+}
+
+#[test]
+fn web_lock_writer_preserves_foreign_ecosystems_and_reads_only_web_pins() {
+    let dir = tempdir_real().unwrap();
+    let path = dir.path().join("mgc.lock");
+    let mut lock = Lockfile::new();
+    lock.packages.push(mgc_lockfile::Package {
+        name: "react".into(),
+        version: "18.2.0".into(),
+        ecosystem: mgc_lockfile::EcosystemTag::Dart,
+        ..Default::default()
+    });
+    lock.packages.push(mgc_lockfile::Package {
+        name: "react".into(),
+        version: "17.0.0".into(),
+        ecosystem: mgc_lockfile::EcosystemTag::Web,
+        ..Default::default()
+    });
+    std::fs::write(
+        &path,
+        mgc_lockfile::writer::serialize_lockfile(&lock).unwrap(),
+    )
+    .unwrap();
+
+    let react = PackageId::new(
+        PackageName::new("react").unwrap(),
+        Version::parse("19.0.0").unwrap(),
+    );
+    let graph = ResolvedGraph {
+        packages: vec![ResolvedPackage {
+            id: react,
+            integrity: "sha512-web".into(),
+            tarball_url: String::new(),
+            deps: vec![],
+            peer_deps: vec![],
+            direct: true,
+            dev: false,
+        }],
+    };
+
+    write_web_lockfile_with_state(dir.path(), &graph, "https://registry.npmjs.org").unwrap();
+    let written = mgc_lockfile::parser::load_lockfile(&path).unwrap();
+    assert!(written.packages.iter().any(|p| {
+        p.name == "react"
+            && p.version == "18.2.0"
+            && p.ecosystem == mgc_lockfile::EcosystemTag::Dart
+    }));
+    assert!(written.packages.iter().any(|p| {
+        p.name == "react" && p.version == "19.0.0" && p.ecosystem == mgc_lockfile::EcosystemTag::Web
+    }));
+    assert!(!written.packages.iter().any(|p| {
+        p.name == "react" && p.version == "17.0.0" && p.ecosystem == mgc_lockfile::EcosystemTag::Web
+    }));
+
+    assert!(web_lockfile_matches_graph(&written, &graph));
+    let mut manifest = Manifest::new("demo", mgc_types::ecosystem::Ecosystem::Web);
+    manifest.add_dep(
+        mgc_types::DependencySpec::new(
+            PackageName::new("react").unwrap(),
+            mgc_types::VersionRange::parse("^19.0.0").unwrap(),
+        ),
+        false,
+        false,
+        false,
+    );
+    assert!(lockfile_satisfies_manifest(&written, &manifest));
+    let cached_graph = build_graph_from_lockfile(&written, &manifest, "web")
+        .unwrap()
+        .expect("the Web entry is available even when another ecosystem shares its name");
+    assert_eq!(cached_graph.packages[0].id.version().to_string(), "19.0.0");
+}
+
+#[test]
+fn web_lockfile_replay_restores_transitive_exact_version_and_peer_edges() {
+    let root = PackageId::parse("app@1.0.0").unwrap();
+    let scoped = PackageId::parse("@scope/lib@2.0.0").unwrap();
+    let nested_v1 = PackageId::parse("nested@1.0.0").unwrap();
+    let nested_v2 = PackageId::parse("nested@2.0.0").unwrap();
+    let peer = PackageId::parse("peer@1.0.0").unwrap();
+    let mut lock = Lockfile::new();
+    lock.packages = vec![
+        mgc_lockfile::Package {
+            owner_core: Some("web".into()),
+            name: root.name_str().into(),
+            version: root.version().to_string(),
+            dependencies: vec![scoped.to_string()],
+            peers: Some(vec![peer.to_string()]),
+            ecosystem: mgc_lockfile::EcosystemTag::Web,
+            ..Default::default()
+        },
+        mgc_lockfile::Package {
+            owner_core: Some("web".into()),
+            name: scoped.name_str().into(),
+            version: scoped.version().to_string(),
+            dependencies: vec![nested_v2.to_string()],
+            ecosystem: mgc_lockfile::EcosystemTag::Web,
+            ..Default::default()
+        },
+        mgc_lockfile::Package {
+            owner_core: Some("web".into()),
+            name: nested_v1.name_str().into(),
+            version: nested_v1.version().to_string(),
+            ecosystem: mgc_lockfile::EcosystemTag::Web,
+            ..Default::default()
+        },
+        mgc_lockfile::Package {
+            owner_core: Some("web".into()),
+            name: nested_v2.name_str().into(),
+            version: nested_v2.version().to_string(),
+            ecosystem: mgc_lockfile::EcosystemTag::Web,
+            ..Default::default()
+        },
+        mgc_lockfile::Package {
+            owner_core: Some("web".into()),
+            name: peer.name_str().into(),
+            version: peer.version().to_string(),
+            ecosystem: mgc_lockfile::EcosystemTag::Web,
+            ..Default::default()
+        },
+    ];
+    mgc_lockfile::update_owner_root_pins(
+        &mut lock,
+        "web",
+        mgc_lockfile::EcosystemTag::Web,
+        [root.to_string()],
+    );
+
+    let mut manifest = Manifest::new("demo", mgc_types::ecosystem::Ecosystem::Web);
+    manifest.add_dep(
+        DependencySpec::new(
+            PackageName::new("app").unwrap(),
+            mgc_types::VersionRange::parse("^1.0.0").unwrap(),
+        ),
+        false,
+        false,
+        false,
+    );
+    let graph = build_graph_from_lockfile(&lock, &manifest, "web")
+        .unwrap()
+        .expect("the complete lock closure should replay");
+    let packages: std::collections::HashMap<_, _> = graph
+        .packages
+        .iter()
+        .map(|package| (package.id.to_string(), package))
+        .collect();
+
+    assert_eq!(
+        packages.len(),
+        4,
+        "replay the root and all reachable entries"
+    );
+    assert!(!packages.contains_key(&nested_v1.to_string()));
+    assert_eq!(packages[&root.to_string()].deps, vec![scoped.clone()]);
+    assert_eq!(packages[&root.to_string()].peer_deps, vec![peer.clone()]);
+    assert_eq!(packages[&scoped.to_string()].deps, vec![nested_v2.clone()]);
+    assert!(packages[&root.to_string()].direct);
+    assert_eq!(
+        packages.values().filter(|package| package.direct).count(),
+        1
+    );
+
+    let mut incomplete_lock = lock.clone();
+    incomplete_lock
+        .packages
+        .retain(|package| !(package.name == "nested" && package.version == "2.0.0"));
+    assert!(
+        build_graph_from_lockfile(&incomplete_lock, &manifest, "web")
+            .unwrap()
+            .is_none(),
+        "a missing exact-version edge must miss the lock path instead of disappearing"
+    );
+}
+
+#[test]
+fn embedded_web_engine_preserves_lock_entries_owned_by_another_core() {
+    let dir = tempdir_real().unwrap();
+    mgc_config::project::ProjectConfig::write_core_marker_at(dir.path(), "clo").unwrap();
+    let path = dir.path().join("mgc.lock");
+    let mut lock = Lockfile::new();
+    lock.packages.push(mgc_lockfile::Package {
+        owner_core: Some("web".to_string()),
+        name: "react".into(),
+        version: "18.2.0".into(),
+        ecosystem: mgc_lockfile::EcosystemTag::Web,
+        ..Default::default()
+    });
+    std::fs::write(
+        &path,
+        mgc_lockfile::writer::serialize_lockfile(&lock).unwrap(),
+    )
+    .unwrap();
+    let graph = ResolvedGraph {
+        packages: vec![ResolvedPackage {
+            id: PackageId::new(
+                PackageName::new("constructs").unwrap(),
+                Version::parse("10.0.0").unwrap(),
+            ),
+            integrity: "sha512-cloud".into(),
+            tarball_url: String::new(),
+            deps: vec![],
+            peer_deps: vec![],
+            direct: true,
+            dev: false,
+        }],
+    };
+
+    write_web_lockfile_with_state(dir.path(), &graph, "https://registry.npmjs.org").unwrap();
+    let written = mgc_lockfile::parser::load_lockfile(&path).unwrap();
+    assert!(written.packages.iter().any(|package| {
+        package.owner_core.as_deref() == Some("web") && package.name == "react"
+    }));
+    assert!(written.packages.iter().any(|package| {
+        package.owner_core.as_deref() == Some("clo") && package.name == "constructs"
+    }));
+}
+
+#[cfg(unix)]
+#[test]
+fn web_lock_writer_refuses_symlink_without_touching_target() {
+    use std::os::unix::fs::symlink;
+
+    let dir = tempdir_real().unwrap();
+    let target = dir.path().join("external.lock");
+    let link = dir.path().join("mgc.lock");
+    let original = b"untrusted target";
+    std::fs::write(&target, original).unwrap();
+    symlink(&target, &link).unwrap();
+    let graph = ResolvedGraph::empty();
+
+    assert!(
+        write_web_lockfile_with_state(dir.path(), &graph, "https://registry.npmjs.org").is_err()
+    );
+    assert_eq!(std::fs::read(&target).unwrap(), original);
+    assert!(
+        std::fs::symlink_metadata(link)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+}
+
+#[test]
+fn web_lock_reader_rejects_oversized_lockfile() {
+    let dir = tempdir_real().unwrap();
+    std::fs::write(
+        dir.path().join("mgc.lock"),
+        vec![b'x'; 10 * 1024 * 1024 + 1],
+    )
+    .unwrap();
+
+    let error = read_web_lockfile_checked(dir.path()).unwrap_err();
+
+    assert!(error.to_string().contains("too large"));
+}
+
+#[cfg(unix)]
+#[test]
+fn web_lock_reader_refuses_symlinked_lockfile() {
+    use std::os::unix::fs::symlink;
+
+    let dir = tempdir_real().unwrap();
+    let target = dir.path().join("external.lock");
+    std::fs::write(&target, "version = \"3\"\n").unwrap();
+    symlink(&target, dir.path().join("mgc.lock")).unwrap();
+
+    let error = read_web_lockfile_checked(dir.path()).unwrap_err();
+
+    assert!(error.to_string().contains("symlink"));
+    assert_eq!(
+        std::fs::read_to_string(target).unwrap(),
+        "version = \"3\"\n"
+    );
+}
+
 #[tokio::test]
 async fn test_install_materializes_node_modules_bin_links() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     std::fs::write(
         dir.path().join("package.json"),
         serde_json::json!({
@@ -327,7 +1043,7 @@ async fn test_install_materializes_node_modules_bin_links() {
         }],
     };
 
-    let adapter = WebAdapter::new();
+    let adapter = WebAdapter::new().unwrap();
     adapter
         .install(&graph, dir.path(), InstallOptions::default())
         .await
@@ -339,7 +1055,7 @@ async fn test_install_materializes_node_modules_bin_links() {
 
 #[tokio::test]
 async fn test_resolve_populates_tarball_url_and_integrity_from_shared_metadata() {
-    let shared = tempfile::tempdir().unwrap();
+    let shared = tempdir_real().unwrap();
 
     seed_shared_metadata(
         shared.path(),
@@ -392,7 +1108,7 @@ async fn test_resolve_populates_tarball_url_and_integrity_from_shared_metadata()
 
 #[tokio::test]
 async fn test_resolve_uses_shared_resolution_cache_when_registry_is_unavailable() {
-    let shared = tempfile::tempdir().unwrap();
+    let shared = tempdir_real().unwrap();
     let registry_url = "http://127.0.0.1:9";
     let cache = SharedWebCache {
         root: shared.path().to_path_buf(),
@@ -435,9 +1151,137 @@ async fn test_resolve_uses_shared_resolution_cache_when_registry_is_unavailable(
     assert_eq!(resolved.packages[0].integrity, "sha512-react");
 }
 
+#[tokio::test]
+async fn test_resolve_bypasses_shared_cache_when_minimum_age_is_active() {
+    let shared = tempdir_real().unwrap();
+    let registry_url = "http://127.0.0.1:9";
+    let cache = SharedWebCache {
+        root: shared.path().to_path_buf(),
+    };
+    let mut manifest = Manifest::new("demo-age", mgc_types::ecosystem::Ecosystem::Web);
+    manifest.add_dep(
+        DependencySpec::new(
+            PackageName::new("react").unwrap(),
+            VersionRange::parse("^18.2.0").unwrap(),
+        ),
+        false,
+        false,
+        false,
+    );
+    let graph = ResolvedGraph {
+        packages: vec![ResolvedPackage {
+            id: PackageId::new(
+                PackageName::new("react").unwrap(),
+                Version::parse("18.2.0").unwrap(),
+            ),
+            integrity: "sha512-stale-age-unverified".to_string(),
+            tarball_url: "https://registry.example.test/react-18.2.0.tgz".to_string(),
+            deps: vec![],
+            peer_deps: vec![],
+            direct: true,
+            dev: false,
+        }],
+    };
+    let key = manifest_resolution_cache_key(&manifest, registry_url);
+    cache.write_resolution(&key, registry_url, &graph).unwrap();
+
+    let adapter = WebAdapter::with_registry_and_shared_cache(
+        registry_url.to_string(),
+        shared.path().to_path_buf(),
+    );
+    adapter.provider.set_age_policy(Some(AgePolicy {
+        cutoff_hours: 24,
+        allow_missing_time: false,
+    }));
+
+    let error = adapter.resolve(&manifest).await.unwrap_err();
+    assert!(
+        error.to_string().contains("127.0.0.1:9") || error.to_string().contains("offline mode"),
+        "active age gate must not reuse an unverified cached graph: {error}"
+    );
+}
+
+#[tokio::test]
+async fn test_resolve_does_not_reuse_legacy_resolution_cache_schema() {
+    use sha2::{Digest, Sha256};
+
+    let shared = tempdir_real().unwrap();
+    let registry_url = "http://127.0.0.1:9";
+    let cache = SharedWebCache {
+        root: shared.path().to_path_buf(),
+    };
+    let mut manifest = Manifest::new("demo", mgc_types::ecosystem::Ecosystem::Web);
+    manifest.add_dep(
+        DependencySpec::new(
+            PackageName::new("react").unwrap(),
+            VersionRange::parse("^18.2.0").unwrap(),
+        ),
+        false,
+        false,
+        false,
+    );
+
+    let mut entries = Vec::new();
+    for (group, deps) in manifest.dep_groups() {
+        for dep in deps {
+            entries.push(format!(
+                "{}\0{}\0{}\0{}\0{}\0{}",
+                group,
+                dep.name.as_str(),
+                dep.range.as_str(),
+                dep.dev,
+                dep.optional,
+                dep.peer
+            ));
+        }
+    }
+    entries.sort_unstable();
+    let stale_graph = ResolvedGraph {
+        packages: vec![ResolvedPackage {
+            id: PackageId::new(
+                PackageName::new("react").unwrap(),
+                Version::parse("18.2.0").unwrap(),
+            ),
+            integrity: "sha512-legacy-cache".to_string(),
+            tarball_url: "https://registry.example.test/legacy-react.tgz".to_string(),
+            deps: vec![],
+            peer_deps: vec![],
+            direct: true,
+            dev: false,
+        }],
+    };
+    for legacy_domain in [
+        b"magicore-web-resolution-v1\0".as_slice(),
+        b"magicore-web-resolution-v2\0".as_slice(),
+    ] {
+        let mut hasher = Sha256::new();
+        hasher.update(legacy_domain);
+        hasher.update(registry_url.as_bytes());
+        hasher.update(b"\0");
+        for entry in &entries {
+            hasher.update(entry.as_bytes());
+            hasher.update(b"\0");
+        }
+        let legacy_key = format!("{:x}", hasher.finalize());
+        cache
+            .write_resolution(&legacy_key, registry_url, &stale_graph)
+            .unwrap();
+    }
+
+    let adapter = WebAdapter::with_registry_and_shared_cache(
+        registry_url.to_string(),
+        shared.path().to_path_buf(),
+    );
+    let result = adapter.resolve(&manifest).await;
+    assert!(
+        result.is_err(),
+        "legacy resolver cache must be invalidated after graph semantics change"
+    );
+}
+
 #[test]
 fn test_read_web_lockfile_checked_rejects_checksum_mismatch() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     let lock = Lockfile::new();
     let json = serde_json::to_string_pretty(&lock).unwrap();
     std::fs::write(dir.path().join("mgc.lock"), json).unwrap();
@@ -450,7 +1294,7 @@ fn test_read_web_lockfile_checked_rejects_checksum_mismatch() {
 
 #[test]
 fn test_read_web_lockfile_checked_rejects_malformed_lockfile() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     std::fs::write(dir.path().join("mgc.lock"), "not = [valid").unwrap();
 
     let err = read_web_lockfile_checked(dir.path()).unwrap_err();
@@ -463,7 +1307,7 @@ fn test_read_web_lockfile_checked_rejects_malformed_lockfile() {
 
 #[test]
 fn test_pending_scaffold_lockfile_without_checksum_is_allowed() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     std::fs::write(
         dir.path().join("mgc.lock"),
         r#"{
@@ -486,11 +1330,11 @@ fn test_pending_scaffold_lockfile_without_checksum_is_allowed() {
 #[test]
 fn test_lifecycle_scripts_are_opt_in() {
     let old = std::env::var_os("MAGICORE_WEB_ALLOW_SCRIPTS");
-    std::env::remove_var("MAGICORE_WEB_ALLOW_SCRIPTS");
+    unsafe { std::env::remove_var("MAGICORE_WEB_ALLOW_SCRIPTS") };
     assert!(!should_run_lifecycle_scripts(false, false));
     assert!(should_run_lifecycle_scripts(false, true));
 
-    std::env::set_var("MAGICORE_WEB_ALLOW_SCRIPTS", "1");
+    unsafe { std::env::set_var("MAGICORE_WEB_ALLOW_SCRIPTS", "1") };
     assert!(should_run_lifecycle_scripts(false, false));
     assert!(!should_run_lifecycle_scripts(true, true));
     restore_env_var("MAGICORE_WEB_ALLOW_SCRIPTS", old);
@@ -559,7 +1403,7 @@ fn test_manifest_resolution_cache_key_ignores_dep_order_and_app_name() {
 
 #[test]
 fn test_prune_shared_cache_to_quota_removes_prunable_entries() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     let cache_dir = dir.path().join("cache").join("react");
     let resolution_dir = dir.path().join("resolutions");
     std::fs::create_dir_all(&cache_dir).unwrap();
@@ -578,7 +1422,7 @@ fn test_prune_shared_cache_to_quota_removes_prunable_entries() {
 
 #[test]
 fn test_prune_shared_cache_to_quota_does_not_delete_unmarked_package_json_dirs() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     let nested = dir.path().join("packages").join("manual").join("nested");
     let cache_dir = dir.path().join("cache").join("react");
     std::fs::create_dir_all(&nested).unwrap();
@@ -596,8 +1440,8 @@ fn test_prune_shared_cache_to_quota_does_not_delete_unmarked_package_json_dirs()
 
 #[test]
 fn test_prune_shared_cache_to_quota_keeps_pinned_package_roots() {
-    let dir = tempfile::tempdir().unwrap();
-    let project = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
+    let project = tempdir_real().unwrap();
     let package_root = dir
         .path()
         .join("packages")
@@ -630,7 +1474,7 @@ fn test_prune_shared_cache_to_quota_keeps_pinned_package_roots() {
 
 #[test]
 fn test_project_cas_prune_keeps_hardlinked_live_blobs() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = tempdir_real().unwrap();
     let cas = temp.path().join("cas");
     let blob = cas.join("ab").join("live");
     let orphan = cas.join("cd").join("orphan");
@@ -650,9 +1494,8 @@ fn test_project_cas_prune_keeps_hardlinked_live_blobs() {
 }
 
 #[test]
-fn test_backing_link_falls_back_to_hardlink_when_reflink_disabled() {
-    use std::os::unix::fs::MetadataExt;
-    let temp = tempfile::tempdir().unwrap();
+fn test_backing_link_fallback_isolated_when_reflink_disabled() {
+    let temp = tempdir_real().unwrap();
     let source = temp.path().join("source.txt");
     let target = temp.path().join("target.txt");
     std::fs::write(&source, b"payload-123").unwrap();
@@ -662,16 +1505,27 @@ fn test_backing_link_falls_back_to_hardlink_when_reflink_disabled() {
 
     assert!(target.exists());
     assert_eq!(std::fs::read(&target).unwrap(), b"payload-123");
+
+    // Materialized dependency files must not alias the shared extracted cache.
+    // File dependency đã materialize không được dùng chung inode với cache.
+    std::fs::write(&source, b"updated-through-source").unwrap();
     assert_eq!(
-        std::fs::metadata(&source).unwrap().nlink(),
-        2,
-        "disabled reflink must produce a real hardlink (shared inode)"
+        std::fs::read(&target).unwrap(),
+        b"payload-123",
+        "a source mutation must not alter the materialized project copy"
+    );
+
+    std::fs::write(&target, b"project-local-edit").unwrap();
+    assert_eq!(
+        std::fs::read(&source).unwrap(),
+        b"updated-through-source",
+        "a project-local edit must not poison the shared extracted cache"
     );
 }
 
 #[test]
 fn test_backing_link_rematerializes_stale_target() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = tempdir_real().unwrap();
     let source = temp.path().join("source.txt");
     let target = temp.path().join("target.txt");
     std::fs::write(&source, b"fresh-content").unwrap();
@@ -684,8 +1538,46 @@ fn test_backing_link_rematerializes_stale_target() {
 }
 
 #[test]
+fn streamed_tarball_staging_is_unique_and_publish_is_first_writer_wins() {
+    let dir = tempdir_real().unwrap();
+    let final_path = dir.path().join("pkg.tgz");
+    let payload = b"complete streamed package";
+    let integrity = compute_tarball_integrity(payload);
+    let barrier = Arc::new(std::sync::Barrier::new(12));
+    let staging_paths = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+    let writers = (0..12)
+        .map(|_| {
+            let final_path = final_path.clone();
+            let barrier = Arc::clone(&barrier);
+            let staging_paths = Arc::clone(&staging_paths);
+            let integrity = integrity.clone();
+            std::thread::spawn(move || {
+                let staging = unique_tarball_staging_path(&final_path);
+                std::fs::write(&staging, payload).unwrap();
+                staging_paths.lock().unwrap().push(staging.clone());
+                barrier.wait();
+                publish_downloaded_tarball(&staging, &final_path, &integrity)
+            })
+        })
+        .collect::<Vec<_>>();
+
+    for writer in writers {
+        writer.join().unwrap().unwrap();
+    }
+
+    let paths = staging_paths.lock().unwrap();
+    assert_eq!(
+        paths.iter().collect::<std::collections::HashSet<_>>().len(),
+        12
+    );
+    assert!(paths.iter().all(|path| !path.exists()));
+    assert_eq!(std::fs::read(final_path).unwrap(), payload);
+}
+
+#[test]
 fn test_maybe_prune_skips_quota_scan_when_gc_not_due() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     let cache_dir = dir.path().join("cache").join("react");
     std::fs::create_dir_all(&cache_dir).unwrap();
     let tarball_path = cache_dir.join("18.2.0.tgz");
@@ -706,7 +1598,7 @@ fn test_maybe_prune_skips_quota_scan_when_gc_not_due() {
 
 #[tokio::test]
 async fn test_alias_dependency_uses_target_metadata_and_range() {
-    let shared = tempfile::tempdir().unwrap();
+    let shared = tempdir_real().unwrap();
 
     seed_shared_metadata(
         shared.path(),
@@ -773,14 +1665,93 @@ async fn test_alias_dependency_uses_target_metadata_and_range() {
     assert_eq!(deps[0].spec, "^6.0.1");
 
     let versions = provider.get_versions(&deps[0].package).await.unwrap();
-    assert!(versions
-        .iter()
-        .any(|version| version.to_string() == "6.0.1"));
+    assert!(
+        versions
+            .iter()
+            .any(|version| version.to_string() == "6.0.1")
+    );
+}
+
+#[tokio::test]
+async fn npm_optional_peer_dependencies_are_not_auto_installed() {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind local registry for peer metadata regression");
+    let addr = listener.local_addr().unwrap();
+    let body = r#"{
+        "name":"angular-build-like",
+        "versions":{"1.0.0":{
+            "version":"1.0.0",
+            "dependencies":{"required-runtime":"^1.0.0"},
+            "peerDependencies":{
+                "optional-browser":"^5.0.0",
+                "required-plugin":"^2.0.0"
+            },
+            "peerDependenciesMeta":{"optional-browser":{"optional":true}}
+        }},
+        "dist-tags":{"latest":"1.0.0"}
+    }"#;
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut request = [0u8; 4096];
+        let _ = stream.read(&mut request).await.unwrap();
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        stream.write_all(response.as_bytes()).await.unwrap();
+    });
+
+    let provider = NpmDependencyProvider::new(&format!("http://{addr}"), None, None);
+    let package_id = PackageId::new(
+        PackageName::new("angular-build-like").unwrap(),
+        Version::parse("1.0.0").unwrap(),
+    );
+    let mut names: Vec<_> = provider
+        .get_dependencies(&package_id)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|dependency| dependency.package.to_string())
+        .collect();
+    names.sort();
+    assert_eq!(names, ["required-plugin", "required-runtime"]);
+    server.await.unwrap();
+}
+
+#[test]
+fn test_shared_metadata_cache_ignores_pre_optional_peer_schema_records() {
+    let shared = tempdir_real().unwrap();
+    let cache = SharedWebCache {
+        root: shared.path().to_path_buf(),
+    };
+    let registry_url = "http://127.0.0.1:9";
+    let legacy_path = shared
+        .path()
+        .join("metadata")
+        .join(reg_key(registry_url))
+        .join("react")
+        .join("metadata.json");
+    std::fs::create_dir_all(legacy_path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &legacy_path,
+        r#"{"fetched_at":1,"etag":"legacy","metadata":{"name":"react","description":null,"versions":{"18.2.0":{"version":"18.2.0","peerDependencies":{"optional-peer":"*"}}},"dist-tags":{"latest":"18.2.0"}}}"#,
+    )
+    .unwrap();
+
+    assert!(
+        cache
+            .read_metadata("react", registry_url)
+            .unwrap()
+            .is_none(),
+        "legacy metadata lacks peerDependenciesMeta and must be a cache miss"
+    );
 }
 
 #[tokio::test]
 async fn test_load_metadata_persists_etag_after_initial_fetch() {
-    let shared = tempfile::tempdir().unwrap();
+    let shared = tempdir_real().unwrap();
     let Some(listener) = bind_test_listener().await else {
         return;
     };
@@ -798,10 +1769,10 @@ async fn test_load_metadata_persists_etag_after_initial_fetch() {
             let _ = stream.read(&mut buf).await;
             let body = r#"{"name":"react","description":null,"versions":{"18.2.0":{"version":"18.2.0","dependencies":null,"optionalDependencies":null,"os":null,"cpu":null,"dist":{"tarball":"http://example.test/react.tgz","integrity":"sha512-react"}}},"dist-tags":{"latest":"18.2.0"}}"#;
             let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nETag: \"react-v1\"\r\nContent-Length: {}\r\n\r\n{}",
-                    body.len(),
-                    body
-                );
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nETag: \"react-v1\"\r\nContent-Length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            );
             let _ = stream.write_all(response.as_bytes()).await;
         }
     });
@@ -821,6 +1792,7 @@ async fn test_load_metadata_persists_etag_after_initial_fetch() {
         shared
             .path()
             .join("metadata")
+            .join("v2")
             .join(reg_key(&format!("http://{addr}")))
             .join("react")
             .join("metadata.json"),
@@ -877,7 +1849,7 @@ async fn test_prefetch_resolution_metadata_dedupes_aliases_by_source_package() {
 #[tokio::test]
 async fn test_stale_metadata_failure_sets_retry_cooldown() {
     let _env_guard = env_test_lock().lock().unwrap();
-    let shared = tempfile::tempdir().unwrap();
+    let shared = tempdir_real().unwrap();
     let Some(listener) = bind_test_listener().await else {
         return;
     };
@@ -938,7 +1910,7 @@ async fn test_stale_metadata_failure_sets_retry_cooldown() {
         .unwrap();
 
     let previous_max_stale = std::env::var_os("MAGICORE_WEB_METADATA_MAX_STALE_SECS");
-    std::env::set_var("MAGICORE_WEB_METADATA_MAX_STALE_SECS", "604800");
+    unsafe { std::env::set_var("MAGICORE_WEB_METADATA_MAX_STALE_SECS", "604800") };
 
     let first = load_metadata_by_name_with_fallback("react", &registry, Some(&cache))
         .await
@@ -965,7 +1937,7 @@ async fn test_stale_metadata_failure_sets_retry_cooldown() {
 #[tokio::test]
 async fn test_stale_metadata_too_old_is_not_reused_when_network_fails() {
     let _env_guard = env_test_lock().lock().unwrap();
-    let shared = tempfile::tempdir().unwrap();
+    let shared = tempdir_real().unwrap();
     let Some(listener) = bind_test_listener().await else {
         return;
     };
@@ -1012,7 +1984,7 @@ async fn test_stale_metadata_too_old_is_not_reused_when_network_fails() {
         .unwrap();
 
     let previous = std::env::var_os("MAGICORE_WEB_METADATA_MAX_STALE_SECS");
-    std::env::set_var("MAGICORE_WEB_METADATA_MAX_STALE_SECS", "60");
+    unsafe { std::env::set_var("MAGICORE_WEB_METADATA_MAX_STALE_SECS", "60") };
     cache
         .write_metadata_record(
             "react",
@@ -1029,15 +2001,16 @@ async fn test_stale_metadata_too_old_is_not_reused_when_network_fails() {
         .unwrap_err();
     restore_env_var("MAGICORE_WEB_METADATA_MAX_STALE_SECS", previous);
 
-    assert!(err
-        .to_string()
-        .contains("cached metadata is too old to reuse"));
+    assert!(
+        err.to_string()
+            .contains("cached metadata is too old to reuse")
+    );
 }
 
 #[tokio::test]
 async fn test_retry_deferred_does_not_bypass_max_stale_limit() {
     let _env_guard = env_test_lock().lock().unwrap();
-    let shared = tempfile::tempdir().unwrap();
+    let shared = tempdir_real().unwrap();
     let registry = native::npm_registry::NpmRegistry::new("http://127.0.0.1:9");
     let cache = SharedWebCache {
         root: shared.path().to_path_buf(),
@@ -1066,7 +2039,7 @@ async fn test_retry_deferred_does_not_bypass_max_stale_limit() {
         .unwrap();
 
     let previous = std::env::var_os("MAGICORE_WEB_METADATA_MAX_STALE_SECS");
-    std::env::set_var("MAGICORE_WEB_METADATA_MAX_STALE_SECS", "60");
+    unsafe { std::env::set_var("MAGICORE_WEB_METADATA_MAX_STALE_SECS", "60") };
     cache
         .write_metadata_record(
             "react",
@@ -1083,16 +2056,17 @@ async fn test_retry_deferred_does_not_bypass_max_stale_limit() {
         .unwrap_err();
     restore_env_var("MAGICORE_WEB_METADATA_MAX_STALE_SECS", previous);
 
-    assert!(err
-        .to_string()
-        .contains("cached metadata is too old to reuse"));
+    assert!(
+        err.to_string()
+            .contains("cached metadata is too old to reuse")
+    );
 }
 
 #[tokio::test]
 async fn test_add_uses_shared_metadata_cache_when_registry_is_unavailable() {
-    let shared = tempfile::tempdir().unwrap();
+    let shared = tempdir_real().unwrap();
 
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     std::fs::write(
         dir.path().join("package.json"),
         serde_json::json!({
@@ -1132,8 +2106,8 @@ async fn test_add_uses_shared_metadata_cache_when_registry_is_unavailable() {
         "http://127.0.0.1:9".into(),
         shared.path().to_path_buf(),
     );
-    let package_id = adapter
-        .add(
+    let prepared = adapter
+        .prepare_add(
             dir.path(),
             &PackageName::new("react").unwrap(),
             None,
@@ -1141,15 +2115,16 @@ async fn test_add_uses_shared_metadata_cache_when_registry_is_unavailable() {
         )
         .await
         .unwrap();
+    let package_id = prepared.id;
 
     assert_eq!(package_id.version().to_string(), "18.2.0");
     let package_json = std::fs::read_to_string(dir.path().join("package.json")).unwrap();
-    assert!(package_json.contains("\"react\": \"^18.2.0\""));
+    assert!(!package_json.contains("\"react\": \"^18.2.0\""));
 }
 
 #[tokio::test]
 async fn test_parse_manifest_ignores_workspace_protocol_dependencies() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     std::fs::write(
         dir.path().join("package.json"),
         serde_json::json!({
@@ -1164,15 +2139,121 @@ async fn test_parse_manifest_ignores_workspace_protocol_dependencies() {
     )
     .unwrap();
 
-    let adapter = WebAdapter::new();
+    let adapter = WebAdapter::new().unwrap();
     let manifest = adapter.parse_manifest(dir.path()).await.unwrap();
     assert!(manifest.find_dep("react").is_some());
     assert!(manifest.find_dep("@core/shared").is_none());
 }
 
+#[test]
+fn web_manifest_writer_preserves_workspace_protocol_dependencies() {
+    let dir = tempdir_real().unwrap();
+    let package_path = dir.path().join("package.json");
+    std::fs::write(
+        &package_path,
+        serde_json::json!({
+            "name": "frontend",
+            "version": "0.1.0",
+            "dependencies": {
+                "@core/shared": "workspace:*",
+                "react": "^18.2.0"
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let manifest = parse_manifest(dir.path()).unwrap();
+
+    write_manifest(dir.path(), &manifest).unwrap();
+
+    let package: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(package_path).unwrap()).unwrap();
+    assert_eq!(
+        package["dependencies"]["@core/shared"], "workspace:*",
+        "MGC writes must preserve workspace protocol entries outside its registry graph"
+    );
+    assert_eq!(package["dependencies"]["react"], "^18.2.0");
+}
+
+#[test]
+fn web_manifest_writer_refuses_registry_replacement_of_workspace_dependency() {
+    let dir = tempdir_real().unwrap();
+    let package_path = dir.path().join("package.json");
+    let original = serde_json::json!({
+        "name": "frontend",
+        "version": "0.1.0",
+        "dependencies": { "@core/shared": "workspace:*" }
+    })
+    .to_string();
+    std::fs::write(&package_path, &original).unwrap();
+    let mut manifest = Manifest::new("frontend", mgc_types::Ecosystem::Web);
+    manifest.add_dep(
+        DependencySpec::new(
+            PackageName::new("@core/shared").unwrap(),
+            VersionRange::parse("^1.0.0").unwrap(),
+        ),
+        false,
+        false,
+        false,
+    );
+
+    assert!(write_manifest(dir.path(), &manifest).is_err());
+    assert_eq!(
+        std::fs::read_to_string(package_path).unwrap(),
+        original,
+        "source conversion needs an explicit operation and cannot be silently accepted"
+    );
+}
+
+#[test]
+fn web_manifest_writer_does_not_replace_malformed_existing_json() {
+    let dir = tempdir_real().unwrap();
+    let package_path = dir.path().join("package.json");
+    let malformed = b"{ this is not package json";
+    std::fs::write(&package_path, malformed).unwrap();
+    let manifest = Manifest::new("frontend", mgc_types::Ecosystem::Web);
+
+    let error = write_manifest(dir.path(), &manifest)
+        .expect_err("invalid existing package metadata must not fall back to an empty manifest");
+
+    assert!(error.to_string().contains("read existing package.json"));
+    assert_eq!(std::fs::read(package_path).unwrap(), malformed);
+}
+
+#[test]
+fn web_manifest_writer_can_atomically_create_a_missing_package_json() {
+    let dir = tempdir_real().unwrap();
+    let manifest = Manifest::new("new-web-project", mgc_types::Ecosystem::Web);
+
+    write_manifest(dir.path(), &manifest).unwrap();
+
+    let parsed = parse_manifest(dir.path()).unwrap();
+    assert_eq!(parsed.name, "new-web-project");
+    assert!(dir.path().join("package.json").is_file());
+}
+
+#[cfg(unix)]
+#[test]
+fn web_manifest_writer_refuses_symlinked_package_json() {
+    use std::os::unix::fs::symlink;
+
+    let dir = tempdir_real().unwrap();
+    let outside = tempdir_real().unwrap();
+    let target = outside.path().join("package.json");
+    std::fs::write(&target, "{\"sentinel\":true}").unwrap();
+    symlink(&target, dir.path().join("package.json")).unwrap();
+    let manifest = Manifest::new("frontend", mgc_types::Ecosystem::Web);
+
+    assert!(write_manifest(dir.path(), &manifest).is_err());
+    assert_eq!(
+        std::fs::read_to_string(target).unwrap(),
+        "{\"sentinel\":true}"
+    );
+}
+
 #[tokio::test]
-async fn test_list_prefers_lockfile_state() {
-    let dir = tempfile::tempdir().unwrap();
+async fn test_list_uses_materialized_version_not_lock_pin_as_installed_state() {
+    let dir = tempdir_real().unwrap();
     std::fs::write(
         dir.path().join("package.json"),
         serde_json::json!({
@@ -1190,7 +2271,7 @@ async fn test_list_prefers_lockfile_state() {
     std::fs::create_dir_all(&package_dir).unwrap();
     std::fs::write(
         package_dir.join("package.json"),
-        "{\"name\":\"tailwindcss\",\"version\":\"4.3.2\"}",
+        "{\"name\":\"tailwindcss\",\"version\":\"4.3.3\"}",
     )
     .unwrap();
     std::fs::write(
@@ -1214,17 +2295,89 @@ async fn test_list_prefers_lockfile_state() {
     )
     .unwrap();
 
-    let adapter = WebAdapter::new();
+    let adapter = WebAdapter::new().unwrap();
     let installed = adapter.list(dir.path()).await.unwrap();
     assert_eq!(installed.len(), 1);
     assert_eq!(installed[0].id.name_str(), "tailwindcss");
-    assert_eq!(installed[0].id.version().to_string(), "4.3.2");
-    assert_eq!(installed[0].integrity.as_deref(), Some("sha256-test"));
+    assert_eq!(installed[0].id.version().to_string(), "4.3.3");
+    assert_eq!(installed[0].integrity, None);
+}
+
+#[tokio::test]
+async fn test_list_fails_closed_when_installed_version_is_unknown() {
+    let dir = tempdir_real().unwrap();
+    std::fs::write(
+        dir.path().join("package.json"),
+        serde_json::json!({"name":"demo","version":"0.1.0","dependencies":{"mystery":"^1.0.0"}})
+            .to_string(),
+    )
+    .unwrap();
+    let package_dir = dir.path().join("node_modules/mystery");
+    std::fs::create_dir_all(&package_dir).unwrap();
+    std::fs::write(package_dir.join("package.json"), r#"{"name":"mystery"}"#).unwrap();
+
+    let error = WebAdapter::new()
+        .unwrap()
+        .list(dir.path())
+        .await
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("cannot verify the installed version")
+    );
+}
+
+#[tokio::test]
+async fn test_list_does_not_guess_installed_version_from_lockfile() {
+    let dir = tempdir_real().unwrap();
+    std::fs::write(
+        dir.path().join("package.json"),
+        serde_json::json!({"name":"demo","version":"0.1.0","dependencies":{"mystery":"^1.0.0"}})
+            .to_string(),
+    )
+    .unwrap();
+    let package_dir = dir.path().join("node_modules/mystery");
+    std::fs::create_dir_all(&package_dir).unwrap();
+    std::fs::write(package_dir.join("package.json"), r#"{"name":"mystery"}"#).unwrap();
+    std::fs::write(
+        dir.path().join("mgc.lock"),
+        serde_json::json!({
+            "version": "2",
+            "metadata": {"generated_at":"2024-01-01T00:00:00Z","generator":"mgc/1.0.0","lockfile_hash":""},
+            "package": [{"name":"mystery","version":"1.2.3","resolved":"https://registry.npmjs.org/mystery/-/mystery-1.2.3.tgz","integrity":"sha256-test","dependencies":[]}]
+        }).to_string(),
+    ).unwrap();
+
+    let error = WebAdapter::new()
+        .unwrap()
+        .list(dir.path())
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("a lock pin alone is not proof"));
+}
+
+#[test]
+fn add_range_does_not_masquerade_as_resolved_version() {
+    assert!(
+        super::exact_version_from_range(&mgc_types::VersionRange::parse("^1.2.3").unwrap())
+            .is_none()
+    );
+    assert!(
+        super::exact_version_from_range(&mgc_types::VersionRange::parse(">=1.2.3").unwrap())
+            .is_none()
+    );
+    assert_eq!(
+        super::exact_version_from_range(&mgc_types::VersionRange::parse("1.2.3").unwrap())
+            .unwrap()
+            .to_string(),
+        "1.2.3"
+    );
 }
 
 #[tokio::test]
 async fn test_install_multiple_packages_from_cache() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     std::fs::write(
         dir.path().join("package.json"),
         serde_json::json!({
@@ -1294,7 +2447,7 @@ async fn test_install_multiple_packages_from_cache() {
         ],
     };
 
-    let adapter = WebAdapter::new();
+    let adapter = WebAdapter::new().unwrap();
     let summary = adapter
         .install(&graph, dir.path(), InstallOptions::default())
         .await
@@ -1302,10 +2455,11 @@ async fn test_install_multiple_packages_from_cache() {
     assert_eq!(summary.added.len(), 2);
     assert!(summary.bytes_from_cache > 0);
     assert!(dir.path().join("node_modules/react/index.js").exists());
-    assert!(dir
-        .path()
-        .join("node_modules/tailwindcss/index.css")
-        .exists());
+    assert!(
+        dir.path()
+            .join("node_modules/tailwindcss/index.css")
+            .exists()
+    );
 
     let installed = adapter.list(dir.path()).await.unwrap();
     assert_eq!(installed.len(), 2);
@@ -1313,7 +2467,7 @@ async fn test_install_multiple_packages_from_cache() {
 
 #[tokio::test]
 async fn test_install_finalizes_lock_and_cleans_staging_tmp() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     std::fs::write(
         dir.path().join("package.json"),
         serde_json::json!({
@@ -1383,21 +2537,24 @@ async fn test_install_finalizes_lock_and_cleans_staging_tmp() {
         ],
     };
 
-    let adapter = WebAdapter::new();
+    let adapter = WebAdapter::new().unwrap();
     let summary = adapter
         .install(&graph, dir.path(), InstallOptions::default())
         .await
         .unwrap();
     assert_eq!(summary.added.len(), 2);
     assert!(dir.path().join("node_modules/react/index.js").exists());
-    assert!(dir
-        .path()
-        .join("node_modules/@types/react/index.d.ts")
-        .exists());
+    assert!(
+        dir.path()
+            .join("node_modules/@types/react/index.d.ts")
+            .exists()
+    );
 
     let lock = std::fs::read_to_string(dir.path().join("mgc.lock")).unwrap();
     let parsed: Lockfile = mgc_lockfile::parse_lockfile(&lock).unwrap();
-    assert_eq!(parsed.version, "2");
+    // Deliberate v3 bump (Phase 1): the web writer now emits schema v3.
+    // Nâng lên v3 có chủ đích (Phase 1): web writer giờ ghi schema v3.
+    assert_eq!(parsed.version, "3");
     assert_eq!(parsed.packages.len(), 2);
 
     let tmp_dir = dir
@@ -1422,7 +2579,12 @@ async fn test_install_finalizes_lock_and_cleans_staging_tmp() {
 
 #[tokio::test]
 async fn test_install_uses_cache_when_registry_is_unavailable() {
-    let dir = tempfile::tempdir().unwrap();
+    // Loopback http tarballs require explicit opt-in (default deny) —
+    // hold the env lock so parallel tests never observe a torn value.
+    let _env_guard = env_test_lock().lock().unwrap();
+    let old_insecure = std::env::var_os("MAGICORE_WEB_ALLOW_INSECURE_LOCALHOST");
+    unsafe { std::env::set_var("MAGICORE_WEB_ALLOW_INSECURE_LOCALHOST", "1") };
+    let dir = tempdir_real().unwrap();
     std::fs::write(
         dir.path().join("package.json"),
         serde_json::json!({
@@ -1454,7 +2616,7 @@ async fn test_install_uses_cache_when_registry_is_unavailable() {
         }],
     };
 
-    let adapter = WebAdapter::with_registry("http://127.0.0.1:9".into());
+    let adapter = WebAdapter::with_registry("http://127.0.0.1:9".into()).unwrap();
     let summary = adapter
         .install(
             &graph,
@@ -1468,13 +2630,14 @@ async fn test_install_uses_cache_when_registry_is_unavailable() {
         .unwrap();
     assert_eq!(summary.added, vec![package_id]);
     assert!(summary.bytes_from_cache > 0);
+    restore_env_var("MAGICORE_WEB_ALLOW_INSECURE_LOCALHOST", old_insecure);
 }
 
 #[tokio::test]
 async fn test_install_uses_shared_tarball_cache_for_new_project() {
-    let shared = tempfile::tempdir().unwrap();
+    let shared = tempdir_real().unwrap();
 
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     std::fs::write(
         dir.path().join("package.json"),
         serde_json::json!({
@@ -1527,19 +2690,21 @@ async fn test_install_uses_shared_tarball_cache_for_new_project() {
     assert_eq!(summary.added, vec![react.clone()]);
     assert!(summary.bytes_from_cache > 0);
     assert!(dir.path().join("node_modules/react/index.js").exists());
-    assert!(shared
-        .path()
-        .join("cache")
-        .join("react")
-        .join("18.2.0.tgz")
-        .exists());
+    assert!(
+        shared
+            .path()
+            .join("cache")
+            .join("react")
+            .join("18.2.0.tgz")
+            .exists()
+    );
 }
 
 #[tokio::test]
 async fn test_install_recovers_from_corrupted_local_cache_using_shared_cache() {
-    let shared = tempfile::tempdir().unwrap();
+    let shared = tempdir_real().unwrap();
 
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     std::fs::write(
         dir.path().join("package.json"),
         serde_json::json!({
@@ -1602,7 +2767,7 @@ async fn test_install_recovers_from_corrupted_local_cache_using_shared_cache() {
 
 #[tokio::test]
 async fn test_install_fails_when_registry_is_unavailable_and_cache_is_missing() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     std::fs::write(
         dir.path().join("package.json"),
         serde_json::json!({
@@ -1642,7 +2807,7 @@ async fn test_install_fails_when_registry_is_unavailable_and_cache_is_missing() 
 
 #[tokio::test]
 async fn test_install_failure_does_not_materialize_partial_node_modules() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     std::fs::write(
         dir.path().join("package.json"),
         serde_json::json!({
@@ -1710,13 +2875,19 @@ async fn test_install_failure_does_not_materialize_partial_node_modules() {
 
     let lock = std::fs::read_to_string(dir.path().join("mgc.lock")).unwrap();
     let parsed: Lockfile = mgc_lockfile::parse_lockfile(&lock).unwrap();
-    assert_eq!(parsed.version, "2");
+    // Deliberate v3 bump (Phase 1): the web writer now emits schema v3.
+    // Nâng lên v3 có chủ đích (Phase 1): web writer giờ ghi schema v3.
+    assert_eq!(parsed.version, "3");
     assert_eq!(parsed.packages.len(), 2);
 }
 
 #[tokio::test]
 async fn test_install_skips_when_matching_package_is_already_materialized() {
-    let dir = tempfile::tempdir().unwrap();
+    // Same loopback opt-in as the cache test above (default deny).
+    let _env_guard = env_test_lock().lock().unwrap();
+    let old_insecure = std::env::var_os("MAGICORE_WEB_ALLOW_INSECURE_LOCALHOST");
+    unsafe { std::env::set_var("MAGICORE_WEB_ALLOW_INSECURE_LOCALHOST", "1") };
+    let dir = tempdir_real().unwrap();
     std::fs::write(
         dir.path().join("package.json"),
         serde_json::json!({
@@ -1755,7 +2926,7 @@ async fn test_install_skips_when_matching_package_is_already_materialized() {
         }],
     };
 
-    let adapter = WebAdapter::with_registry("http://127.0.0.1:9".into());
+    let adapter = WebAdapter::with_registry("http://127.0.0.1:9".into()).unwrap();
     let summary = adapter
         .install(
             &graph,
@@ -1775,13 +2946,16 @@ async fn test_install_skips_when_matching_package_is_already_materialized() {
 
     let lock = std::fs::read_to_string(dir.path().join("mgc.lock")).unwrap();
     let parsed: Lockfile = mgc_lockfile::parse_lockfile(&lock).unwrap();
-    assert_eq!(parsed.version, "2");
+    // Deliberate v3 bump (Phase 1): the web writer now emits schema v3.
+    // Nâng lên v3 có chủ đích (Phase 1): web writer giờ ghi schema v3.
+    assert_eq!(parsed.version, "3");
     assert_eq!(parsed.packages[0].version, "4.4.3");
+    restore_env_var("MAGICORE_WEB_ALLOW_INSECURE_LOCALHOST", old_insecure);
 }
 
 #[tokio::test]
 async fn test_install_materializes_scoped_package() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     std::fs::write(
         dir.path().join("package.json"),
         serde_json::json!({
@@ -1823,31 +2997,33 @@ async fn test_install_materializes_scoped_package() {
         }],
     };
 
-    let adapter = WebAdapter::new();
+    let adapter = WebAdapter::new().unwrap();
     let summary = adapter
         .install(&graph, dir.path(), InstallOptions::default())
         .await
         .unwrap();
     assert_eq!(summary.added, vec![package_id]);
-    assert!(dir
-        .path()
-        .join("node_modules")
-        .join("@types")
-        .join("node")
-        .join("package.json")
-        .exists());
-    assert!(dir
-        .path()
-        .join("node_modules")
-        .join("@types")
-        .join("node")
-        .join("index.d.ts")
-        .exists());
+    assert!(
+        dir.path()
+            .join("node_modules")
+            .join("@types")
+            .join("node")
+            .join("package.json")
+            .exists()
+    );
+    assert!(
+        dir.path()
+            .join("node_modules")
+            .join("@types")
+            .join("node")
+            .join("index.d.ts")
+            .exists()
+    );
 }
 
 #[tokio::test]
 async fn test_install_materializes_nested_conflicting_dependency_versions() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     std::fs::write(
         dir.path().join("package.json"),
         serde_json::json!({
@@ -1957,7 +3133,7 @@ async fn test_install_materializes_nested_conflicting_dependency_versions() {
         ],
     };
 
-    let adapter = WebAdapter::new();
+    let adapter = WebAdapter::new().unwrap();
     adapter
         .install(&graph, dir.path(), InstallOptions::default())
         .await
@@ -1972,10 +3148,12 @@ async fn test_install_materializes_nested_conflicting_dependency_versions() {
         .join("semver");
     assert!(!dir.path().join("node_modules").join("semver").exists());
     assert!(nested_nuxt_semver.exists());
-    assert!(nested_nuxt_semver
-        .join("functions")
-        .join("satisfies.js")
-        .exists());
+    assert!(
+        nested_nuxt_semver
+            .join("functions")
+            .join("satisfies.js")
+            .exists()
+    );
     assert_eq!(
         installed_package_version(&nested_nuxt_semver)
             .unwrap()
@@ -1998,7 +3176,9 @@ async fn test_install_materializes_nested_conflicting_dependency_versions() {
 
 #[tokio::test]
 async fn test_install_retries_flaky_tarball_download() {
-    let dir = tempfile::tempdir().unwrap();
+    let _env_guard = env_test_lock().lock().unwrap();
+    let _allow_insecure = ScopedEnvVar::set("MAGICORE_WEB_ALLOW_INSECURE_LOCALHOST", "1");
+    let dir = tempdir_real().unwrap();
     std::fs::write(
         dir.path().join("package.json"),
         serde_json::json!({
@@ -2065,7 +3245,7 @@ async fn test_install_retries_flaky_tarball_download() {
         }],
     };
 
-    let adapter = WebAdapter::new();
+    let adapter = WebAdapter::new().unwrap();
     let summary = adapter
         .install(&graph, dir.path(), InstallOptions::default())
         .await
@@ -2077,8 +3257,8 @@ async fn test_install_retries_flaky_tarball_download() {
 #[cfg(unix)]
 #[tokio::test]
 async fn test_install_materialization_uses_store_links_from_cached_extract_root() {
-    let dir = tempfile::tempdir().unwrap();
-    let shared = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
+    let shared = tempdir_real().unwrap();
     std::fs::write(
         dir.path().join("package.json"),
         serde_json::json!({
@@ -2166,8 +3346,8 @@ async fn test_install_materialization_uses_store_links_from_cached_extract_root(
 #[cfg(unix)]
 #[tokio::test]
 async fn test_install_repairs_broken_store_links_when_shared_packages_are_deleted() {
-    let dir = tempfile::tempdir().unwrap();
-    let shared = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
+    let shared = tempdir_real().unwrap();
     std::fs::write(
         dir.path().join("package.json"),
         serde_json::json!({
@@ -2239,9 +3419,9 @@ async fn test_install_repairs_broken_store_links_when_shared_packages_are_delete
 
 #[tokio::test]
 async fn test_install_rebuilds_shared_extracted_root_when_marker_mismatches() {
-    let shared = tempfile::tempdir().unwrap();
+    let shared = tempdir_real().unwrap();
 
-    let first = tempfile::tempdir().unwrap();
+    let first = tempdir_real().unwrap();
     std::fs::write(
         first.path().join("package.json"),
         serde_json::json!({
@@ -2309,7 +3489,7 @@ async fn test_install_rebuilds_shared_extracted_root_when_marker_mismatches() {
     )
     .unwrap();
 
-    let second = tempfile::tempdir().unwrap();
+    let second = tempdir_real().unwrap();
     std::fs::write(
         second.path().join("package.json"),
         serde_json::json!({
@@ -2355,8 +3535,8 @@ async fn test_install_rebuilds_shared_extracted_root_when_marker_mismatches() {
 
 #[tokio::test]
 async fn test_install_rebuilds_cached_root_when_file_tree_is_incomplete() {
-    let shared = tempfile::tempdir().unwrap();
-    let project = tempfile::tempdir().unwrap();
+    let shared = tempdir_real().unwrap();
+    let project = tempdir_real().unwrap();
     let rollup = PackageId::new(
         PackageName::new("rollup").unwrap(),
         Version::parse("4.62.2").unwrap(),
@@ -2421,16 +3601,18 @@ async fn test_install_rebuilds_cached_root_when_file_tree_is_incomplete() {
         .await
         .unwrap();
 
-    assert!(project
-        .path()
-        .join("node_modules/rollup/dist/es/parseAst.js")
-        .exists());
+    assert!(
+        project
+            .path()
+            .join("node_modules/rollup/dist/es/parseAst.js")
+            .exists()
+    );
 }
 
 #[tokio::test]
-async fn test_install_rebuilds_schema_v2_root_when_marker_signature_is_missing() {
-    let shared = tempfile::tempdir().unwrap();
-    let project = tempfile::tempdir().unwrap();
+async fn test_install_rebuilds_legacy_root_when_marker_signature_is_missing() {
+    let shared = tempdir_real().unwrap();
+    let project = tempdir_real().unwrap();
     let entities = PackageId::new(
         PackageName::new("entities").unwrap(),
         Version::parse("7.0.1").unwrap(),
@@ -2488,19 +3670,18 @@ async fn test_install_rebuilds_schema_v2_root_when_marker_signature_is_missing()
         .await
         .unwrap();
 
-    assert!(project
-        .path()
-        .join("node_modules/entities/dist/commonjs/decode.js")
-        .exists());
+    assert!(
+        project
+            .path()
+            .join("node_modules/entities/dist/commonjs/decode.js")
+            .exists()
+    );
 }
 
 #[tokio::test]
-async fn test_full_cache_validation_rebuilds_v2_root_when_file_tree_is_incomplete() {
-    let old = std::env::var_os("MAGICORE_WEB_VALIDATE_EXTRACTED_CACHE");
-    std::env::set_var("MAGICORE_WEB_VALIDATE_EXTRACTED_CACHE", "1");
-
-    let shared = tempfile::tempdir().unwrap();
-    let project = tempfile::tempdir().unwrap();
+async fn test_default_cache_validation_rebuilds_v3_root_when_file_tree_is_incomplete() {
+    let shared = tempdir_real().unwrap();
+    let project = tempdir_real().unwrap();
     let rollup = PackageId::new(
         PackageName::new("rollup").unwrap(),
         Version::parse("4.62.2").unwrap(),
@@ -2561,11 +3742,97 @@ async fn test_full_cache_validation_rebuilds_v2_root_when_file_tree_is_incomplet
         .await
         .unwrap();
 
-    assert!(project
-        .path()
-        .join("node_modules/rollup/dist/es/parseAst.js")
-        .exists());
-    restore_env_var("MAGICORE_WEB_VALIDATE_EXTRACTED_CACHE", old);
+    assert!(
+        project
+            .path()
+            .join("node_modules/rollup/dist/es/parseAst.js")
+            .exists()
+    );
+}
+
+#[test]
+fn test_extracted_content_signature_detects_content_and_mode_mutation() {
+    let package = ResolvedPackage {
+        id: PackageId::new(
+            PackageName::new("content-check").unwrap(),
+            Version::parse("1.0.0").unwrap(),
+        ),
+        integrity: String::new(),
+        tarball_url: String::new(),
+        deps: vec![],
+        peer_deps: vec![],
+        direct: true,
+        dev: false,
+    };
+    let archive = build_tarball_bytes(&[
+        (
+            "package/package.json",
+            br#"{"name":"content-check","version":"1.0.0"}"#,
+        ),
+        ("package/index.js", b"const value = 'good';\n"),
+    ]);
+    let expected = expected_extracted_package_marker_from_bytes(&package, &archive).unwrap();
+    assert_eq!(expected.schema_version, 3);
+    let root = tempdir_real().unwrap();
+    std::fs::write(
+        root.path().join("package.json"),
+        br#"{"name":"content-check","version":"1.0.0"}"#,
+    )
+    .unwrap();
+    std::fs::write(root.path().join("index.js"), b"const value = 'good';\n").unwrap();
+    write_extracted_package_marker(root.path(), &expected).unwrap();
+
+    assert!(extracted_content_matches(root.path(), &expected).unwrap());
+    assert!(materialized_package_matches(root.path(), &package.id, Some(&expected)).unwrap());
+    std::fs::write(root.path().join("index.js"), b"const value = 'evil';\n").unwrap();
+
+    assert!(!extracted_content_matches(root.path(), &expected).unwrap());
+    assert!(!materialized_package_matches(root.path(), &package.id, Some(&expected)).unwrap());
+    std::fs::write(root.path().join("index.js"), b"const value = 'good';\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(
+            root.path().join("index.js"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        assert!(!extracted_content_matches(root.path(), &expected).unwrap());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn test_extracted_content_signature_rejects_symlink_files() {
+    let package = ResolvedPackage {
+        id: PackageId::new(
+            PackageName::new("symlink-check").unwrap(),
+            Version::parse("1.0.0").unwrap(),
+        ),
+        integrity: String::new(),
+        tarball_url: String::new(),
+        deps: vec![],
+        peer_deps: vec![],
+        direct: true,
+        dev: false,
+    };
+    let archive = build_tarball_bytes(&[
+        (
+            "package/package.json",
+            br#"{"name":"symlink-check","version":"1.0.0"}"#,
+        ),
+        ("package/index.js", b"module.exports = true;\n"),
+    ]);
+    let expected = expected_extracted_package_marker_from_bytes(&package, &archive).unwrap();
+    let root = tempdir_real().unwrap();
+    std::fs::write(
+        root.path().join("package.json"),
+        br#"{"name":"symlink-check","version":"1.0.0"}"#,
+    )
+    .unwrap();
+    std::os::unix::fs::symlink("/etc/hosts", root.path().join("index.js")).unwrap();
+
+    assert!(!extracted_content_matches(root.path(), &expected).unwrap());
 }
 
 fn seed_cached_tarball(root: &Path, pkg: &PackageId) -> String {
@@ -2613,6 +3880,7 @@ fn seed_shared_tarball_with_files(root: &Path, pkg: &PackageId, files: &[(&str, 
 fn seed_shared_metadata(root: &Path, package: &str, payload: serde_json::Value) {
     let path = root
         .join("metadata")
+        .join("v2")
         .join("http___127_0_0_1_9") // khớp reg_key của mock registry url (:9)
         .join(package)
         .join("metadata.json");
@@ -2647,9 +3915,9 @@ fn sri_sha512(data: &[u8]) -> String {
 
 fn restore_env_var(key: &str, previous: Option<std::ffi::OsString>) {
     if let Some(value) = previous {
-        std::env::set_var(key, value);
+        unsafe { std::env::set_var(key, value) };
     } else {
-        std::env::remove_var(key);
+        unsafe { std::env::remove_var(key) };
     }
 }
 
@@ -2659,16 +3927,34 @@ fn reg_key(url: &str) -> String {
         .collect()
 }
 
-fn env_test_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
+fn env_test_lock() -> &'static std::sync::Mutex<()> {
+    crate::environment_test_lock()
+}
+
+struct ScopedEnvVar {
+    key: &'static str,
+    previous: Option<std::ffi::OsString>,
+}
+
+impl ScopedEnvVar {
+    fn set(key: &'static str, value: &str) -> Self {
+        let previous = std::env::var_os(key);
+        unsafe { std::env::set_var(key, value) };
+        Self { key, previous }
+    }
+}
+
+impl Drop for ScopedEnvVar {
+    fn drop(&mut self) {
+        restore_env_var(self.key, self.previous.take());
+    }
 }
 
 #[test]
 fn test_prefetch_defaults_are_conservative() {
     let _guard = env_test_lock().lock().unwrap();
     let old_resolve = std::env::var_os("MAGICORE_WEB_RESOLVE_PREFETCH");
-    std::env::remove_var("MAGICORE_WEB_RESOLVE_PREFETCH");
+    unsafe { std::env::remove_var("MAGICORE_WEB_RESOLVE_PREFETCH") };
 
     assert!(!resolve_prefetch_enabled());
 
@@ -2679,7 +3965,7 @@ fn test_prefetch_defaults_are_conservative() {
 fn test_prefetch_flag_can_be_enabled_explicitly() {
     let _guard = env_test_lock().lock().unwrap();
     let old_resolve = std::env::var_os("MAGICORE_WEB_RESOLVE_PREFETCH");
-    std::env::set_var("MAGICORE_WEB_RESOLVE_PREFETCH", "1");
+    unsafe { std::env::set_var("MAGICORE_WEB_RESOLVE_PREFETCH", "1") };
 
     assert!(resolve_prefetch_enabled());
 
@@ -2736,6 +4022,7 @@ fn test_preferred_registry_version_prefers_stable_over_prerelease() {
                     dev_dependencies: None,
                     optional_dependencies: None,
                     peer_dependencies: None,
+                    peer_dependencies_meta: Default::default(),
                     os: None,
                     cpu: None,
                     dist: None,
@@ -2749,6 +4036,7 @@ fn test_preferred_registry_version_prefers_stable_over_prerelease() {
                     dev_dependencies: None,
                     optional_dependencies: None,
                     peer_dependencies: None,
+                    peer_dependencies_meta: Default::default(),
                     os: None,
                     cpu: None,
                     dist: None,
@@ -2770,7 +4058,7 @@ fn test_preferred_registry_version_prefers_stable_over_prerelease() {
 
 #[test]
 fn test_installed_package_version_reads_real_version() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     let pkg_dir = dir.path().join("node_modules").join("zod");
     std::fs::create_dir_all(&pkg_dir).unwrap();
     std::fs::write(
@@ -2794,6 +4082,26 @@ fn test_known_optional_native_binary_supported_only_matches_current_target() {
     ))
     .unwrap();
     let unsupported = PackageName::new("@esbuild/linux-s390x").unwrap();
+    let typescript_supported = PackageName::new(format!(
+        "@typescript/typescript-{}-{}",
+        NpmDependencyProvider::current_npm_os(),
+        NpmDependencyProvider::current_npm_cpu()
+    ))
+    .unwrap();
+    let typescript_unsupported_target = if format!(
+        "{}-{}",
+        NpmDependencyProvider::current_npm_os(),
+        NpmDependencyProvider::current_npm_cpu()
+    ) == "linux-x64"
+    {
+        "darwin-arm64"
+    } else {
+        "linux-x64"
+    };
+    let typescript_unsupported = PackageName::new(format!(
+        "@typescript/typescript-{typescript_unsupported_target}"
+    ))
+    .unwrap();
     let unknown = PackageName::new("optional-but-not-native").unwrap();
 
     assert_eq!(
@@ -2805,14 +4113,52 @@ fn test_known_optional_native_binary_supported_only_matches_current_target() {
         Some(false)
     );
     assert_eq!(
+        NpmDependencyProvider::known_optional_native_binary_supported(&typescript_supported),
+        Some(true)
+    );
+    assert_eq!(
+        NpmDependencyProvider::known_optional_native_binary_supported(&typescript_unsupported),
+        Some(false)
+    );
+    assert_eq!(
         NpmDependencyProvider::known_optional_native_binary_supported(&unknown),
         None
     );
 }
 
+#[tokio::test]
+async fn test_required_platform_binary_edges_skip_foreign_targets() {
+    let current_target = format!(
+        "{}-{}",
+        NpmDependencyProvider::current_npm_os(),
+        NpmDependencyProvider::current_npm_cpu()
+    );
+    let foreign_target = if current_target == "linux-x64" {
+        "darwin-arm64"
+    } else {
+        "linux-x64"
+    };
+    let provider = NpmDependencyProvider::new("https://registry.example", None, None);
+    let current = mgc_resolver::ResolvedDep {
+        package: PackageName::new(format!("@typescript/typescript-{current_target}")).unwrap(),
+        spec: "7.0.2".to_string(),
+        optional: false,
+        peer: false,
+    };
+    let foreign = mgc_resolver::ResolvedDep {
+        package: PackageName::new(format!("@typescript/typescript-{foreign_target}")).unwrap(),
+        spec: "7.0.2".to_string(),
+        optional: false,
+        peer: false,
+    };
+
+    assert!(provider.should_enqueue(&current).await.unwrap());
+    assert!(!provider.should_enqueue(&foreign).await.unwrap());
+}
+
 #[test]
 fn test_installed_package_matches_version() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempdir_real().unwrap();
     let pkg_dir = dir.path().join("node_modules").join("zod");
     std::fs::create_dir_all(&pkg_dir).unwrap();
     std::fs::write(
@@ -2825,4 +4171,450 @@ fn test_installed_package_matches_version() {
         Version::parse("4.4.3").unwrap(),
     );
     assert!(installed_package_matches(&pkg_dir, &package_id));
+}
+
+// ===== audit parse contract — npm Bulk Advisory API (Tech Lead P0-1
+// 2026-09-09) =====
+// Schema khớp npm Bulk Advisory endpoint THẬT (cùng shape pnpm audit dùng):
+// registry KHÔNG trả `findings` — client đối chiếu vulnerable_versions với
+// lockfile để dựng finding.
+
+/// Minimal lockfile fixture with the requested packages.
+/// Lockfile tối thiểu với các package đã yêu cầu.
+fn audit_lockfile_fixture() -> Vec<(String, String)> {
+    vec![
+        ("lodash".to_string(), "4.17.12".to_string()),
+        ("lodash".to_string(), "4.17.21".to_string()),
+    ]
+}
+
+/// Real npm bulk advisory shape (recorded response contract):
+/// {id, url, title, severity, vulnerable_versions} — NO findings field.
+/// Shape thật của npm bulk advisory: KHÔNG có trường findings.
+fn lodash_advisory_json() -> serde_json::Value {
+    serde_json::json!({
+        "id": 1102260,
+        "url": "https://github.com/advisories/GHSA-35jh-8xhr-j9wr",
+        "title": "Prototype Pollution in lodash",
+        "severity": "high",
+        "vulnerable_versions": "<4.17.21"
+    })
+}
+
+#[test]
+fn test_audit_parse_builds_findings_from_vulnerable_versions() {
+    // Installed 4.17.12 matches "<4.17.21" -> finding; installed 4.17.21
+    // does NOT match -> no second finding. Client-side matching, the
+    // pnpm model.
+    // 4.17.12 khớp "<4.17.21" -> có finding; 4.17.21 KHÔNG khớp -> không
+    // có finding thứ hai. Đối chiếu phía client theo mô hình pnpm.
+    let lock = audit_lockfile_fixture();
+    let payload = serde_json::json!({"lodash": [lodash_advisory_json()]});
+    let vulns = parse_advisory_bulk_response(&payload, &lock).unwrap();
+    assert_eq!(
+        vulns.len(),
+        1,
+        "only the vulnerable installed version yields a finding"
+    );
+    assert_eq!(vulns[0].package.version().to_string(), "4.17.12");
+    assert_eq!(vulns[0].cve, "1102260");
+    assert_eq!(
+        vulns[0].severity_level,
+        mgc_types::adapter::VulnerabilitySeverity::High
+    );
+    assert!(
+        vulns[0]
+            .patched_versions
+            .as_deref()
+            .is_some_and(|p| p.contains("4.17.21"))
+    );
+}
+
+#[test]
+fn test_audit_parse_advisory_not_matching_installed_version_is_not_finding() {
+    // Advisory range that does not cover any installed version: zero
+    // findings is LEGITIMATE here (advisory not applicable), not clean-fake.
+    // Range advisory không phủ version nào đang cài: 0 finding là HỢP LỆ
+    // (advisory không áp dụng), không phải sạch giả.
+    let lock = audit_lockfile_fixture();
+    let advisory = serde_json::json!({
+        "id": 1102261,
+        "url": "https://example.com/a",
+        "title": "Some other lodash issue",
+        "severity": "moderate",
+        "vulnerable_versions": ">=5.0.0 <6.0.0"
+    });
+    let payload = serde_json::json!({"lodash": [advisory]});
+    let vulns = parse_advisory_bulk_response(&payload, &lock).unwrap();
+    assert!(vulns.is_empty());
+}
+
+#[test]
+fn test_audit_parse_empty_object_is_clean() {
+    // No advisories for any requested package — the npm bulk endpoint
+    // returns {} when nothing is vulnerable. That IS a clean result.
+    // Không advisory nào — npm bulk endpoint trả {} khi không package dính.
+    let lock = audit_lockfile_fixture();
+    let vulns = parse_advisory_bulk_response(&serde_json::json!({}), &lock).unwrap();
+    assert!(vulns.is_empty());
+}
+
+#[test]
+fn test_audit_parse_rejects_array_response() {
+    // A top-level array (or string, or null) violates the map contract —
+    // must be an error, never an implicit clean.
+    // Array top-level (hoặc string/null) vi phạm hợp đồng map — phải
+    // lỗi, không được âm thầm sạch.
+    let lock = audit_lockfile_fixture();
+    assert!(parse_advisory_bulk_response(&serde_json::json!([]), &lock).is_err());
+    assert!(parse_advisory_bulk_response(&serde_json::json!("error"), &lock).is_err());
+    assert!(parse_advisory_bulk_response(&serde_json::Value::Null, &lock).is_err());
+}
+
+#[test]
+fn test_audit_parse_rejects_unrequested_package() {
+    // The response may only mention packages we asked about — anything
+    // else is a malformed or hostile payload.
+    // Response chỉ được nhắc package ta hỏi — ngoài đó là malformed/hostile.
+    let lock = audit_lockfile_fixture();
+    let payload = serde_json::json!({
+        "some-random-package": [{
+            "id": 1, "url": "u", "title": "t", "severity": "high",
+            "vulnerable_versions": "*"
+        }]
+    });
+    assert!(parse_advisory_bulk_response(&payload, &lock).is_err());
+}
+
+#[test]
+fn test_audit_parse_rejects_malformed_advisory_entry() {
+    // Missing npm Bulk API required fields (id/url/title/severity/
+    // vulnerable_versions) or invalid ranges reject the entry and FAIL
+    // the whole parse — no silent finding drop.
+    // Thiếu field bắt buộc của npm Bulk API hoặc range sai thì từ chối
+    // entry và FAIL cả parse — không bỏ finding âm thầm.
+    let lock = audit_lockfile_fixture();
+    let base = serde_json::json!({
+        "id": 1102260,
+        "url": "https://example.com/a",
+        "title": "Prototype Pollution in lodash",
+        "severity": "high",
+        "vulnerable_versions": "<4.17.21"
+    });
+    let mut missing_id = base.clone();
+    missing_id.as_object_mut().unwrap().remove("id");
+    let mut missing_url = base.clone();
+    missing_url.as_object_mut().unwrap().remove("url");
+    let mut missing_title = base.clone();
+    missing_title.as_object_mut().unwrap().remove("title");
+    let mut missing_severity = base.clone();
+    missing_severity.as_object_mut().unwrap().remove("severity");
+    let mut missing_range = base.clone();
+    missing_range
+        .as_object_mut()
+        .unwrap()
+        .remove("vulnerable_versions");
+    let bad_range = serde_json::json!({
+        "id": 1102260, "url": "u", "title": "t", "severity": "high",
+        "vulnerable_versions": "not a semver range !!!"
+    });
+    let not_array = serde_json::json!({"lodash": "oops"});
+    let bad_entries = vec![
+        missing_id,
+        missing_url,
+        missing_title,
+        missing_severity,
+        missing_range,
+        bad_range,
+        not_array,
+    ];
+    for payload in bad_entries {
+        let full = if payload.get("lodash").is_some() || payload.as_str().is_some() {
+            payload
+        } else {
+            serde_json::json!({"lodash": [payload]})
+        };
+        assert!(
+            parse_advisory_bulk_response(&full, &lock).is_err(),
+            "malformed payload must fail closed: {full}"
+        );
+    }
+}
+
+#[test]
+fn test_audit_parse_ignores_findings_field_from_registry() {
+    // The npm Bulk API never returns `findings`; if a future/hostile
+    // registry includes one, MagiCore must IGNORE it and still match on
+    // vulnerable_versions — findings are client-side truth only.
+    // npm Bulk API không bao giờ trả `findings`; nếu registry lạ kèm
+    // theo, MagiCore phải BỎ QUA và vẫn đối chiếu vulnerable_versions —
+    // findings chỉ do client quyết định.
+    let lock = audit_lockfile_fixture();
+    let mut advisory = lodash_advisory_json();
+    advisory["findings"] = serde_json::json!([{"version": "4.17.21", "paths": ["fake"]}]);
+    let payload = serde_json::json!({"lodash": [advisory]});
+    let vulns = parse_advisory_bulk_response(&payload, &lock).unwrap();
+    // Still exactly the 4.17.12 entry (range match), NOT the injected 4.17.21.
+    // Vẫn chỉ entry 4.17.12 (khớp range), KHÔNG phải 4.17.21 bị tiêm.
+    assert_eq!(vulns.len(), 1);
+    assert_eq!(vulns[0].package.version().to_string(), "4.17.12");
+}
+
+#[test]
+fn is_dist_tag_spec_tags_vs_semver() {
+    // Tag registry (chỉ chữ cái) — đi đường packument, không phải semver
+    assert!(WebAdapter::is_dist_tag_spec("latest"));
+    assert!(WebAdapter::is_dist_tag_spec("next"));
+    assert!(WebAdapter::is_dist_tag_spec("beta"));
+    // Semver/range/rỗng — giữ đường semver cũ (hành vi + lỗi không đổi)
+    assert!(!WebAdapter::is_dist_tag_spec("*"));
+    assert!(!WebAdapter::is_dist_tag_spec(""));
+    assert!(!WebAdapter::is_dist_tag_spec("^1.2.3"));
+    assert!(!WebAdapter::is_dist_tag_spec("1.2.3"));
+    assert!(!WebAdapter::is_dist_tag_spec(">=1.0.0 <2.0.0"));
+    assert!(!WebAdapter::is_dist_tag_spec("abc123"));
+}
+
+#[test]
+fn age_gate_parses_npm_time_and_filters() {
+    use crate::native::npm_registry::{PackageMetadata, VersionInfo};
+    use crate::provider::{AgePolicy, eligible_versions, parse_npm_time};
+    use mgc_types::PackageName;
+    // 2020-01-01T00:00:00Z == 1577836800 (known anchor).
+    assert_eq!(parse_npm_time("2020-01-01T00:00:00.000Z"), Some(1577836800));
+    assert_eq!(parse_npm_time("2020-01-01T00:00:00Z"), Some(1577836800));
+    assert_eq!(parse_npm_time("garbage"), None);
+    assert_eq!(parse_npm_time("2020-13-01T00:00:00Z"), None);
+    fn version_info(version: &str) -> VersionInfo {
+        VersionInfo {
+            version: version.to_string(),
+            dependencies: None,
+            dev_dependencies: None,
+            peer_dependencies: None,
+            peer_dependencies_meta: Default::default(),
+            optional_dependencies: None,
+            os: None,
+            cpu: None,
+            dist: None,
+        }
+    }
+    let mut versions = std::collections::HashMap::new();
+    versions.insert("1.0.0".to_string(), version_info("1.0.0"));
+    versions.insert("2.0.0".to_string(), version_info("2.0.0"));
+    let mut time = std::collections::HashMap::new();
+    time.insert("1.0.0".to_string(), "2020-01-01T00:00:00.000Z".to_string());
+    time.insert("2.0.0".to_string(), "2100-01-01T00:00:00.000Z".to_string());
+    let meta = PackageMetadata {
+        name: "x".to_string(),
+        description: None,
+        versions,
+        dist_tags: std::collections::HashMap::new(),
+        time,
+    };
+    let package = PackageName::new("x").unwrap();
+    let policy = AgePolicy {
+        cutoff_hours: 10000,
+        allow_missing_time: false,
+    };
+    // No policy: historical behavior (everything).
+    let kept = eligible_versions(&package, &meta, None).unwrap();
+    assert_eq!(kept.len(), 2);
+    // Policy: old version survives, future version excluded.
+    let kept = eligible_versions(&package, &meta, Some(policy)).unwrap();
+    assert_eq!(kept.len(), 1);
+    assert_eq!(kept[0].to_string(), "1.0.0");
+    // Missing timestamps are REJECTED by default (fail-closed)...
+    let mut meta_unstamped = meta.clone();
+    meta_unstamped.time.clear();
+    let err = eligible_versions(&package, &meta_unstamped, Some(policy)).unwrap_err();
+    assert!(err.contains("unstamped"));
+    // ...unless the explicit private-registry escape hatch is set.
+    let policy = AgePolicy {
+        allow_missing_time: true,
+        ..policy
+    };
+    let kept = eligible_versions(&package, &meta_unstamped, Some(policy)).unwrap();
+    assert_eq!(kept.len(), 2);
+}
+
+/// R3: gradle sidecar must ride the SHARED OSV-maven lane — a
+/// verification-metadata.xml pin must reach a real query, never the old
+/// "scanner not implemented" stub. Dead OSV endpoint keeps it hermetic:
+/// the java step must EXIST (Failed naming osv-dev-api).
+/// Sidecar gradle phải đi lane OSV-maven CHUNG — ghim phải tới query
+/// thật, không còn stub. Endpoint chết giữ hermetic: step java phải TỒN
+/// TẠI (Failed nêu osv-dev-api).
+#[tokio::test]
+async fn test_audit_gradle_sidecar_uses_shared_osv_maven_lane() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("package.json"),
+        r#"{"name":"w","version":"1.0.0"}"#,
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("build.gradle"), "// empty\n").unwrap();
+    std::fs::create_dir_all(dir.path().join("gradle")).unwrap();
+    std::fs::write(
+        dir.path().join("gradle").join("verification-metadata.xml"),
+        "<verification-metadata>\n<dependency group=\"com.example\" name=\"lib\" version=\"1.0\"/>\n</verification-metadata>\n",
+    )
+    .unwrap();
+
+    let saved = std::env::var("MGC_OSV_API_BASE").ok();
+    unsafe { std::env::set_var("MGC_OSV_API_BASE", "http://127.0.0.1:1/v1") };
+    let adapter = WebAdapter::new().unwrap();
+    let report = mgc_types::capabilities::AuditProvider::audit(&adapter, dir.path())
+        .await
+        .unwrap();
+    match saved {
+        Some(v) => unsafe { std::env::set_var("MGC_OSV_API_BASE", v) },
+        None => unsafe { std::env::remove_var("MGC_OSV_API_BASE") },
+    }
+    match &report.scanner_status {
+        mgc_types::adapter::ScannerStatus::Failed { scanner, .. } => {
+            assert_eq!(scanner, "osv-dev-api")
+        }
+        other => panic!("gradle sidecar must reach the shared OSV lane (Failed), got {other:?}"),
+    }
+}
+
+/// R3 dotnet side: a bare .csproj (no packages.lock.json) must surface
+/// the shared lane's honest Unsupported (with remediation), never the
+/// old "not implemented" stub and never a fake clean.
+/// Csproj đơn lẻ phải ra Unsupported trung thực của lane chung (kèm
+/// hướng dẫn), không stub cũ, không sạch giả.
+#[tokio::test]
+async fn test_audit_csproj_sidecar_unsupported_with_remediation() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("package.json"),
+        r#"{"name":"w","version":"1.0.0"}"#,
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("app.csproj"), "<Project/>\n").unwrap();
+
+    let adapter = WebAdapter::new().unwrap();
+    let report = mgc_types::capabilities::AuditProvider::audit(&adapter, dir.path())
+        .await
+        .unwrap();
+    match &report.scanner_status {
+        mgc_types::adapter::ScannerStatus::Partial { reasons, .. } => assert!(
+            reasons.iter().any(|r| r.contains("packages.lock.json")),
+            "dotnet lane must explain the missing lockfile, got: {reasons:?}"
+        ),
+        other => {
+            panic!("bare csproj must aggregate Partial (unsupported dotnet lane), got {other:?}")
+        }
+    }
+}
+
+/// P0/F6-RED: age policy loads PER PROJECT (not process-cwd-global) and
+/// broken config fails closed — never a swallowed `.ok()`.
+/// Policy tuổi nạp theo project, config hỏng fail-closed.
+#[tokio::test]
+async fn test_age_policy_loader_is_per_project_and_fail_closed() {
+    use crate::provider::AgePolicy;
+    let good = tempfile::tempdir().unwrap();
+    std::fs::write(
+        good.path().join("mgc.toml"),
+        "name = \"g\"\n[security]\nmin_release_age = 100\ncloud = 7\n",
+    )
+    .unwrap();
+    let policy = crate::WebAdapter::load_age_policy_for(good.path()).unwrap();
+    assert_eq!(
+        policy,
+        Some(AgePolicy {
+            cutoff_hours: 100,
+            allow_missing_time: false
+        }),
+        "project policy must load with its own cutoff"
+    );
+    let cloud_policy = crate::WebAdapter::load_age_policy_for_core(good.path(), "clo").unwrap();
+    assert_eq!(
+        cloud_policy,
+        Some(AgePolicy {
+            cutoff_hours: 7,
+            allow_missing_time: false
+        })
+    );
+    let web = crate::WebAdapter::new().unwrap();
+    web.arm_age_gate_for_core(good.path(), "clo").unwrap();
+    assert_eq!(web.provider.age_policy(), cloud_policy);
+
+    // Broken TOML → Err (fail-closed), not silent None.
+    let broken = tempfile::tempdir().unwrap();
+    std::fs::write(
+        broken.path().join("mgc.toml"),
+        "[security\nmin_release_age = \n",
+    )
+    .unwrap();
+    assert!(
+        crate::WebAdapter::load_age_policy_for(broken.path()).is_err(),
+        "broken mgc.toml must fail closed"
+    );
+
+    // Wrong-typed field → Err, not silent None.
+    let wrongtype = tempfile::tempdir().unwrap();
+    std::fs::write(
+        wrongtype.path().join("mgc.toml"),
+        "name = \"w\"\n[security]\nmin_release_age = \"tomorrow\"\n",
+    )
+    .unwrap();
+    assert!(
+        crate::WebAdapter::load_age_policy_for(wrongtype.path()).is_err(),
+        "wrong-typed min_release_age must fail closed"
+    );
+
+    // Missing file → Ok(None) (historical no-filtering behavior).
+    let bare = tempfile::tempdir().unwrap();
+    assert!(
+        crate::WebAdapter::load_age_policy_for(bare.path())
+            .unwrap()
+            .is_none()
+    );
+}
+
+/// P0/F6-RED: two provider instances hold INDEPENDENT policies (no
+/// process-global first-wins) — multi-project processes arm per
+/// operation.
+/// Hai provider giữ policy ĐỘC LẬP (không global first-wins).
+#[test]
+fn test_age_policy_changes_invalidate_cached_version_decisions() {
+    use crate::provider::{AgePolicy, NpmDependencyProvider};
+
+    let provider = NpmDependencyProvider::new("https://example.invalid", None, None);
+    let package = PackageName::new("react").unwrap();
+    provider.insert_versions_for(&package, vec![Version::parse("18.2.0").unwrap()]);
+    provider
+        .optional_enqueue_cache
+        .insert("stale-policy-decision".to_string(), true);
+    assert!(provider.cached_versions_for(&package).is_some());
+
+    provider.set_age_policy(Some(AgePolicy {
+        cutoff_hours: 24,
+        allow_missing_time: false,
+    }));
+
+    assert!(
+        provider.cached_versions_for(&package).is_none(),
+        "version lists selected under the previous policy must be discarded"
+    );
+    assert!(
+        provider.optional_enqueue_cache.is_empty(),
+        "optional dependency decisions can depend on the age-filtered version set"
+    );
+}
+
+#[test]
+fn test_age_policy_is_per_provider_instance() {
+    use crate::provider::{AgePolicy, NpmDependencyProvider};
+    let strict = NpmDependencyProvider::new("https://example.invalid", None, None);
+    let plain = NpmDependencyProvider::new("https://example.invalid", None, None);
+    strict.set_age_policy(Some(AgePolicy {
+        cutoff_hours: 1_000_000,
+        allow_missing_time: false,
+    }));
+    plain.set_age_policy(None);
+    assert!(strict.age_gate_armed_for_test());
+    assert!(!plain.age_gate_armed_for_test());
 }

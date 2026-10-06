@@ -224,7 +224,23 @@ pub fn create_bin_link(link: &Path, target: &Path) -> MgResult<()> {
 
 #[cfg(not(unix))]
 pub fn create_bin_link(link: &Path, target: &Path) -> MgResult<()> {
-    let command = format!("@echo off\r\n\"{}\" %*\r\n", target.display());
+    // npm-style .cmd shim (P0 fix, 2026-09-12): the bin target is a
+    // Node script (no extension, shebang `#!/usr/bin/env node`) —
+    // cmd.exe cannot execute it directly ("is not recognized"). The
+    // shim must run it THROUGH node, exactly like npm's own shims:
+    //   @node "%~dp0\..\typescript\bin\tsc" %*
+    // with a node-on-PATH check that names the failure honestly.
+    // Shim .cmd kiểu npm (P0 fix): đích bin là script Node (không
+    // extension, shebang node) — cmd.exe không chạy trực tiếp được
+    // ("is not recognized"). Shim phải chạy QUA node, đúng như shim
+    // của npm; kèm kiểm tra node trên PATH báo lỗi trung thực.
+    let command = format!(
+        "@echo off\r\n\
+         where node >NUL 2>NUL || (echo node not found on PATH — cannot run {} 1>&2 & exit /b 127)\r\n\
+         @node \"{}\" %*\r\n",
+        link.display(),
+        target.display()
+    );
     std::fs::write(link.with_extension("cmd"), command).map_err(|err| {
         MgError::Other(format!(
             "failed to create cmd shim for '{}' -> '{}': {}",

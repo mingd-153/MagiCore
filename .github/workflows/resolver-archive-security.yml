@@ -1,0 +1,52 @@
+name: Resolver Archive Security
+
+on:
+  push:
+    branches: [main, development, "fix/**"]
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "core/crates/mgc-resolver/**"
+      - "core/crates/mgc-http/**"
+      - ".github/workflows/resolver-archive-security.yml"
+  pull_request:
+    branches: [main, development]
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "core/crates/mgc-resolver/**"
+      - "core/crates/mgc-http/**"
+      - ".github/workflows/resolver-archive-security.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: resolver-archive-security-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  resolver-tests:
+    name: resolver tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-03
+
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Run resolver tests, including TAR and ZIP extraction security
+        run: cargo test -p mgc-resolver --locked --no-fail-fast

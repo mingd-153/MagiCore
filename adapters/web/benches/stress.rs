@@ -1,10 +1,9 @@
 #![allow(clippy::unwrap_used)]
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
+use mgc_types::capabilities::ContentStoreProvider;
 use mgc_types::{
-    adapter::InstallOptions, PackageAdapter, PackageId, PackageName, ResolvedGraph,
-    ResolvedPackage, Version,
+    PackageId, PackageName, ResolvedGraph, ResolvedPackage, Version, adapter::InstallOptions,
 };
-use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -30,8 +29,8 @@ fn write_tar_entry(
 }
 
 fn make_tarball(dir: &Path, pkg: &PackageId, file_count: usize) {
-    use flate2::write::GzEncoder;
     use flate2::Compression;
+    use flate2::write::GzEncoder;
     let store_root = dir.join(".magicore").join("cache").join("web");
     std::fs::create_dir_all(&store_root).unwrap();
     let cache = mgc_store::PackageCache::new(store_root.join("cache")).unwrap();
@@ -62,8 +61,8 @@ fn make_tarball(dir: &Path, pkg: &PackageId, file_count: usize) {
 }
 
 fn make_tarball_with_files(dir: &Path, pkg: &PackageId, files: &[(&str, &[u8])]) {
-    use flate2::write::GzEncoder;
     use flate2::Compression;
+    use flate2::write::GzEncoder;
     let store_root = dir.join(".magicore").join("cache").join("web");
     std::fs::create_dir_all(&store_root).unwrap();
     let cache = mgc_store::PackageCache::new(store_root.join("cache")).unwrap();
@@ -131,7 +130,7 @@ fn bench_large_tree(c: &mut Criterion) {
                 (dir, graph, pkgs)
             },
             |(dir, graph, pkgs)| {
-                let adapter = mgc_web_adapter::WebAdapter::new();
+                let adapter = mgc_web_adapter::WebAdapter::new().unwrap();
                 install_all(&adapter, &graph, dir.path());
                 for pkg in &pkgs {
                     let f = dir
@@ -165,31 +164,33 @@ fn bench_concurrent_install(c: &mut Criterion) {
                 let dd1 = d1.clone();
                 let dd2 = d2.clone();
                 let h1 = std::thread::spawn(move || {
-                    let adapter = mgc_web_adapter::WebAdapter::new();
+                    let adapter = mgc_web_adapter::WebAdapter::new().unwrap();
                     let rt = tokio::runtime::Runtime::new().unwrap();
                     rt.block_on(adapter.install(&g1, dd1.path(), InstallOptions::default()))
                         .unwrap();
                 });
                 let h2 = std::thread::spawn(move || {
-                    let adapter = mgc_web_adapter::WebAdapter::new();
+                    let adapter = mgc_web_adapter::WebAdapter::new().unwrap();
                     let rt = tokio::runtime::Runtime::new().unwrap();
                     rt.block_on(adapter.install(&g2, dd2.path(), InstallOptions::default()))
                         .unwrap();
                 });
                 h1.join().unwrap();
                 h2.join().unwrap();
-                assert!(d1
-                    .path()
-                    .join("node_modules")
-                    .join(pkg.name_str())
-                    .join("package.json")
-                    .exists());
-                assert!(d2
-                    .path()
-                    .join("node_modules")
-                    .join(pkg.name_str())
-                    .join("package.json")
-                    .exists());
+                assert!(
+                    d1.path()
+                        .join("node_modules")
+                        .join(pkg.name_str())
+                        .join("package.json")
+                        .exists()
+                );
+                assert!(
+                    d2.path()
+                        .join("node_modules")
+                        .join(pkg.name_str())
+                        .join("package.json")
+                        .exists()
+                );
             },
         )
     });
@@ -203,7 +204,7 @@ fn bench_corrupted_metadata(c: &mut Criterion) {
                 let pkg = pkg_id("test-pkg", "1.0.0");
                 let dir = tempfile::tempdir().unwrap();
                 make_tarball(dir.path(), &pkg, 2);
-                let adapter = mgc_web_adapter::WebAdapter::new();
+                let adapter = mgc_web_adapter::WebAdapter::new().unwrap();
                 let graph = make_graph(&[pkg]);
                 (dir, graph, adapter)
             },
@@ -212,12 +213,13 @@ fn bench_corrupted_metadata(c: &mut Criterion) {
                 let result =
                     rt.block_on(adapter.install(&graph, dir.path(), InstallOptions::default()));
                 assert!(result.is_ok(), "install should succeed: {:?}", result.err());
-                assert!(dir
-                    .path()
-                    .join("node_modules")
-                    .join("test-pkg")
-                    .join("package.json")
-                    .exists());
+                assert!(
+                    dir.path()
+                        .join("node_modules")
+                        .join("test-pkg")
+                        .join("package.json")
+                        .exists()
+                );
             },
         )
     });
@@ -240,15 +242,16 @@ fn bench_deep_chain(c: &mut Criterion) {
                 (dir, graph, pkgs)
             },
             |(dir, graph, pkgs)| {
-                let adapter = mgc_web_adapter::WebAdapter::new();
+                let adapter = mgc_web_adapter::WebAdapter::new().unwrap();
                 install_all(&adapter, &graph, dir.path());
                 for pkg in &pkgs {
-                    assert!(dir
-                        .path()
-                        .join("node_modules")
-                        .join(pkg.name_str())
-                        .join("package.json")
-                        .exists());
+                    assert!(
+                        dir.path()
+                            .join("node_modules")
+                            .join(pkg.name_str())
+                            .join("package.json")
+                            .exists()
+                    );
                 }
                 let pkg_dir = dir.path().join("node_modules").join("base-a");
                 let files: Vec<_> = std::fs::read_dir(&pkg_dir)
@@ -257,9 +260,21 @@ fn bench_deep_chain(c: &mut Criterion) {
                     .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
                     .collect();
                 if files.len() >= 2 {
-                    let m1 = std::fs::metadata(files[0].path()).unwrap();
-                    let m2 = std::fs::metadata(files[1].path()).unwrap();
-                    assert_ne!(m1.ino(), m2.ino(), "different files should not share inode");
+                    // Behavioral isolation probe (portable on every OS):
+                    // mutate the first file and prove the second one is a
+                    // distinct, independent file whose content did not
+                    // change — unlike a shared-inode comparison this also
+                    // catches wrong hardlinks between different files.
+                    // Thăm dò cô lập theo hành vi (portable mọi OS): sửa
+                    // file đầu và chứng minh file thứ hai là file độc lập
+                    // không đổi nội dung — thay so inode chỉ dùng được Unix.
+                    let probe_before = std::fs::read(files[1].path()).unwrap();
+                    std::fs::write(files[0].path(), b"// mutated by stress probe\n").unwrap();
+                    let probe_after = std::fs::read(files[1].path()).unwrap();
+                    assert_eq!(
+                        probe_before, probe_after,
+                        "mutating one materialized file must not affect another"
+                    );
                 }
             },
         )
@@ -275,7 +290,7 @@ fn bench_reinstall_changed(c: &mut Criterion) {
                 let graph = make_graph(std::slice::from_ref(&pkg));
                 let dir = tempfile::tempdir().unwrap();
                 make_tarball_with_files(dir.path(), &pkg, &[("version.txt", b"v1")]);
-                let adapter = mgc_web_adapter::WebAdapter::new();
+                let adapter = mgc_web_adapter::WebAdapter::new().unwrap();
                 let rt = tokio::runtime::Runtime::new().unwrap();
                 rt.block_on(adapter.install(&graph, dir.path(), InstallOptions::default()))
                     .unwrap();
@@ -327,7 +342,7 @@ fn bench_mixed_integrity(c: &mut Criterion) {
                 (dir, graph, pkgs)
             },
             |(dir, graph, pkgs)| {
-                let adapter = mgc_web_adapter::WebAdapter::new();
+                let adapter = mgc_web_adapter::WebAdapter::new().unwrap();
                 let rt = tokio::runtime::Runtime::new().unwrap();
                 let result =
                     rt.block_on(adapter.install(&graph, dir.path(), InstallOptions::default()));
@@ -337,12 +352,13 @@ fn bench_mixed_integrity(c: &mut Criterion) {
                     result.err()
                 );
                 for pkg in &pkgs {
-                    assert!(dir
-                        .path()
-                        .join("node_modules")
-                        .join(pkg.name_str())
-                        .join("package.json")
-                        .exists());
+                    assert!(
+                        dir.path()
+                            .join("node_modules")
+                            .join(pkg.name_str())
+                            .join("package.json")
+                            .exists()
+                    );
                 }
             },
         )
@@ -358,7 +374,7 @@ fn bench_clean_reinstall(c: &mut Criterion) {
                 let graph = make_graph(std::slice::from_ref(&pkg));
                 let dir = tempfile::tempdir().unwrap();
                 make_tarball(dir.path(), &pkg, 2);
-                let adapter = mgc_web_adapter::WebAdapter::new();
+                let adapter = mgc_web_adapter::WebAdapter::new().unwrap();
                 let rt = tokio::runtime::Runtime::new().unwrap();
                 rt.block_on(adapter.install(&graph, dir.path(), InstallOptions::default()))
                     .unwrap();
@@ -369,12 +385,13 @@ fn bench_clean_reinstall(c: &mut Criterion) {
                 let rt = tokio::runtime::Runtime::new().unwrap();
                 rt.block_on(adapter.install(&graph, dir.path(), InstallOptions::default()))
                     .unwrap();
-                assert!(dir
-                    .path()
-                    .join("node_modules")
-                    .join("clean-reinstall")
-                    .join("package.json")
-                    .exists());
+                assert!(
+                    dir.path()
+                        .join("node_modules")
+                        .join("clean-reinstall")
+                        .join("package.json")
+                        .exists()
+                );
             },
         )
     });

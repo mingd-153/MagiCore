@@ -25,7 +25,7 @@ FAILED=0
 echo -e "${GREEN}Running pnpm (5 runs)...${NC}"
 for i in {1..5}; do
     echo -e "${YELLOW}pnpm run $i/5${NC}"
-    if "$SCRIPT_DIR/run_benchmark_native.sh" pnpm "$i"; then
+    if /usr/bin/env -i PATH="$PATH" HOME="${HOME:-}" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-C.UTF-8}" MGC_BINARY="${MGC_BINARY:-}" "$SCRIPT_DIR/run_benchmark_native.sh" pnpm "$i"; then
         TOTAL=$((TOTAL + 1))
     else
         FAILED=$((FAILED + 1))
@@ -37,7 +37,7 @@ echo ""
 echo -e "${GREEN}Running mgc (5 runs)...${NC}"
 for i in {1..5}; do
     echo -e "${YELLOW}mgc run $i/5${NC}"
-    if "$SCRIPT_DIR/run_benchmark_native.sh" mgc "$i"; then
+    if /usr/bin/env -i PATH="$PATH" HOME="${HOME:-}" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-C.UTF-8}" MGC_BINARY="${MGC_BINARY:-}" "$SCRIPT_DIR/run_benchmark_native.sh" mgc "$i"; then
         TOTAL=$((TOTAL + 1))
     else
         FAILED=$((FAILED + 1))

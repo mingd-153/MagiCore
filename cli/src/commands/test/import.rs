@@ -42,7 +42,7 @@ async fn test_import_detects_and_converts_package_lock() {
     assert!(checksum.exists(), "mgc.lock.sha256 must be created");
 
     let marker = root.join(mgc_config::project::ProjectConfig::CORE_MARKER_FILE);
-    assert!(marker.exists(), ".mgc.core signature marker must be created");
+    assert!(marker.exists(), ".mgc.core identity marker must be created");
 
     // Read back lockfile
     let lockfile = mgc_lockfile::read_lockfile_checked(root).unwrap().unwrap();

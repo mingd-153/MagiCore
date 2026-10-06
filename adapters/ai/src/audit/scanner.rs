@@ -106,16 +106,17 @@ pub fn scan_weights(path: &Path) -> MgResult<Vec<Finding>> {
     }
 
     // For .pt/.pth files, check for pickle header
-    if let Some(ext) = path.extension() {
-        if ext == "pt" || ext == "pth" {
-            let content = std::fs::read(path)?;
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Some(ext) = path.extension()
+        && (ext == "pt" || ext == "pth")
+    {
+        let content = std::fs::read(path)?;
 
-            // PyTorch files use pickle internally
-            if content.len() > 6 && &content[0..6] == b"\x80\x02}q\x00" {
-                // Valid pickle header - check for dangerous patterns
-                let pickle_findings = scan_pickle(path)?;
-                findings.extend(pickle_findings);
-            }
+        // PyTorch files use pickle internally
+        if content.len() > 6 && &content[0..6] == b"\x80\x02}q\x00" {
+            // Valid pickle header - check for dangerous patterns
+            let pickle_findings = scan_pickle(path)?;
+            findings.extend(pickle_findings);
         }
     }
 

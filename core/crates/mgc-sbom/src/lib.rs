@@ -5,6 +5,7 @@ use anyhow::Result;
 
 pub mod cyclonedx;
 pub mod generator;
+mod spdx;
 
 pub use cyclonedx::{Bom, Component, ComponentType, Dependency};
 pub use generator::SbomGenerator;
@@ -14,7 +15,7 @@ pub use generator::SbomGenerator;
 pub enum SbomFormat {
     /// CycloneDX JSON format — Định dạng CycloneDX JSON
     CycloneDx,
-    /// SPDX format (future) — Định dạng SPDX (tương lai)
+    /// SPDX 2.3 JSON format — Định dạng SPDX 2.3 JSON
     Spdx,
 }
 
@@ -47,6 +48,9 @@ impl Default for SbomOptions {
 pub enum SbomError {
     #[error("Invalid lockfile: {0}")]
     InvalidLockfile(String),
+
+    #[error(transparent)]
+    Lockfile(#[from] mgc_lockfile::LockfileError),
 
     #[error("Serialization error: {0}")]
     SerializationError(#[from] serde_json::Error),

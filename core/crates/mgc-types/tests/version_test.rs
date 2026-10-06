@@ -69,6 +69,59 @@ fn display_with_pre() {
     assert_eq!(v("1.2.3-alpha").to_string(), "1.2.3-alpha");
 }
 
+// --- PEP 440 post/dev segments (no silent truncation) ---
+
+#[test]
+fn parse_post_release_keeps_post_number() {
+    let v = v("1.2.3.post1");
+    assert_eq!((v.major, v.minor, v.patch), (1, 2, 3));
+    assert_eq!(v.post, Some(1));
+    assert_eq!(v.dev, None);
+    assert_eq!(v.to_string(), "1.2.3.post1");
+}
+
+#[test]
+fn parse_dev_release_keeps_dev_number() {
+    let v = v("2.0.dev0");
+    assert_eq!(v.dev, Some(0));
+    assert_eq!(v.post, None);
+    assert_eq!(v.to_string(), "2.0.0.dev0");
+}
+
+#[test]
+fn parse_bare_post_defaults_to_zero() {
+    assert_eq!(v("1.2.3.post").post, Some(0));
+}
+
+#[test]
+fn parse_extra_segments_rejects_loudly() {
+    // Previously "1.2.3.post1" silently became "1.2.3" — truncation,
+    // not leniency. Unknown shapes must fail closed.
+    assert!(Version::parse("1.2.3.4").is_err());
+    assert!(Version::parse("1.2.3.foo").is_err());
+    assert!(Version::parse("1.2.3.postx").is_err());
+    assert!(Version::parse("1.2.3.post1.2").is_err());
+}
+
+#[test]
+fn ordering_dev_below_pre_below_final_below_post() {
+    use Ordering::*;
+    assert_eq!(v("1.2.3.dev1").cmp(&v("1.2.3")), Less, "dev < final");
+    assert_eq!(
+        v("1.2.3.dev1").cmp(&v("1.2.3-rc.1")),
+        Less,
+        "dev < prerelease"
+    );
+    assert_eq!(v("1.2.3-rc.1").cmp(&v("1.2.3")), Less, "prerelease < final");
+    assert_eq!(v("1.2.3").cmp(&v("1.2.3.post1")), Less, "final < post");
+    assert_eq!(
+        v("1.2.3.post1").cmp(&v("1.2.3.post2")),
+        Less,
+        "post orders numerically"
+    );
+    assert_eq!(v("1.2.3.post1").cmp(&v("1.2.3.post1")), Equal);
+}
+
 // --- Cmp ---
 
 #[test]

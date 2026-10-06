@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "boards": [
+    {
+      "id": "esp32",
+      "label": "ESP32 (xtensa)",
+      "chip": "esp32",
+      "target": "xtensa-esp32-none-elf",
+      "wizard_order": 3,
+      "frameworks": ["esp32-rust"]
+    },
+    {
+      "id": "esp32c3",
+      "label": "ESP32-C3 (riscv32imac)",
+      "chip": "esp32c3",
+      "target": "riscv32imac-unknown-none-elf",
+      "wizard_order": 1,
+      "frameworks": ["esp32-rust"]
+    },
+    {
+      "id": "esp32s3",
+      "label": "ESP32-S3 (xtensa)",
+      "chip": "esp32s3",
+      "target": "xtensa-esp32s3-none-elf",
+      "wizard_order": 2,
+      "frameworks": ["esp32-rust"]
+    },
+    {
+      "id": "esp32dev",
+      "label": "ESP32 DevKit (esp32dev)",
+      "chip": "esp32",
+      "target": "xtensa-esp32-none-elf",
+      "wizard_order": 1,
+      "frameworks": ["platformio"]
+    },
+    {
+      "id": "nodemcu-32s",
+      "label": "NodeMCU-32S",
+      "chip": "esp32",
+      "target": "xtensa-esp32-none-elf",
+      "wizard_order": 2,
+      "frameworks": ["platformio"]
+    },
+    {
+      "id": "nrf52dk_nrf52832",
+      "label": "nRF52 DK (nrf52dk_nrf52832)",
+      "chip": "nrf52",
+      "target": "thumbv7em-none-eabihf",
+      "wizard_order": 1,
+      "frameworks": ["zephyr"]
+    },
+    {
+      "id": "stm32f4_disc",
+      "label": "STM32F4 Discovery",
+      "chip": "stm32",
+      "target": "thumbv7em-none-eabihf",
+      "wizard_order": 2,
+      "frameworks": ["zephyr"]
+    }
+  ]
+}

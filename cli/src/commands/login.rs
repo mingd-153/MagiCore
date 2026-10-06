@@ -1,7 +1,7 @@
 //! Login command — adduser flow, save token to ~/.npmrc (01 §1 line 34)
 //! (Lệnh login: đăng ký/adduser vào registry, lưu token vào .npmrc)
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use clap::Args;
 use std::io::{BufRead, Write};
 

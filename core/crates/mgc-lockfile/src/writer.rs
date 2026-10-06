@@ -14,6 +14,109 @@ pub fn serialize_lockfile(lockfile: &Lockfile) -> LockfileResult<String> {
 
 /// Write lockfile to file — Ghi lockfile vào file
 pub fn write_lockfile(lockfile: &Lockfile, path: &Path) -> LockfileResult<()> {
+    ensure_lockfile_mutation_allowed(path)?;
+    write_lockfile_unchecked(lockfile, path)
+}
+
+/// Refuse ordinary lock mutations while either signature evidence or
+/// signed metadata exists. Until v3 has a crash-atomic lock+signature
+/// transaction, callers must not leave a stale signature beside new bytes.
+/// Explicit signing/import flows use their dedicated API instead.
+/// (Chặn writer thường sửa lock có chữ ký; luồng ký/import dùng API riêng.)
+pub fn ensure_lockfile_mutation_allowed(path: &Path) -> LockfileResult<()> {
+    let sig_path = crate::parser::signature_path_for(path);
+    match std::fs::symlink_metadata(&sig_path) {
+        Ok(_) => {
+            return Err(LockfileError::SignedLockMutation(format!(
+                "signature artifact '{}' exists; verify it, explicitly remove the signature, perform the mutation, then sign again (automatic pair re-sign is not crash-atomic yet)",
+                sig_path.display()
+            )));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(LockfileError::WriteFailed(format!(
+                "cannot inspect lock signature '{}': {error}",
+                sig_path.display()
+            )));
+        }
+    }
+
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if !metadata.file_type().is_file() => {
+            return Err(LockfileError::WriteFailed(format!(
+                "refusing to mutate non-regular lockfile path '{}'",
+                path.display()
+            )));
+        }
+        Ok(_) => {
+            // Inspect the shared metadata table instead of decoding only the
+            // v3 struct: an explicit v4 migration must be allowed to read an
+            // unsigned v4 lock, while signed metadata in either schema must
+            // still block ordinary writers.
+            // (Đọc TOML tổng quát để không chặn migrate v4 unsigned.)
+            let bytes = crate::parser::read_lockfile_bytes(path)?;
+            let text = std::str::from_utf8(&bytes).map_err(|error| {
+                LockfileError::ParseError(format!("lockfile is not UTF-8: {error}"))
+            })?;
+            let document: toml::Value = toml::from_str(text)?;
+            let metadata = document
+                .get("metadata")
+                .and_then(toml::Value::as_table)
+                .ok_or_else(|| {
+                    LockfileError::WriteFailed(format!(
+                        "lockfile '{}' has no valid metadata table; refusing mutation",
+                        path.display()
+                    ))
+                })?;
+            if metadata.contains_key("signer") || metadata.contains_key("signature") {
+                return Err(LockfileError::SignedLockMutation(format!(
+                    "signed metadata remains in '{}' but its signature sidecar is absent; explicitly verify and repair signing state before mutation",
+                    path.display()
+                )));
+            }
+            if document.get("version").and_then(toml::Value::as_str)
+                == Some(crate::v4::LOCKFILE_SCHEMA_V4)
+            {
+                return Err(LockfileError::WriteFailed(format!(
+                    "legacy lockfile writer cannot mutate v4 lock '{}'; use the schema-preserving v4 API",
+                    path.display()
+                )));
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(LockfileError::WriteFailed(format!(
+                "cannot inspect lockfile '{}': {error}",
+                path.display()
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+/// Keep the legacy signer from routing a v4 document through the legacy model.
+/// (Chặn legacy signer ghi tài liệu v4 qua mô hình lockfile cũ.)
+fn ensure_not_v4_legacy_write(path: &Path) -> LockfileResult<()> {
+    let bytes = match crate::parser::read_lockfile_bytes(path) {
+        Ok(bytes) => bytes,
+        Err(LockfileError::IoError(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(());
+        }
+        Err(error) => return Err(error),
+    };
+    let text = std::str::from_utf8(&bytes)
+        .map_err(|error| LockfileError::ParseError(format!("lockfile is not UTF-8: {error}")))?;
+    if crate::detect_lockfile_version(text)? == 4 {
+        return Err(LockfileError::WriteFailed(format!(
+            "legacy lockfile writer cannot mutate v4 lock '{}'; use the schema-preserving v4 API",
+            path.display()
+        )));
+    }
+    Ok(())
+}
+
+fn write_lockfile_unchecked(lockfile: &Lockfile, path: &Path) -> LockfileResult<()> {
     let toml_str = serialize_lockfile(lockfile)?;
     std::fs::write(path, toml_str)?;
     Ok(())
@@ -25,6 +128,7 @@ pub fn sign_and_write_lockfile(
     lockfile_path: &Path,
     key_pair: &KeyPair,
 ) -> LockfileResult<()> {
+    ensure_not_v4_legacy_write(lockfile_path)?;
     // L1 FIX: Atomic write — add signer info BEFORE first write (no double-write race)
     let signer = key_pair.signer()?;
 
@@ -37,7 +141,7 @@ pub fn sign_and_write_lockfile(
     lockfile.metadata.lockfile_hash = String::new(); // Placeholder
 
     // Write lockfile ONCE with signer info
-    write_lockfile(lockfile, lockfile_path)?;
+    write_lockfile_unchecked(lockfile, lockfile_path)?;
 
     // Compute final hash
     let lockfile_bytes = std::fs::read(lockfile_path)?;

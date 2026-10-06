@@ -1,6 +1,7 @@
 //! Extracted package marker signatures — validates cached package roots.
 //! Chữ ký marker gói đã extract — tách khỏi CAS extraction để dễ audit cache.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use hex;
@@ -12,7 +13,7 @@ use tar;
 use walkdir::WalkDir;
 
 use crate::cache::{
-    shared_extracted_package_root, ExtractedPackageMarker, TarballContentSignature,
+    ExtractedPackageMarker, TarballContentSignature, shared_extracted_package_root,
 };
 use crate::lockfile::installed_package_matches;
 use crate::manifest::atomic_write;
@@ -66,21 +67,34 @@ pub fn expected_extracted_package_marker_from_path(
     pkg: &ResolvedPackage,
     tarball_path: &Path,
 ) -> MgResult<ExtractedPackageMarker> {
+    let mut marker = expected_extracted_package_marker_fast_from_path(pkg, tarball_path)?;
+    let content = tarball_content_signature_from_path(tarball_path)?;
+    marker.file_count = content.file_count;
+    marker.unpacked_size = content.unpacked_size;
+    marker.file_tree_sha256 = content.file_tree_sha256;
+    Ok(marker)
+}
+
+/// Build identity-only cache metadata without decompressing the tarball.
+/// Dựng metadata định danh cache mà không giải nén tarball.
+pub fn expected_extracted_package_marker_fast_from_path(
+    pkg: &ResolvedPackage,
+    tarball_path: &Path,
+) -> MgResult<ExtractedPackageMarker> {
     let tarball_fingerprint = if pkg.integrity.is_empty() {
         compute_sha256_hex_from_path(tarball_path)?
     } else {
         format!("integrity:{}", pkg.integrity)
     };
-    let content = tarball_content_signature_from_path(tarball_path)?;
     Ok(ExtractedPackageMarker {
-        schema_version: 2,
+        schema_version: 3,
         name: pkg.id.name_str().to_string(),
         version: pkg.id.version().to_string(),
         integrity: (!pkg.integrity.is_empty()).then(|| pkg.integrity.clone()),
         tarball_sha256: tarball_fingerprint,
-        file_count: content.file_count,
-        unpacked_size: content.unpacked_size,
-        file_tree_sha256: content.file_tree_sha256,
+        file_count: 0,
+        unpacked_size: 0,
+        file_tree_sha256: String::new(),
     })
 }
 
@@ -94,7 +108,7 @@ pub fn expected_extracted_package_marker_fast(
         format!("integrity:{}", pkg.integrity)
     };
     ExtractedPackageMarker {
-        schema_version: 2,
+        schema_version: 3,
         name: pkg.id.name_str().to_string(),
         version: pkg.id.version().to_string(),
         integrity: (!pkg.integrity.is_empty()).then(|| pkg.integrity.clone()),
@@ -109,7 +123,7 @@ pub fn extracted_marker_matches_fast(
     marker: &ExtractedPackageMarker,
     expected: &ExtractedPackageMarker,
 ) -> bool {
-    marker.schema_version == 2
+    marker.schema_version == 3
         && marker.name == expected.name
         && marker.version == expected.version
         && marker.integrity == expected.integrity
@@ -142,13 +156,13 @@ pub fn tarball_content_signature_from_reader<R: std::io::Read>(
 ) -> MgResult<TarballContentSignature> {
     let decoder = flate2::read::GzDecoder::new(reader);
     let mut archive = tar::Archive::new(decoder);
-    let mut files = Vec::<(String, u64)>::new();
+    let mut files = Vec::<(String, u64, bool, String)>::new();
 
     for entry in archive
         .entries()
         .map_err(|err| MgError::Other(format!("failed to read tarball entries: {err}")))?
     {
-        let entry =
+        let mut entry =
             entry.map_err(|err| MgError::Other(format!("failed to read tarball entry: {err}")))?;
         let entry_type = entry.header().entry_type();
         if entry_type.is_dir() || matches!(entry_type.as_byte(), b'g' | b'x') {
@@ -185,13 +199,55 @@ pub fn tarball_content_signature_from_reader<R: std::io::Read>(
                 path.display()
             ))
         })?;
-        files.push((path_to_signature_string(&path), size));
+        let mode = entry.header().mode().map_err(|err| {
+            MgError::Other(format!(
+                "failed to read tarball entry mode '{}': {err}",
+                path.display()
+            ))
+        })?;
+        let mut content_hasher = Sha256::new();
+        let mut actual_size = 0u64;
+        let mut buffer = [0u8; 64 * 1024];
+        loop {
+            let read = entry.read(&mut buffer).map_err(|err| {
+                MgError::Other(format!(
+                    "failed to read tarball entry '{}': {err}",
+                    path.display()
+                ))
+            })?;
+            if read == 0 {
+                break;
+            }
+            actual_size = actual_size.checked_add(read as u64).ok_or_else(|| {
+                MgError::Other(format!(
+                    "tarball entry '{}' byte count overflowed",
+                    path.display()
+                ))
+            })?;
+            content_hasher.update(&buffer[..read]);
+        }
+        if actual_size != size {
+            return Err(MgError::Other(format!(
+                "tarball entry '{}' size mismatch: header {size}, read {actual_size}",
+                path.display()
+            )));
+        }
+        files.push((
+            path_to_signature_string(&path),
+            size,
+            mode_is_executable(mode),
+            hex::encode(content_hasher.finalize()),
+        ));
     }
 
-    let root_prefix = common_tarball_root_prefix(&files);
+    let paths_and_sizes = files
+        .iter()
+        .map(|(path, size, _, _)| (path.clone(), *size))
+        .collect::<Vec<_>>();
+    let root_prefix = common_tarball_root_prefix(&paths_and_sizes);
     let mut normalized = files
         .into_iter()
-        .filter_map(|(path, size)| {
+        .filter_map(|(path, size, executable, digest)| {
             let stripped = root_prefix
                 .as_ref()
                 .and_then(|prefix| path.strip_prefix(prefix).and_then(|p| p.strip_prefix('/')))
@@ -199,7 +255,7 @@ pub fn tarball_content_signature_from_reader<R: std::io::Read>(
             if stripped.is_empty() {
                 None
             } else {
-                Some((stripped.to_string(), size))
+                Some((stripped.to_string(), size, executable, digest))
             }
         })
         .collect::<Vec<_>>();
@@ -207,12 +263,11 @@ pub fn tarball_content_signature_from_reader<R: std::io::Read>(
 
     let mut hasher = Sha256::new();
     let mut unpacked_size = 0u64;
-    for (path, size) in &normalized {
-        hasher.update(path.as_bytes());
-        hasher.update([0]);
-        hasher.update(size.to_string().as_bytes());
-        hasher.update(*b"\n");
-        unpacked_size = unpacked_size.saturating_add(*size);
+    for (path, size, executable, digest) in &normalized {
+        update_tree_hasher(&mut hasher, path, *size, *executable, digest);
+        unpacked_size = unpacked_size
+            .checked_add(*size)
+            .ok_or_else(|| MgError::Other("tarball unpacked size overflowed".to_string()))?;
     }
 
     Ok(TarballContentSignature {
@@ -227,17 +282,22 @@ pub fn extracted_content_matches(root: &Path, expected: &ExtractedPackageMarker)
         return Ok(false);
     }
 
-    let mut files = Vec::<(String, u64)>::new();
-    for entry in WalkDir::new(root)
-        .min_depth(1)
-        .into_iter()
-        .filter_map(Result::ok)
-    {
+    let mut files = Vec::<(String, u64, bool, String)>::new();
+    for entry in WalkDir::new(root).min_depth(1) {
+        let entry = entry.map_err(|err| {
+            MgError::Other(format!(
+                "failed to walk extracted package '{}': {err}",
+                root.display()
+            ))
+        })?;
         if entry.path() == extracted_package_marker_path(root) {
             continue;
         }
-        if !entry.file_type().is_file() {
+        if entry.file_type().is_dir() {
             continue;
+        }
+        if !entry.file_type().is_file() {
+            return Ok(false);
         }
         let rel = entry.path().strip_prefix(root).map_err(|err| {
             MgError::Other(format!(
@@ -246,28 +306,61 @@ pub fn extracted_content_matches(root: &Path, expected: &ExtractedPackageMarker)
                 err
             ))
         })?;
-        let size = entry
-            .metadata()
-            .map_err(|err| {
+        let metadata = std::fs::symlink_metadata(entry.path()).map_err(|err| {
+            MgError::Other(format!(
+                "failed to inspect extracted package file '{}': {err}",
+                entry.path().display()
+            ))
+        })?;
+        if !metadata.file_type().is_file() {
+            return Ok(false);
+        }
+        let mut file = std::fs::File::open(entry.path()).map_err(|err| {
+            MgError::Other(format!(
+                "failed to open extracted package file '{}': {err}",
+                entry.path().display()
+            ))
+        })?;
+        let mut content_hasher = Sha256::new();
+        let mut actual_size = 0u64;
+        let mut buffer = [0u8; 64 * 1024];
+        loop {
+            let read = file.read(&mut buffer).map_err(|err| {
                 MgError::Other(format!(
-                    "failed to inspect extracted package file '{}': {}",
-                    entry.path().display(),
-                    err
+                    "failed to hash extracted package file '{}': {err}",
+                    entry.path().display()
                 ))
-            })?
-            .len();
-        files.push((path_to_signature_string(rel), size));
+            })?;
+            if read == 0 {
+                break;
+            }
+            actual_size = actual_size.checked_add(read as u64).ok_or_else(|| {
+                MgError::Other(format!(
+                    "extracted package file '{}' byte count overflowed",
+                    entry.path().display()
+                ))
+            })?;
+            content_hasher.update(&buffer[..read]);
+        }
+        if actual_size != metadata.len() {
+            return Ok(false);
+        }
+        files.push((
+            path_to_signature_string(rel),
+            actual_size,
+            metadata_is_executable(&metadata),
+            hex::encode(content_hasher.finalize()),
+        ));
     }
     files.sort_by(|a, b| a.0.cmp(&b.0));
 
     let mut hasher = Sha256::new();
     let mut unpacked_size = 0u64;
-    for (path, size) in &files {
-        hasher.update(path.as_bytes());
-        hasher.update([0]);
-        hasher.update(size.to_string().as_bytes());
-        hasher.update(*b"\n");
-        unpacked_size = unpacked_size.saturating_add(*size);
+    for (path, size, executable, digest) in &files {
+        update_tree_hasher(&mut hasher, path, *size, *executable, digest);
+        unpacked_size = unpacked_size
+            .checked_add(*size)
+            .ok_or_else(|| MgError::Other("extracted package size overflowed".to_string()))?;
     }
 
     Ok(expected.file_count == files.len() as u64
@@ -377,7 +470,47 @@ pub fn materialized_package_matches(
         return Ok(false);
     };
 
-    Ok(target_marker == *source_marker)
+    Ok(target_marker == *source_marker && extracted_content_matches(target_root, source_marker)?)
+}
+
+/// Hash path, byte length, and file content digest into the package-tree digest.
+/// Hash path, kích thước và digest nội dung vào digest cây package.
+pub(crate) fn update_tree_hasher(
+    hasher: &mut Sha256,
+    path: &str,
+    size: u64,
+    executable: bool,
+    content_sha256: &str,
+) {
+    hasher.update(path.as_bytes());
+    hasher.update([0]);
+    hasher.update(size.to_string().as_bytes());
+    hasher.update([0]);
+    hasher.update([u8::from(executable)]);
+    hasher.update([0]);
+    hasher.update(content_sha256.as_bytes());
+    hasher.update(*b"\n");
+}
+
+#[cfg(unix)]
+pub(crate) fn mode_is_executable(mode: u32) -> bool {
+    mode & 0o111 != 0
+}
+
+#[cfg(not(unix))]
+pub(crate) fn mode_is_executable(_mode: u32) -> bool {
+    false
+}
+
+#[cfg(unix)]
+pub(crate) fn metadata_is_executable(metadata: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    metadata.permissions().mode() & 0o111 != 0
+}
+
+#[cfg(not(unix))]
+pub(crate) fn metadata_is_executable(_metadata: &std::fs::Metadata) -> bool {
+    false
 }
 
 pub fn write_materialized_package_marker(

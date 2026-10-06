@@ -12,6 +12,6 @@ pub mod install;
 pub mod manifest;
 pub mod native;
 
-pub use adapter::{adapter_for, AppAdapter};
-pub use language::{detect_language, AppLanguage};
+pub use adapter::{AppAdapter, adapter_for};
+pub use language::{AppLanguage, detect_language};
 pub use sbom::generate_sbom;

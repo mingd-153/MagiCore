@@ -19,7 +19,11 @@ pub async fn dispatch_common(
         CommonCommand::Stage { dir } => {
             commands::publish::stage(dir.map(|d| d.display().to_string())).await
         }
-        CommonCommand::Import { dir } => commands::import::run(dir).await,
+        CommonCommand::Import {
+            dir,
+            allow_unsigned,
+        } => commands::import::run(dir, allow_unsigned).await,
+        CommonCommand::Migrate { cmd } => commands::migrate::run(cmd).await,
         CommonCommand::Sbom {
             format,
             output,
@@ -27,10 +31,16 @@ pub async fn dispatch_common(
             version,
             dir,
         } => commands::sbom::run(format, output, name, version, dir).await,
-        CommonCommand::Dev { host, port, clear } => {
-            commands::dev::run(core, host, port, clear).await
-        }
-        CommonCommand::Build { target } => commands::build::run(core, target).await,
+        CommonCommand::Dev {
+            host,
+            port,
+            clear,
+            compat_runtime,
+        } => commands::dev::run(core, host, port, clear, compat_runtime.as_deref()).await,
+        CommonCommand::Build {
+            target,
+            compat_runtime,
+        } => commands::build::run(core, target, compat_runtime.as_deref()).await,
         #[cfg(feature = "iot")]
         CommonCommand::Flash { board, skip_build } => {
             commands::core::dev::iot::flash(board.as_deref(), skip_build).await
@@ -39,7 +49,7 @@ pub async fn dispatch_common(
         CommonCommand::Flash { .. } => Err(crate::error::core_not_in_build("iot")),
         CommonCommand::Deploy { run } => {
             let _ = run;
-            match super::types::detect_ecosystem().ok().flatten().as_deref() {
+            match super::types::detect_ecosystem()?.as_deref() {
                 #[cfg(feature = "cicd")]
                 Some("cicd") => commands::core::dev::cicd::deploy(run).await,
                 #[cfg(all(not(feature = "cicd"), feature = "clo"))]
@@ -68,9 +78,51 @@ pub async fn dispatch_common(
             page,
         } => commands::search::run(query, json, exact, page).await,
         CommonCommand::Outdated { json } => commands::outdated::run(core, json).await,
-        CommonCommand::Audit { fix } => commands::audit::run(core, fix).await,
-        CommonCommand::SelfUpdate => commands::self_update::run().await,
-        CommonCommand::Run { script, args } => commands::run::run(script, args, core).await,
+        CommonCommand::Audit { cmd, fix, format } => match cmd {
+            Some(crate::commands::definitions::AuditCmd::Signatures {
+                package,
+                protocol,
+                registry,
+                token,
+                json,
+            }) => {
+                if fix || format.is_some() {
+                    return Err(crate::error::audit_signatures_flags_conflict());
+                }
+                commands::audit::signatures::run(
+                    core,
+                    &package,
+                    &protocol,
+                    &registry,
+                    token.as_deref(),
+                    json,
+                )
+                .await
+            }
+            None => commands::audit::run(core, fix, format.as_deref()).await,
+        },
+        CommonCommand::SelfUpdate {
+            version,
+            variant,
+            dry_run,
+            trust_root,
+            allow_unsigned,
+        } => {
+            commands::self_update::run(version, variant, dry_run, trust_root, allow_unsigned).await
+        }
+        CommonCommand::SignRelease { manifest, key_hex } => {
+            commands::sign_release::run(manifest, key_hex)
+        }
+        CommonCommand::Run {
+            script,
+            args,
+            compat_runtime,
+        } => commands::run::run(script, args, core, compat_runtime.as_deref()).await,
+        CommonCommand::Test {
+            args,
+            compat_runtime,
+        } => commands::test::test(args, core, compat_runtime.as_deref()).await,
+        CommonCommand::Optimizer { force } => commands::optimizer::run(core, force).await,
         CommonCommand::Dlx { package, args } => commands::dlx::run(package, args).await,
         CommonCommand::Cache {
             action,
@@ -105,12 +157,17 @@ pub async fn dispatch_common(
             .await
         }
         CommonCommand::Registry { cmd } => {
-            commands::registry::run(crate::commands::registry::RegistryArgs { cmd }).await
+            commands::registry::run(crate::commands::registry::RegistryArgs { cmd }, core).await
         }
         CommonCommand::Model { cmd } => {
             commands::model::run(crate::commands::model::ModelArgs { cmd }).await
         }
         CommonCommand::Publish {
+            protocol,
+            package,
+            version,
+            artifacts,
+            image,
             tag,
             access,
             dry_run,
@@ -118,6 +175,7 @@ pub async fn dispatch_common(
             otp,
             force,
             ignore_scripts,
+            allow_scripts,
             no_git_checks,
             publish_branch,
             batch,
@@ -127,9 +185,16 @@ pub async fn dispatch_common(
             major,
             registry,
             token,
+            trusted,
+            trusted_audience,
         } => {
             commands::publish::run(
                 crate::commands::publish::PublishArgs {
+                    protocol,
+                    package,
+                    version,
+                    artifacts,
+                    image,
                     tag,
                     access,
                     dry_run,
@@ -137,6 +202,7 @@ pub async fn dispatch_common(
                     otp,
                     force,
                     ignore_scripts,
+                    allow_scripts,
                     no_git_checks,
                     publish_branch,
                     batch,
@@ -146,7 +212,10 @@ pub async fn dispatch_common(
                     major,
                     registry,
                     token,
+                    trusted,
+                    trusted_audience,
                 },
+                core,
                 recursive,
             )
             .await
@@ -171,11 +240,13 @@ pub async fn dispatch_common(
         CommonCommand::Trust { cmd } => commands::trust::run(cmd).await,
         CommonCommand::Hooks { cmd } => commands::hooks::handle(cmd),
         CommonCommand::Docs { output } => commands::docs::handle(output),
+        CommonCommand::Completion { shell } => commands::completion::handle(shell),
         CommonCommand::Telemetry { cmd } => commands::telemetry::handle(cmd),
         CommonCommand::Network { cmd } => commands::network::handle(cmd),
         CommonCommand::Doctor { cmd } => commands::doctor::handle(cmd),
         CommonCommand::Template { cmd } => commands::template::run(cmd).await,
         CommonCommand::Workspace { cmd } => commands::workspace::run(cmd).await,
         CommonCommand::Mcp => commands::mcp::run().await,
+        CommonCommand::Capabilities => commands::capabilities::run(core),
     }
 }

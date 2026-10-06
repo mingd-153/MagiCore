@@ -2,7 +2,8 @@
 # Generate feature-gated templates for all backend frameworks
 set -e
 
-BASE="/Users/doanmihh/Documents/Workspace/MagiCore/templates/web"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BASE="$(cd "$SCRIPT_DIR/../templates/web" && pwd)"
 
 generate_backend() {
   local lang=$1
@@ -95,17 +96,37 @@ EXPRESS_EOF
 
   generate_backend "node" "$fw"
   # Node-specific: add eslint+prettier to template.toml
-  sed -i '' '/^\[\[files\]\]/,${
-    /source = "app.ts"/a\
-\
-[[files]]\nsource = "eslintrc.json"\ntarget = ".eslintrc.json"\ninclude_features = ["eslint"]\
-\
-[[files]]\nsource = "prettierrc"\ntarget = ".prettierrc"\ninclude_features = ["prettier"]\
-\
-[[files]]\nsource = "vitest.config.ts"\ntarget = "vitest.config.ts"\ninclude_features = ["vitest"]\
-\
-[[files]]\nsource = "jest.config.ts"\ntarget = "jest.config.ts"\ninclude_features = ["jest"]
-  }' "$BASE/backend/node/$fw/template.toml"
+  # POSIX awk keeps this generator usable on macOS and Linux.
+  # (Awk POSIX giúp generator chạy được trên macOS và Linux.)
+  local template_file="$BASE/backend/node/$fw/template.toml"
+  local temp_file="${template_file}.tmp.$$"
+  awk '
+    { print }
+    $0 == "source = \"app.ts\"" {
+      print ""
+      print "[[files]]"
+      print "source = \"eslintrc.json\""
+      print "target = \".eslintrc.json\""
+      print "include_features = [\"eslint\"]"
+      print ""
+      print "[[files]]"
+      print "source = \"prettierrc\""
+      print "target = \".prettierrc\""
+      print "include_features = [\"prettier\"]"
+      print ""
+      print "[[files]]"
+      print "source = \"vitest.config.ts\""
+      print "target = \"vitest.config.ts\""
+      print "include_features = [\"vitest\"]"
+      print ""
+      print "[[files]]"
+      print "source = \"jest.config.ts\""
+      print "target = \"jest.config.ts\""
+      print "include_features = [\"jest\"]"
+    }
+  ' "$template_file" > "$temp_file"
+  chmod 644 "$temp_file"
+  mv "$temp_file" "$template_file"
   
   # Create config files
   echo '{}' > "$dir/eslintrc.json"
@@ -158,9 +179,7 @@ target = "main.go"
 [[files]]
 source = "server.go"
 target = "server.go"
-TOML
-  rm -f "$dir/template.toml" 2>/dev/null
-  echo "$GO_TOML" > "$BASE/backend/go/$fw/template.toml"
+TOMLEOF
 }
 
 echo "Generating Node backends..."

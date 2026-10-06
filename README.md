@@ -1,338 +1,97 @@
 <div align="center">
-  <img src="assets/logo-full.svg" alt="MagiCore Logo" width="full" />
+  <img src="assets/logo-full.svg" alt="MagiCore" width="240" />
   <h1>MagiCore</h1>
-  <p><strong>Magical Core Management for the AI-Agent Era</strong></p>
-  <p>
-    <a href="https://github.com/mingd-153/MagiCore/releases"><img src="https://img.shields.io/github/v/release/mingd-153/MagiCore?label=latest&style=flat-square" alt="Latest Release" /></a>
-    <a href="https://github.com/mingd-153/MagiCore/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/mingd-153/MagiCore/ci.yml?branch=main&label=CI&style=flat-square" alt="CI Status" /></a>
-    <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT License" /></a>
-    <img src="https://img.shields.io/badge/rust-1.85%2B-orange?style=flat-square" alt="Rust 1.85+" />
-    <img src="https://img.shields.io/badge/MCP-native-blueviolet?style=flat-square" alt="Native MCP Server" />
-    <img src="https://img.shields.io/badge/version-1.0.0-brightgreen?style=flat-square" alt="Version 1.0.0" />
-  </p>
+  <p><strong>A Rust CLI for project and dependency workflows across multiple cores</strong></p>
+  <p><a href="https://github.com/mingd-153/MagiCore/actions/workflows/ci.yml">CI</a> · <a href="https://github.com/mingd-153/MagiCore/pulls">Pull requests</a> · <a href="LICENSE">MIT license</a></p>
 </div>
 
 ---
 
-**MagiCore** (`mgc`) is a **multi-language package orchestrator** with **web (npm/yarn) beta testing ready** — written in Rust for speed and security.
+MagiCore (<code>mgc</code>) is a Rust CLI and workspace for scaffolding projects and coordinating dependency, test, build, audit, and release workflows. The CLI exposes nine core families. **Support and maturity differ by core, framework, and operation.**
 
-**Core strength:** Web package management (npm replacement) with supply-chain security, signed lockfiles, and trust policies. **Multi-language orchestration:** Experimental support for AI (Python), Cloud (Terraform), CI/CD, Game engines, IoT, and Mobile — reaching parity in V1.1+.
+## Current status
 
-> **🚧 Beta Release:** `v1.0.0` is **beta-ready for web projects** (npm/pnpm replacement). Multi-language cores (ai/app/lib) remain experimental. See [CHANGELOG.md](CHANGELOG.md) for details and [Known Limitations](#-known-limitations-v101-roadmap) for V1.1 roadmap toward full core parity.
+- Workspace version: **1.1.0-rc.9**; Rust edition 2024; minimum Rust version 1.86.
+- This is a pre-release, not a production-stable or drop-in replacement claim.
+- **Historical verification snapshot, 2026-10-06 12:24 +07:00, SHA `212a139c`:** GitHub showed PR [#3](https://github.com/mingd-153/MagiCore/pull/3) open and not merged into <code>main</code>, with 5 workflow runs and 41/41 jobs successful on the PR integration ref; GitHub reported the PR mergeable. That result applies to the listed SHA only; check the live PR for this checkout's status.
+- Green CI applies to declared lanes; it does not qualify every framework or operation.
 
----
+## What MagiCore provides
 
-## ✨ Features
+- Core-aware project scaffolding and capability reporting.
+- Dependency workflows: install, add, remove, update, and list.
+- Project test, build, run, verify, and audit commands where supported.
+- Lockfile import, SBOM generation, registry publishing, workspace inspection, and cache management.
+- A native Model Context Protocol server: <code>mgc mcp</code>.
 
-| Feature                     | Description                                                                     |
-| --------------------------- | ------------------------------------------------------------------------------- |
-| 🌐 **9 Ecosystems**          | Web, AI, Cloud, CI/CD, Game, IoT, App, Lib, Hardware — one CLI                  |
-| ⚡ **Zero-Buffer Streaming** | Chunks stream directly from network → disk, no full-payload RAM spike           |
-| 🔒 **Supply-Chain Security** | 24-hour new-release quarantine + SRI integrity + SBOM generation                |
-| 🛡️ **Trust Policy Gate**     | Lifecycle script approval system (`mgc trust approve/deny/prune`) — NEW!       |
-| 📋 **SBOM Generation**       | CycloneDX & SPDX formats for compliance and vulnerability tracking (NEW!)       |
-| 🔐 **Signed Lockfiles**      | Ed25519 cryptographic signatures for tamper detection (NEW!)                    |
-| 📦 **CAS Reflink Store**     | Content-addressed store with OS reflinks/hardlinks for zero-copy installs       |
-| 🔀 **Monorepo Catalogs**     | PNPM-compatible `catalog:` protocol for centralized version management          |
-| 🔁 **Cross-PM Migration**    | Import npm/pnpm/yarn/bun lockfiles into signed `mgc.lock` — `mgc import`        |
-| 🤖 **Native MCP Server**     | `mgc mcp` — built-in JSON-RPC 2.0 stdio server for AI IDEs (Cursor, Claude Code) |
-| 🩺 **Smart Doctor**          | `mgc doctor --fix` auto-diagnoses and repairs environment issues                 |
-| 🗄️ **Embedded Registry**     | `mgc-registry-server` — host your own private package registry                   |
-| 🌍 **Cross-Platform**        | macOS (Apple Silicon + Intel), Linux x64/ARM64, Windows x64/ARM64               |
+Use <code>mgc capabilities</code> to inspect the capability manifest and <code>mgc &lt;command&gt; --help</code> for options in this build.
 
----
+## Core support and CI evidence
 
-## 📦 Installation
+The lifecycle matrix passed its declared release-blocking lanes on Ubuntu, macOS, and Windows. This is not a claim that every framework in a core family has a complete lifecycle.
 
-### macOS (Homebrew)
-```bash
-brew install mingd-153/tap/magicore
-```
+| Core | Current evidence and limits |
+|---|---|
+| Web | JavaScript, Node, TypeScript, and vanilla lifecycle lanes passed. Other frameworks may have scaffold-only or narrower evidence. |
+| AI | The Python lifecycle lane passed. Agent and MCP-server scaffolds do not inherit a full lifecycle guarantee. |
+| App | Flutter lifecycle passed. Swift E2E used a fallback project on all three OS because the distributed/registry scaffold was unavailable; that does not verify the Swift scaffold. Objective-C and React Native are not release-qualified. |
+| Lib | Rust, Python, TypeScript, and Go lanes passed. Java and .NET remain partial or outside release scope. |
+| Cloud (<code>clo</code>) | CDK and Pulumi lanes passed. Terraform dependency operations are outside the current supported scope. |
+| CI/CD (<code>cicd</code>) | GitHub Actions is a workflow scaffold; install/test/build execute on the external CI provider. |
+| Game | The Rust lane is partial; package lifecycle support varies by framework. |
+| IoT | The Rust lane is partial; board/toolchain combinations are not all release-qualified. |
+| Hardware | Optimizer and benchmark tooling; not a general package lifecycle. |
 
-### Windows (Scoop)
-```powershell
-scoop bucket add magicore https://github.com/mingd-153/scoop-magicore
-scoop install magicore
-```
+The Native Dependency Lifecycle Evidence Matrix covers selected MagiCore-native dependency-install lanes only. Check <code>mgc capabilities</code> and workflow artifacts for lane-level detail.
 
-### Download Binary (All Platforms)
+## Build from source
 
-Download the latest release from [**GitHub Releases →**](https://github.com/mingd-153/MagiCore/releases/latest)
+Requirements: Rust 1.86 or newer.
 
-| Platform            | File                          |
-| ------------------- | ----------------------------- |
-| macOS Apple Silicon | `magicore-macOS-ARM64.tar.gz` |
-| macOS Intel         | `magicore-macOS-X64.tar.gz`   |
-| Linux x64           | `magicore-Linux-X64.tar.gz`   |
-| Linux ARM64         | `magicore-Linux-ARM64.tar.gz` |
-| Windows x64         | `magicore-Windows-X64.zip`    |
-
-```bash
-# macOS/Linux
-tar xzf magicore-*.tar.gz
-sudo mv mgc /usr/local/bin/
-mgc --version
-```
-
-### Build from Source
-```bash
+~~~bash
 git clone https://github.com/mingd-153/MagiCore.git
 cd MagiCore
-cargo build --release --bin mgc
-# Binary at: target/release/mgc
-```
-> **Requires:** Rust 1.85+
+cargo build --release --bin mgc --locked
+./target/release/mgc --version
+./target/release/mgc capabilities
+~~~
 
----
+Add <code>target/release</code> to your PATH or install the binary using your platform's normal method. Tests/builds that need a language SDK still require that SDK.
 
-## 🚀 Quick Start
+## Quick start
 
-```bash
-# Create a new web project
-mgc create-web react@latest my-app --ts
+After making <code>mgc</code> available on PATH:
 
-# Install dependencies (auto-detects ecosystem)
+~~~bash
+mgc create-web react my-app --yes
+cd my-app
 mgc install
-
-# Add a package
-mgc add zod
-mgc add -D jest @types/jest  # Testing with Jest
-
-# Run development server
-mgc dev
-
-# Security audit
+mgc test
+mgc build
 mgc audit
+~~~
 
-# Trust policy management (NEW in V1.0.0!)
-mgc trust approve lodash  # Allow lifecycle scripts
-mgc trust deny cowsay     # Block lifecycle scripts
-mgc trust list            # Show all policies
+Other scaffold command families include <code>create-ai</code>, <code>create-app</code>, <code>create-lib</code>, <code>create-clo</code>, <code>create-cicd</code>, <code>create-game</code>, <code>create-iot</code>, and <code>create-hardware</code>. Check capabilities before assuming a framework supports each operation.
 
-# Generate SBOM (NEW in V1.0.0!)
-mgc sbom --format cyclonedx-json --output sbom.json
+## Verification and performance
 
-# Check environment health
-```
+The five PR workflows cover CI, resolver archive security, lifecycle capability evidence, release archive E2E, and selected native dependency lanes. See the [CI workflow](.github/workflows/ci.yml), [lifecycle workflow](.github/workflows/lifecycle-matrix.yml), and [release E2E workflow](.github/workflows/release-binary-e2e.yml).
 
----
+This README makes no speed comparison. Do not claim an advantage over npm, pnpm, Bun, or another tool without current validated benchmarks and a published method/baseline.
 
-## ⚡ Performance
+## Repository layout
 
-**Preliminary benchmarks** (macOS M2, 20-package Next.js + React + TypeScript project):
+- <code>cli/</code> — command-line application.
+- <code>core/crates/</code> — shared Rust foundations.
+- <code>adapters/</code> — core-specific behavior.
+- <code>templates/</code> — project scaffolds and template fragments.
+- <code>tests/</code> — integration and end-to-end tests.
+- <code>.github/workflows/</code> — CI and release verification.
 
-| Metric | mgc | pnpm | Notes |
-|--------|-----|------|-------|
-| **Cold Install** | 2.6s | 120s | Single dev workload, 5 runs |
-| **Warm Install** | 2.0s | 1.7s | pnpm 1.2x faster (hardlink) |
-| **Disk Usage** | 462MB | 360MB | +28% CAS overhead |
+## Contributing
 
-**Key Findings:**
-- ✅ **Cold install competitive** on test workload (2.6s vs 120s pnpm)
-- ✅ **Sub-3-second installs**: Consistent on tested manifest
-- ⚠️ **Warm cache**: pnpm slight edge (1.2x) due to hardlink efficiency
-- ✅ **Consistency**: Lower variance in this dataset (25% CV vs pnpm 60%)
+Open a focused pull request with relevant unit, integration, and lifecycle evidence. Follow [AGENTS.md](AGENTS.md) and [RULE.md](RULE.md); keep public support claims aligned with CI lane verdicts.
 
-**Beta Caveats:**
-- ⚠️ macOS-only data (Linux/Windows validation pending)
-- ⚠️ Single 20-package manifest (enterprise scale TBD)
-- ⚠️ vitest excluded (P0 crash), replaced with jest
-- Full methodology: [`benchmark/BENCHMARK_METHODOLOGY.md`](benchmark/BENCHMARK_METHODOLOGY.md)
-- Raw data: [`benchmark/results/`](benchmark/results/)
+## License
 
-> **Beta disclaimer**: Performance validated on dev workload only. Cross-platform and large-scale benchmarks deferred to V1.1 with CI automation. Current claims limited to tested configuration.
-
----
-mgc doctor
-```
-
-### Security & Trust (NEW!)
-```bash
-# Configure quarantine (24h default)
-echo '[security]
-min_release_age = 86400  # 24 hours
-web = 172800             # 48 hours for web packages' > mg.toml
-
-# Initialize keyring for signed lockfiles
-mgc trust init
-
-# Sign lockfile
-mgc trust sign mgc.lock
-
-# Verify lockfile (automatic on install)
-mgc trust verify mgc.lock
-```
-
-### Monorepo / Workspace
-```bash
-# Install all packages across the entire monorepo
-mgc install --recursive
-
-# Run build in all workspaces
-mgc build --recursive
-
-# Filter specific packages
-mgc build --recursive --filter "packages/*"
-```
-
----
-
-## 🤖 AI Coding Agent Setup (MCP)
-
-MagiCore ships a **native Model Context Protocol server** — no Python runtime needed.
-
-Add to your AI IDE config:
-
-**Cursor** (`~/.cursor/mcp.json`):
-```json
-{
-  "mcpServers": {
-    "magicore": {
-      "command": "mgc",
-      "args": ["mcp"]
-    }
-  }
-}
-```
-
-**Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
-```json
-{
-  "mcpServers": {
-    "magicore": {
-      "command": "mgc",
-      "args": ["mcp"]
-    }
-  }
-}
-```
-
-MCP tools exposed: `mgc_install`, `mgc_add`, `mgc_audit`, `mgc_workspace_info`
-
----
-
-## 🗂️ Project Structure
-
-```
-MagiCore/
-├── cli/                    # mgc binary — CLI commands and dispatch engine
-├── core/crates/            # 21 foundational Rust crates (store, resolver, fetcher…)
-├── adapters/               # 9 ecosystem adapters (web, ai, cloud, cicd, game, iot, app, lib, hardware)
-├── deploy/                 # Docker Compose + Nginx TLS reverse proxy configs
-├── packaging/              # Homebrew formula + Scoop manifest
-├── assets/                 # Logo and brand assets
-└── .github/workflows/      # CI (test) + Release (6-target binary builds) pipelines
-```
-
----
-
-## 🖥️ Supported Ecosystems
-
-| Core       | Languages / Tools                                                         |
-| ---------- | ------------------------------------------------------------------------- |
-| `web`      | Node.js, TypeScript, React, Vue, Next.js, FastAPI, Django, Spring Boot…   |
-| `ai`       | Python AI frameworks, LLM serving, MCP server scaffolding                 |
-| `cloud`    | Terraform, Pulumi, AWS CDK, Cloudflare Workers                            |
-| `cicd`     | GitHub Actions, GitLab CI, ArgoCD, Docker Compose                         |
-| `game`     | Godot, Unity, Unreal, Bevy (Rust)                                         |
-| `iot`      | PlatformIO, Zephyr RTOS, ESP32 toolchains                                 |
-| `app`      | Flutter, Swift Package Manager, Kotlin/Gradle, React Native               |
-| `lib`      | Universal polyglot libraries (Rust crates, Python packages, npm packages) |
-| `hardware` | Benchmark tooling, hardware-aware resource allocation                     |
-
----
-
-## 📋 Commands Reference
-
-```
-USAGE: mgc [OPTIONS] <COMMAND>
-
-COMMON COMMANDS:
-  install, i      Install dependencies (auto-detect ecosystem)
-  add             Add a package to the project
-  remove, rm      Remove a package
-  update, up      Update packages to latest compatible version
-  search          Search the registry
-  audit           Supply-chain security audit
-  info            Show package metadata
-  outdated        List packages with available updates
-  doctor          Environment diagnostic + AI-guided remediation
-  mcp             Start native MCP server for AI coding agents
-  sbom            Generate Software Bill of Materials (CycloneDX/SPDX) — NEW in V1.0.0!
-
-WORKSPACE COMMANDS:
-  init            Create new project scaffold
-  run             Execute a lifecycle script
-  build           Build the project
-  dev             Start local development server
-  workspace       Manage monorepo workspaces
-
-MORE:
-  mgc --help       Full command reference
-  mgc <cmd> --help Per-command help
-```
-
----
-
-## 🔒 Security
-
-**V1.0.0 Security Status**: ✅ Approved for CLI usage (see [SECURITY_AUDIT_V1.0.0.md](SECURITY_AUDIT_V1.0.0.md))
-
-### Security Features
-- ✅ **Cryptographically signed lockfiles** (Ed25519) for tamper detection
-- ✅ **SRI (Subresource Integrity)** checksums for all packages
-- ✅ **24-hour release quarantine** — newly published packages are flagged
-- ✅ **SBOM generation** — CycloneDX & SPDX for supply chain visibility
-- ✅ `mgc audit` scans for known CVEs via the advisory database
-- ✅ Lifecycle scripts are **opt-in only** (trust gate)
-
-### Security Advisory (V1.0.0)
-**Recommendation**:
-- ✅ **Safe for CLI usage**: install, add, remove, SBOM, lockfile operations
-- ⚠️ **Registry server**: Wait for V1.0.1 before production deployment
-
-**Known Issues** (V1.0.1 hotfix — within 1 week):
-- 3 transitive dependency CVEs (quick-xml, rkyv, rsa) — affects registry server only
-- 7 unmaintained crates being replaced
-
-See full report: [SECURITY_AUDIT_V1.0.0.md](SECURITY_AUDIT_V1.0.0.md)
-
-**Vulnerability Reporting**: See [SECURITY.md](SECURITY.md) for responsible disclosure.
-
----
-
-## ⚠️ Known Limitations (V1.0.1 Roadmap)
-
-**Temporarily Disabled Features** (stubbed for rapid V1.0.0 release):
-- ❌ Workspace lockfile merging (monorepo root lockfiles)
-- ❌ Pruned install optimization (lockfile-based incremental installs)
-- ❌ `mgc why` command (dependency explanation)
-- ❌ Lockfile version compatibility checks
-
-These features will be **restored in V1.0.1 hotfix (Week 7)** — estimated 1 week from V1.0.0 release.
-
-**Workarounds**:
-- Workspace projects: Each package maintains its own lockfile (no root merge)
-- Install optimization: Full resolution on every install (slower but correct)
-- Dependency explanation: Manual inspection of `mgc.lock`
-
-> ✅ **Restored since:** cross-PM lockfile import (`mgc import`), lockfile 3-way merge,
-> unified TOML v2 lockfile writer, and a full black-box E2E suite (`tests/e2e`).
-
-See [docs/specs/magiCoreChangeLog.md](docs/specs/magiCoreChangeLog.md) for migration details.
-
----
-
-## 🤝 Contributing
-
-We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for:
-- Development environment setup
-- Branching strategy & PR workflow
-- Code style guidelines
-- How to add a new ecosystem adapter
-
----
-
-## 📄 License
-
-MIT © MagiCore Contributors — see [LICENSE](LICENSE)
+MIT. See [LICENSE](LICENSE).

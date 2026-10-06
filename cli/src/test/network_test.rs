@@ -34,3 +34,22 @@ fn url_host_parses_registry_urls() {
     );
     assert!(url_host("not a url").is_none());
 }
+
+#[cfg(unix)]
+#[test]
+fn configured_registries_ignore_external_mgc_toml_symlink() {
+    let root = tempfile::tempdir().unwrap();
+    let external = tempfile::tempdir().unwrap();
+    std::fs::write(
+        external.path().join("mgc.toml"),
+        "[registry.private]\nurl = 'https://private.example.test'\n",
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(
+        external.path().join("mgc.toml"),
+        root.path().join("mgc.toml"),
+    )
+    .unwrap();
+
+    assert!(user_registries_from(root.path()).is_empty());
+}

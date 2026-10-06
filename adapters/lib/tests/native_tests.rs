@@ -4,21 +4,17 @@
 //! Native registry client tests — HERMETIC qua mockito (không mạng thật).
 //! Các dead-test trong block comment cũ đã được hồi sinh thành test offline thật.
 
+use mgc_lib_adapter::native::RegistryClient;
 use mgc_lib_adapter::native::cargo_client::CargoClient;
 use mgc_lib_adapter::native::pypi_client::PyPiClient;
-use mgc_lib_adapter::native::RegistryClient;
 use mgc_types::{PackageId, PackageName, Version};
 
 async fn mock_server_if_localhost_allowed() -> Option<mockito::ServerGuard> {
     match std::net::TcpListener::bind("127.0.0.1:0") {
         Ok(listener) => drop(listener),
-        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
-            eprintln!(
-                "warning: skipping native registry mock test because localhost bind is blocked"
-            );
-            return None;
-        }
-        Err(error) => panic!("failed to probe localhost bind: {error}"),
+        Err(error) => panic!(
+            "native registry mock tests require localhost; refusing to report skipped tests as passing: {error}"
+        ),
     }
     Some(mockito::Server::new_async().await)
 }
@@ -74,9 +70,11 @@ async fn cargo_fetch_metadata_parses_ndjson_skips_yanked() {
     assert_eq!(metadata.name.as_str(), "serde");
     // yanked 2.0.0 bị bỏ; versions giữ thứ tự parse
     assert_eq!(metadata.versions.len(), 2);
-    assert!(!metadata
-        .versions
-        .contains(&Version::parse("2.0.0").unwrap()));
+    assert!(
+        !metadata
+            .versions
+            .contains(&Version::parse("2.0.0").unwrap())
+    );
     assert_eq!(metadata.latest, Version::parse("1.5.0").unwrap());
 }
 

@@ -1,0 +1,21 @@
+{
+  "pm": "npm",
+  "run": 5,
+  "timestamp": "20260827_142729",
+  "machine": {
+  "cpu": "Apple M2",
+  "cores": 8,
+  "memory_gb": 16,
+  "os": "Darwin 25.5.0",
+  "node_version": "v25.9.0",
+  "timestamp": "20260827_142729"
+},
+  "cold_install": {
+    "duration_seconds": "201.902468000",
+    "disk_mb": 370
+  },
+  "warm_install": {
+    "duration_seconds": "3.826046000"
+  },
+  "package_count": 20
+}

@@ -12,7 +12,7 @@ use std::io::{self, Write};
 /// Trả về SearchResult được chọn hoặc None nếu hủy
 pub fn prompt_selection(results: &[SearchResult]) -> Result<Option<SearchResult>> {
     if results.is_empty() {
-        println!("\n❌ No packages found.");
+        println!("\nNo packages found.");
         return Ok(None);
     }
 
@@ -61,7 +61,7 @@ pub fn prompt_selection(results: &[SearchResult]) -> Result<Option<SearchResult>
     let choice = input.trim().parse::<usize>().unwrap_or(0);
 
     if choice == 0 {
-        println!("❌ Cancelled.");
+        println!("Cancelled.");
         return Ok(None);
     }
 
@@ -70,7 +70,7 @@ pub fn prompt_selection(results: &[SearchResult]) -> Result<Option<SearchResult>
     }
 
     let selected = results[choice - 1].clone();
-    println!("\n✅ Selected: {} v{}", selected.name, selected.version);
+    println!("\nSelected: {} v{}", selected.name, selected.version);
 
     Ok(Some(selected))
 }

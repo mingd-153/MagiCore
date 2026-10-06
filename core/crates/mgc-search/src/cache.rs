@@ -3,7 +3,7 @@
 
 use crate::types::{Registry, SearchResult};
 use anyhow::Result;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 

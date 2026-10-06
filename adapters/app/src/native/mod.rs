@@ -3,6 +3,7 @@
 pub mod cocoapods_client;
 pub mod maven_client;
 pub mod pub_client;
+pub mod rn_layers;
 
 use mgc_types::{MgResult, PackageId, PackageName, Version};
 

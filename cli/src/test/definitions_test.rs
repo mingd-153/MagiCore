@@ -160,9 +160,15 @@ fn test_create_core_commands_follow_create_core_name_shape() {
         _ => panic!("expected create-app command"),
     }
 
-    let lib = Cli::try_parse_from(["mgc", "create-lib", "demo-lib"]).unwrap();
+    let lib = Cli::try_parse_from(["mgc", "create-lib", "rust", "demo-lib"]).unwrap();
     match lib.command.unwrap() {
-        Commands::CreateLib { project_name } => assert_eq!(project_name, "demo-lib"),
+        Commands::CreateLib {
+            framework,
+            project_name,
+        } => {
+            assert_eq!(framework, "rust");
+            assert_eq!(project_name, "demo-lib");
+        }
         _ => panic!("expected create-lib command"),
     }
 }
@@ -205,11 +211,73 @@ fn test_add_and_remove_accept_no_install() {
         Commands::RemoveWeb {
             packages,
             no_install,
+            ..
         } => {
             assert_eq!(packages, vec!["zod", "lodash"]);
             assert!(no_install);
         }
         _ => panic!("expected remove-web command"),
+    }
+}
+
+#[test]
+fn test_add_accepts_version_pin() {
+    // T0.3-version: bare `add --version` must parse (the pin flows to
+    // lanes that honor it instead of being dropped).
+    let add = Cli::try_parse_from(["mgc", "add", "zod", "--version", "3.22.4"]).unwrap();
+    match add.command.unwrap() {
+        Commands::Add {
+            packages, version, ..
+        } => {
+            assert_eq!(packages, vec!["zod"]);
+            assert_eq!(version.as_deref(), Some("3.22.4"));
+        }
+        _ => panic!("expected add command"),
+    }
+}
+
+#[test]
+fn test_compat_runtime_flag_parses_on_dependency_commands() {
+    // C0 firewall UX (T0.3): --compat-runtime must parse on every
+    // install/add/remove/update form (bare + per-core).
+    let install = Cli::try_parse_from(["mgc", "install", "--compat-runtime", "uv"]).unwrap();
+    match install.command.unwrap() {
+        Commands::Install { compat_runtime, .. } => {
+            assert_eq!(compat_runtime.as_deref(), Some("uv"))
+        }
+        _ => panic!("expected install command"),
+    }
+
+    let install_ai = Cli::try_parse_from(["mgc", "install-ai", "--compat-runtime", "uv"]).unwrap();
+    match install_ai.command.unwrap() {
+        Commands::InstallAi { compat_runtime, .. } => {
+            assert_eq!(compat_runtime.as_deref(), Some("uv"))
+        }
+        _ => panic!("expected install-ai command"),
+    }
+
+    let add_app =
+        Cli::try_parse_from(["mgc", "add-app", "pkg", "--compat-runtime", "flutter"]).unwrap();
+    match add_app.command.unwrap() {
+        Commands::AddApp { compat_runtime, .. } => {
+            assert_eq!(compat_runtime.as_deref(), Some("flutter"))
+        }
+        _ => panic!("expected add-app command"),
+    }
+
+    let remove = Cli::try_parse_from(["mgc", "remove", "zod"]).unwrap();
+    match remove.command.unwrap() {
+        Commands::Remove { compat_runtime, .. } => assert!(compat_runtime.is_none()),
+        _ => panic!("expected remove command"),
+    }
+
+    let update_lib =
+        Cli::try_parse_from(["mgc", "update-lib", "--compat-runtime", "cargo"]).unwrap();
+    match update_lib.command.unwrap() {
+        Commands::UpdateLib { compat_runtime, .. } => {
+            assert_eq!(compat_runtime.as_deref(), Some("cargo"))
+        }
+        _ => panic!("expected update-lib command"),
     }
 }
 
@@ -241,6 +309,145 @@ fn test_install_accepts_script_policy_flags() {
         }
         _ => panic!("expected install-web command"),
     }
+}
+
+#[test]
+fn test_publish_lifecycle_requires_explicit_opt_in_flag() {
+    let defaults = Cli::try_parse_from(["mgc", "publish", "--dry-run"]).unwrap();
+    match defaults.command.unwrap() {
+        Commands::Publish {
+            allow_scripts,
+            ignore_scripts,
+            ..
+        } => {
+            assert!(!allow_scripts);
+            assert!(!ignore_scripts);
+        }
+        _ => panic!("expected publish command"),
+    }
+
+    let allowed = Cli::try_parse_from(["mgc", "publish", "--allow-scripts", "--dry-run"]).unwrap();
+    match allowed.command.unwrap() {
+        Commands::Publish { allow_scripts, .. } => assert!(allow_scripts),
+        _ => panic!("expected publish command with explicit script approval"),
+    }
+
+    assert!(
+        Cli::try_parse_from(["mgc", "publish", "--allow-scripts", "--ignore-scripts",]).is_err()
+    );
+}
+
+#[test]
+fn trusted_publish_and_signature_audit_cli_arguments_parse() {
+    let publish = Cli::try_parse_from(["mgc", "publish", "--trusted", "--dry-run"]).unwrap();
+    match publish.command.unwrap() {
+        Commands::Publish {
+            trusted,
+            trusted_audience,
+            ..
+        } => {
+            assert!(trusted);
+            assert_eq!(trusted_audience, None);
+        }
+        _ => panic!("expected trusted publish command"),
+    }
+    assert!(Cli::try_parse_from(["mgc", "publish", "--trusted", "--token", "secret"]).is_err());
+
+    let audit = Cli::try_parse_from([
+        "mgc",
+        "audit",
+        "signatures",
+        "@acme/widgets",
+        "--registry",
+        "https://registry.example",
+        "--json",
+    ])
+    .unwrap();
+    match audit.command.unwrap() {
+        Commands::Audit {
+            cmd:
+                Some(AuditCmd::Signatures {
+                    package,
+                    registry,
+                    json,
+                    ..
+                }),
+            fix,
+            format,
+        } => {
+            assert_eq!(package, "@acme/widgets");
+            assert_eq!(registry, "https://registry.example");
+            assert!(json);
+            assert!(!fix);
+            assert_eq!(format, None);
+        }
+        _ => panic!("expected audit signatures command"),
+    }
+
+    let trust = Cli::try_parse_from([
+        "mgc",
+        "registry",
+        "trust",
+        "@acme/widgets",
+        "acme/widgets",
+        "--admin-token",
+        "admin",
+        "--registry",
+        "https://registry.example",
+    ])
+    .unwrap();
+    assert!(matches!(
+        trust.command.unwrap(),
+        Commands::Registry {
+            cmd: crate::commands::registry::RegistryCmd::Trust { .. }
+        }
+    ));
+}
+
+#[test]
+fn trusted_oci_artifact_and_core_binding_arguments_parse() {
+    let publish = Cli::try_parse_from([
+        "mgc",
+        "publish",
+        "--trusted",
+        "--protocol",
+        "oci",
+        "--core",
+        "ai",
+        "--package",
+        "models/weights",
+        "--version",
+        "1.0.0",
+        "--artifact",
+        "weights.bin",
+        "--registry",
+        "https://registry.example",
+    ])
+    .unwrap();
+    assert_eq!(publish.core.as_deref(), Some("ai"));
+    assert!(matches!(publish.command, Some(Commands::Publish { .. })));
+
+    let trust = Cli::try_parse_from([
+        "mgc",
+        "registry",
+        "trust",
+        "models/weights",
+        "acme/model-builder",
+        "--protocol",
+        "oci",
+        "--core",
+        "ai",
+        "--admin-token",
+        "admin",
+    ])
+    .unwrap();
+    assert_eq!(trust.core.as_deref(), Some("ai"));
+    assert!(matches!(
+        trust.command,
+        Some(Commands::Registry {
+            cmd: crate::commands::registry::RegistryCmd::Trust { .. }
+        })
+    ));
 }
 
 #[test]
@@ -435,9 +642,11 @@ fn test_dev_command_accepts_host_and_port() {
             host,
             port,
             clear: _,
+            compat_runtime,
         } => {
             assert_eq!(host.as_deref(), Some("127.0.0.1"));
             assert_eq!(port, Some(4315));
+            assert!(compat_runtime.is_none());
         }
         _ => panic!("expected dev command"),
     }

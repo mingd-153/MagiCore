@@ -40,24 +40,13 @@ fn default_port_returns_correct_values() {
 }
 
 #[test]
-fn check_multi_core_conflicts_detects_same_port() {
-    // Hai core khác nhau nhưng override cùng port → conflict
-    let cores = [("web", Some(9999u16)), ("ai", Some(9999u16))];
-    let conflicts = check_multi_core_conflicts(&cores);
-    assert_eq!(conflicts.len(), 1);
-    assert_eq!(conflicts[0].2, 9999);
-}
-
-#[test]
-fn check_multi_core_conflicts_no_conflict_on_unique_ports() {
-    // Tất cả port khác nhau → không conflict
-    let cores = [
-        ("web", Some(4315u16)),
-        ("ai", Some(5134u16)),
-        ("game", Some(4351u16)),
-    ];
-    let conflicts = check_multi_core_conflicts(&cores);
-    assert!(conflicts.is_empty());
+fn resolve_port_honors_override_and_default() {
+    // Override luôn thắng bảng default — override beats the default table.
+    assert_eq!(resolve_port("web", Some(9999)), Some(9999));
+    // Không override → default từ bảng — no override falls back to the table.
+    assert_eq!(resolve_port("web", None), Some(PORT_WEB_FE));
+    // Core không có server → None — core without a server resolves to None.
+    assert_eq!(resolve_port("hardware", None), None);
 }
 
 #[test]

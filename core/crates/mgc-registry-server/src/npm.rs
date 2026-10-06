@@ -1,14 +1,15 @@
-use crate::{model::*, AppState};
+use crate::{AppState, model::*};
 use axum::{
+    Router,
     body::Bytes,
-    extract::{Path, Query, State},
+    extract::{ConnectInfo, Path, Query, State},
     http::{HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Json, Response},
     routing::{delete, get, post, put},
-    Router,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use tracing::warn;
 
 /// npm API routes — alias không prefix (chuẩn npm client: PUT /:name) + /npm/ (nội bộ)
@@ -78,6 +79,7 @@ async fn get_package_scoped(
 async fn publish_package_scoped(
     State(state): State<AppState>,
     headers: HeaderMap,
+    peer: Option<ConnectInfo<SocketAddr>>,
     Path((scope, name)): Path<(String, String)>,
     body: Bytes,
 ) -> Result<Json<Package>, StatusCode> {
@@ -85,6 +87,7 @@ async fn publish_package_scoped(
         State(state),
         headers,
         Path(scoped_full(&scope, &name)),
+        peer,
         body,
     )
     .await
@@ -100,10 +103,12 @@ async fn publish_package_scoped(
 
 async fn download_tarball_scoped(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path((scope, name, filename)): Path<(String, String, String)>,
 ) -> Result<Response, StatusCode> {
     let result = download_tarball(
         State(state),
+        headers,
         Path((scoped_full(&scope, &name), filename.clone())),
     )
     .await;
@@ -119,11 +124,15 @@ async fn download_tarball_scoped(
 
 async fn upload_tarball_scoped(
     State(state): State<AppState>,
+    headers: HeaderMap,
+    peer: Option<ConnectInfo<SocketAddr>>,
     Path((scope, name, filename)): Path<(String, String, String)>,
     body: Bytes,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let result = upload_tarball(
         State(state),
+        headers,
+        peer,
         Path((scoped_full(&scope, &name), filename.clone())),
         body,
     )
@@ -140,9 +149,17 @@ async fn upload_tarball_scoped(
 
 async fn delete_package_version_scoped(
     State(state): State<AppState>,
+    headers: HeaderMap,
+    peer: Option<ConnectInfo<SocketAddr>>,
     Path((scope, name, filename)): Path<(String, String, String)>,
 ) -> Result<StatusCode, StatusCode> {
-    delete_package_version_route(State(state), Path((scoped_full(&scope, &name), filename))).await
+    delete_package_version_route(
+        State(state),
+        headers,
+        peer,
+        Path((scoped_full(&scope, &name), filename)),
+    )
+    .await
 }
 
 // === Package fetching ===
@@ -150,26 +167,40 @@ async fn delete_package_version_scoped(
 /// Rewrite `dist.tarball` theo Host header của request hiện tại — store lưu URL
 /// của registry cũ (host:port lúc publish); đọc từ host/port khác phải trả URL
 /// đúng chỗ này, nếu không client fetch tarball ra registry sai.
-fn rewrite_tarball_host(pkg: &mut Package, host: &str) {
+/// Scheme follows `X-Forwarded-Proto` (TLS-terminating proxies like the
+/// bundled nginx set it); without it we keep plain `http` (local/default
+/// deployments serve HTTP directly — advertising `https` there would hand
+/// clients an unreachable URL). Only `http`/`https` values are honored.
+/// Dùng scheme từ proxy TLS; mặc định HTTP cho triển khai local và chỉ nhận HTTP/HTTPS.
+fn rewrite_tarball_host(pkg: &mut Package, host: &str, scheme: &str) {
+    let scheme = match scheme {
+        "https" | "http" => scheme,
+        _ => "http",
+    };
     for v in pkg.versions.values_mut() {
         if let Some(filename) = v.dist.tarball.rsplit('/').next() {
-            v.dist.tarball = format!("http://{host}/{}/-/{filename}", pkg.name);
+            v.dist.tarball = format!("{scheme}://{host}/{}/-/{filename}", pkg.name);
         }
     }
 }
 
 async fn get_package(
-    State((store, _auth)): State<AppState>,
+    State((store, auth)): State<AppState>,
     headers: HeaderMap,
     Path(name): Path<String>,
 ) -> Result<Json<Package>, StatusCode> {
+    auth.authorize_package_read(&headers, &name)?;
     match store.get_package(&name).await {
         Ok(Some(mut pkg)) => {
             let host = headers
                 .get("host")
                 .and_then(|h| h.to_str().ok())
                 .unwrap_or("localhost");
-            rewrite_tarball_host(&mut pkg, host);
+            let scheme = headers
+                .get("x-forwarded-proto")
+                .and_then(|h| h.to_str().ok())
+                .unwrap_or("http");
+            rewrite_tarball_host(&mut pkg, host, scheme);
             Ok(Json(pkg))
         }
         Ok(None) => Err(StatusCode::NOT_FOUND),
@@ -186,8 +217,13 @@ async fn publish_package(
     State((store, auth)): State<AppState>,
     headers: HeaderMap,
     Path(name): Path<String>,
+    peer: Option<ConnectInfo<SocketAddr>>,
     body: Bytes,
 ) -> Result<Json<Package>, StatusCode> {
+    crate::trusted::scoped_package("npm", &name)?;
+    let trusted_identity = auth
+        .authorize_package_write_from(&headers, &name, peer.map(|ConnectInfo(address)| address))
+        .await?;
     // npm CLI thật gửi metadata + _attachments (tarball base64) trong 1 PUT
     use base64::Engine;
     use sha2::{Digest, Sha512};
@@ -197,7 +233,7 @@ async fn publish_package(
 
     // Lưu tarball từ _attachments → blob content-addressed, gắn integrity vào dist.
     // Fail-closed: attachment sai (thiếu data / base64 hỏng) → từ chối, không publish "mù"
-    let mut attachments: HashMap<String, Vec<u8>> = HashMap::new();
+    let mut attachments = Vec::new();
     if let Some(atts) = doc.get("_attachments").and_then(|a| a.as_object()) {
         for (filename, att) in atts {
             let data = att
@@ -207,11 +243,20 @@ async fn publish_package(
             let bytes = base64::engine::general_purpose::STANDARD
                 .decode(data)
                 .map_err(|_| StatusCode::BAD_REQUEST)?;
-            attachments.insert(filename.clone(), bytes);
+            attachments.push((filename.clone(), bytes));
         }
     }
-    let (blob_filename, blob) = attachments.into_iter().next().unwrap_or_default();
-    if !blob.is_empty() {
+    if attachments.len() > 1 {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    if let Some((_attachment_filename, blob)) = attachments.pop() {
+        let versions = doc
+            .get("versions")
+            .and_then(|versions| versions.as_object())
+            .ok_or(StatusCode::BAD_REQUEST)?;
+        if versions.len() != 1 || blob.is_empty() {
+            return Err(StatusCode::BAD_REQUEST);
+        }
         let mut hasher = Sha512::new();
         hasher.update(&blob);
         let b64 = base64::engine::general_purpose::STANDARD.encode(hasher.finalize());
@@ -220,22 +265,26 @@ async fn publish_package(
             .put_blob(&digest, &blob)
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        if let Some(versions) = doc.get_mut("versions").and_then(|v| v.as_object_mut()) {
-            // F2 fix: rewrite tarball theo Host header của chính registry — không tin URL
-            // client gửi (client có thể publish qua registry khác → install sẽ chạy ra ngoài)
-            let host = headers
-                .get("host")
-                .and_then(|h| h.to_str().ok())
-                .unwrap_or("localhost");
-            for v in versions.values_mut() {
-                if let Some(dist) = v.get_mut("dist") {
-                    dist["integrity"] = serde_json::Value::String(digest.clone());
-                    dist["tarball"] = serde_json::Value::String(format!(
-                        "http://{host}/{}/-/{blob_filename}",
-                        name
-                    ));
-                }
-            }
+        // Bind the single attachment to the single version and registry origin.
+        // Gắn attachment duy nhất cho version duy nhất và origin của registry.
+        let host = headers
+            .get("host")
+            .and_then(|h| h.to_str().ok())
+            .unwrap_or("localhost");
+        let versions = doc
+            .get_mut("versions")
+            .and_then(|versions| versions.as_object_mut())
+            .ok_or(StatusCode::BAD_REQUEST)?;
+        let (version_key, version) = versions.iter_mut().next().ok_or(StatusCode::BAD_REQUEST)?;
+        let version_key = version_key.clone();
+        if let Some(dist) = version.get_mut("dist") {
+            dist["integrity"] = serde_json::Value::String(digest);
+            let unscoped_name = name.rsplit('/').next().unwrap_or(&name);
+            let filename = format!("{unscoped_name}-{version_key}.tgz");
+            dist["tarball"] =
+                serde_json::Value::String(format!("http://{host}/{}/-/{filename}", name));
+        } else {
+            return Err(StatusCode::BAD_REQUEST);
         }
     }
 
@@ -249,36 +298,68 @@ async fn publish_package(
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    // Verify auth: fail-closed khi đã cấu hình admin token (registry private).
-    // Không cấu hình token → registry mở (dev/private net) → bỏ qua Authorization
-    // header (khách gửi token lạ từ ~/.npmrc không được coi là lý do từ chối).
-    let token = headers
-        .get("authorization")
-        .and_then(|h| h.to_str().ok())
-        .and_then(|s| s.strip_prefix("Bearer "));
-    if auth.admin_token.is_some() {
-        let user = token.and_then(|t| auth.verify_token(t)).ok_or_else(|| {
-            warn!("publish {}: token rejected", name);
-            StatusCode::UNAUTHORIZED
-        })?;
-        if !auth.can_publish(&user, &name) {
-            warn!(
-                "publish {}: user {} denied, scopes {:?}",
-                name, user.name, user.scopes
-            );
-            return Err(StatusCode::FORBIDDEN);
+    if let Some((identity, binding_generation, sigstore_oidc_token)) = trusted_identity {
+        if pkg.versions.is_empty() {
+            return Err(StatusCode::BAD_REQUEST);
         }
+        for version in pkg.versions.values() {
+            if !crate::trusted::is_valid_sha512_integrity(&version.dist.integrity) {
+                return Err(StatusCode::BAD_REQUEST);
+            }
+            if store
+                .get_blob(&version.dist.integrity)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+                .is_none()
+            {
+                return Err(StatusCode::BAD_REQUEST);
+            }
+        }
+        let key = auth.attestation_key().ok_or(StatusCode::NOT_FOUND)?;
+        let mut public_attestations = HashMap::new();
+        for (version, package_version) in &pkg.versions {
+            let blob = store
+                .get_blob(&package_version.dist.integrity)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+                .ok_or(StatusCode::BAD_REQUEST)?;
+            let artifact_sha256 = hex::encode(sha2::Sha256::digest(&blob));
+            let bundle = crate::trusted::sign_sigstore_attestation(
+                &sigstore_oidc_token,
+                &identity,
+                &pkg.name,
+                version,
+                &format!("{}@{}", pkg.name, version),
+                &package_version.dist.integrity,
+                &artifact_sha256,
+            )
+            .await
+            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+            public_attestations.insert(version.clone(), (artifact_sha256, bundle));
+        }
+        store
+            .put_trusted_package(
+                &pkg,
+                &identity,
+                key,
+                binding_generation,
+                &public_attestations,
+            )
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    } else {
+        store
+            .put_package(&pkg)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     }
 
-    store
-        .put_package(&pkg)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let version = pkg.versions.keys().next().cloned().or_else(|| {
-        let v = pkg.dist_tags.get("latest").cloned();
-        v
-    });
+    let version = pkg
+        .versions
+        .keys()
+        .next()
+        .cloned()
+        .or_else(|| pkg.dist_tags.get("latest").cloned());
     let _ = store
         .audit("publish", &pkg.name, version.as_deref(), None)
         .await;
@@ -293,42 +374,55 @@ fn content_disposition(filename: &str) -> Result<HeaderValue, StatusCode> {
 // === Tarball download ===
 
 async fn download_tarball(
-    State((store, _)): State<AppState>,
+    State((store, auth)): State<AppState>,
+    headers: HeaderMap,
     Path((name, filename)): Path<(String, String)>,
 ) -> Result<Response, StatusCode> {
+    auth.authorize_package_read(&headers, &name)?;
     // filename: :unscoped-name-:version.tgz → version → dist.integrity → blob
     let unscoped = name.rsplit('/').next().unwrap_or(&name);
     let version = filename
         .strip_suffix(".tgz")
         .and_then(|s| s.strip_prefix(&format!("{}-", unscoped)));
-    if let Some(version) = version {
-        if let Some(pkg) = store.get_package(&name).await.ok().flatten() {
-            if let Some(v) = pkg.versions.get(version) {
-                let digest = &v.dist.integrity;
-                if !digest.is_empty() {
-                    if let Some(data) = store.get_blob(digest).await.ok().flatten() {
-                        let mut resp = axum::response::Response::new(axum::body::Body::from(data));
-                        resp.headers_mut().insert(
-                            axum::http::header::CONTENT_TYPE,
-                            HeaderValue::from_static("application/octet-stream"),
-                        );
-                        resp.headers_mut()
-                            .insert("content-disposition", content_disposition(&filename)?);
-                        return Ok(resp.into_response());
-                    }
-                    // ITEM 4: blob miss → proxy tarball từ upstream, cache vào store
-                    if let Ok(Some(data)) = store.fetch_upstream_tarball(&v.dist.tarball).await {
-                        let _ = store.put_blob(digest, &data).await;
-                        let mut resp = axum::response::Response::new(axum::body::Body::from(data));
-                        resp.headers_mut().insert(
-                            axum::http::header::CONTENT_TYPE,
-                            HeaderValue::from_static("application/octet-stream"),
-                        );
-                        resp.headers_mut()
-                            .insert("content-disposition", content_disposition(&filename)?);
-                        return Ok(resp.into_response());
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Some(version) = version
+        && let Some(pkg) = store.get_package(&name).await.ok().flatten()
+        && let Some(v) = pkg.versions.get(version)
+    {
+        let digest = &v.dist.integrity;
+        if !digest.is_empty() {
+            if let Some(data) = store.get_blob(digest).await.ok().flatten() {
+                let mut resp = axum::response::Response::new(axum::body::Body::from(data));
+                resp.headers_mut().insert(
+                    axum::http::header::CONTENT_TYPE,
+                    HeaderValue::from_static("application/octet-stream"),
+                );
+                resp.headers_mut()
+                    .insert("content-disposition", content_disposition(&filename)?);
+                return Ok(resp.into_response());
+            }
+            // ITEM 4: blob miss → proxy tarball từ upstream, cache vào store
+            // Upstream bytes are verified against the declared digest BEFORE
+            // caching and serving — a mismatched upstream response is dropped
+            // (fail-closed) instead of being cached as poison.
+            // Bytes từ upstream được đối chiếu digest khai TRƯỚC khi cache và
+            // serve — lệch digest thì bỏ (fail-closed), không cache dữ liệu bẩn.
+            if let Ok(Some(data)) = store.fetch_upstream_tarball(&v.dist.tarball).await {
+                match store.put_blob(digest, &data).await {
+                    Ok(()) => {}
+                    Err(e) => {
+                        tracing::warn!("upstream tarball digest mismatch, not cached: {e:#}");
+                        return Err(StatusCode::INTERNAL_SERVER_ERROR);
                     }
                 }
+                let mut resp = axum::response::Response::new(axum::body::Body::from(data));
+                resp.headers_mut().insert(
+                    axum::http::header::CONTENT_TYPE,
+                    HeaderValue::from_static("application/octet-stream"),
+                );
+                resp.headers_mut()
+                    .insert("content-disposition", content_disposition(&filename)?);
+                return Ok(resp.into_response());
             }
         }
     }
@@ -339,10 +433,14 @@ async fn download_tarball(
 // === Tarball upload ===
 
 async fn upload_tarball(
-    State((store, _)): State<AppState>,
+    State((store, auth)): State<AppState>,
+    headers: HeaderMap,
+    peer: Option<ConnectInfo<SocketAddr>>,
     Path((_name, _filename)): Path<(String, String)>,
     body: Bytes,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    auth.authorize_npm_write_from(&headers, &_name, peer.map(|ConnectInfo(address)| address))
+        .await?;
     use sha2::{Digest, Sha512};
 
     let mut hasher = Sha512::new();
@@ -367,9 +465,13 @@ async fn upload_tarball(
 // === Tarball/version delete (npm unpublish) ===
 
 async fn delete_package_version_route(
-    State((store, _)): State<AppState>,
+    State((store, auth)): State<AppState>,
+    headers: HeaderMap,
+    peer: Option<ConnectInfo<SocketAddr>>,
     Path((name, filename)): Path<(String, String)>,
 ) -> Result<StatusCode, StatusCode> {
+    auth.authorize_npm_delete_from(&headers, &name, peer.map(|ConnectInfo(address)| address))
+        .await?;
     // filename: :name-:version.tgz → trích version
     let version = filename
         .strip_suffix(".tgz")
@@ -395,10 +497,12 @@ struct DistTagQuery {
 }
 
 async fn get_dist_tags(
-    State((store, _)): State<AppState>,
+    State((store, auth)): State<AppState>,
+    headers: HeaderMap,
     Path(name): Path<String>,
     Query(query): Query<DistTagQuery>,
 ) -> Result<Json<HashMap<String, String>>, StatusCode> {
+    auth.authorize_package_read(&headers, &name)?;
     if let Some(pkg) = store
         .get_package(&name)
         .await
@@ -424,10 +528,14 @@ struct SetDistTagBody {
 }
 
 async fn set_dist_tag(
-    State((store, _)): State<AppState>,
+    State((store, auth)): State<AppState>,
+    headers: HeaderMap,
+    peer: Option<ConnectInfo<SocketAddr>>,
     Path((name, tag)): Path<(String, String)>,
     Json(body): Json<SetDistTagBody>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    auth.authorize_npm_write_from(&headers, &name, peer.map(|ConnectInfo(address)| address))
+        .await?;
     let mut pkg = store
         .get_package(&name)
         .await
@@ -439,6 +547,16 @@ async fn set_dist_tag(
     }
 
     let version = body.version;
+    if let Some(binding_generation) = auth.trusted_binding_generation(&headers, &name) {
+        let updated = store
+            .set_trusted_dist_tag(&name, &tag, &version, binding_generation)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        if !updated {
+            return Err(StatusCode::FORBIDDEN);
+        }
+        return Ok(Json(serde_json::json!({"tag": tag, "version": version})));
+    }
     pkg.dist_tags.insert(tag.clone(), version.clone());
     store
         .put_package(&pkg)
@@ -449,9 +567,13 @@ async fn set_dist_tag(
 }
 
 async fn delete_dist_tag(
-    State((store, _)): State<AppState>,
+    State((store, auth)): State<AppState>,
+    headers: HeaderMap,
+    peer: Option<ConnectInfo<SocketAddr>>,
     Path((name, tag)): Path<(String, String)>,
 ) -> Result<StatusCode, StatusCode> {
+    auth.authorize_npm_delete_from(&headers, &name, peer.map(|ConnectInfo(address)| address))
+        .await?;
     let mut pkg = store
         .get_package(&name)
         .await
@@ -485,24 +607,41 @@ struct AddUserBody {
 async fn adduser(
     State((_, auth)): State<AppState>,
     Path(name): Path<String>,
+    headers: HeaderMap,
     Json(body): Json<AddUserBody>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    // Only administrators grant publishing rights; public accounts are viewers.
+    // Chỉ admin cấp quyền publish; tài khoản công khai chỉ có quyền đọc.
+    let privileged = auth
+        .authenticate_headers(&headers)
+        .is_some_and(|user| user.is_admin);
+    if !privileged
+        && (!body.scopes.is_empty() || body.role.as_deref().is_some_and(|r| r != "viewer"))
+    {
+        return Err(StatusCode::FORBIDDEN);
+    }
     let name = name.strip_prefix("org.couchdb.user:").unwrap_or(&name);
-    let role = body
-        .role
-        .as_deref()
-        .and_then(|role| role.parse::<crate::auth::UserRole>().ok())
-        .unwrap_or(crate::auth::UserRole::Publisher);
+    // Reject unknown roles instead of silently downgrading a provisioning request.
+    // Báo lỗi role không hợp lệ để admin không tưởng đã cấp đúng quyền.
+    let role = match body.role.as_deref().unwrap_or("viewer") {
+        "viewer" => crate::auth::UserRole::Viewer,
+        "publisher" => crate::auth::UserRole::Publisher,
+        "admin" => crate::auth::UserRole::Admin,
+        _ => return Err(StatusCode::BAD_REQUEST),
+    };
+    if name.trim().is_empty() || body.password.is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
     let user = crate::auth::User {
         name: name.to_string(),
-        is_admin: false,
+        is_admin: privileged && role == crate::auth::UserRole::Admin,
         role,
         scopes: body.scopes,
         password: Some(body.password),
         email: body.email,
     };
     let token = uuid::Uuid::new_v4().to_string();
-    auth.add_user(token.clone(), user);
+    auth.register_user(token.clone(), user).await?;
 
     Ok(Json(serde_json::json!({
         "ok": true,
@@ -513,19 +652,30 @@ async fn adduser(
 
 async fn get_dist_tags_scoped(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path((scope, name)): Path<(String, String)>,
     Query(query): Query<DistTagQuery>,
 ) -> Result<Json<HashMap<String, String>>, StatusCode> {
-    get_dist_tags(State(state), Path(scoped_full(&scope, &name)), Query(query)).await
+    get_dist_tags(
+        State(state),
+        headers,
+        Path(scoped_full(&scope, &name)),
+        Query(query),
+    )
+    .await
 }
 
 async fn set_dist_tag_scoped(
     State(state): State<AppState>,
+    headers: HeaderMap,
+    peer: Option<ConnectInfo<SocketAddr>>,
     Path((scope, name, tag)): Path<(String, String, String)>,
     Json(body): Json<SetDistTagBody>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     set_dist_tag(
         State(state),
+        headers,
+        peer,
         Path((scoped_full(&scope, &name), tag)),
         Json(body),
     )
@@ -534,9 +684,17 @@ async fn set_dist_tag_scoped(
 
 async fn delete_dist_tag_scoped(
     State(state): State<AppState>,
+    headers: HeaderMap,
+    peer: Option<ConnectInfo<SocketAddr>>,
     Path((scope, name, tag)): Path<(String, String, String)>,
 ) -> Result<StatusCode, StatusCode> {
-    delete_dist_tag(State(state), Path((scoped_full(&scope, &name), tag))).await
+    delete_dist_tag(
+        State(state),
+        headers,
+        peer,
+        Path((scoped_full(&scope, &name), tag)),
+    )
+    .await
 }
 
 async fn delete_user(
@@ -544,13 +702,7 @@ async fn delete_user(
     Path(name): Path<String>,
     headers: HeaderMap,
 ) -> Result<StatusCode, StatusCode> {
-    let token = headers
-        .get("authorization")
-        .and_then(|h| h.to_str().ok())
-        .and_then(|s| s.strip_prefix("Bearer "));
-    if !matches!(auth.admin_token.as_deref(), Some(t) if Some(t) == token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
+    auth.authorize_admin(&headers)?;
     let name = name
         .strip_prefix("org.couchdb.user:")
         .unwrap_or(&name)
@@ -567,13 +719,7 @@ async fn revoke_token(
     Path(token): Path<String>,
     headers: HeaderMap,
 ) -> Result<StatusCode, StatusCode> {
-    let caller = headers
-        .get("authorization")
-        .and_then(|h| h.to_str().ok())
-        .and_then(|s| s.strip_prefix("Bearer "));
-    if !matches!(auth.admin_token.as_deref(), Some(t) if Some(t) == caller) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
+    auth.authorize_admin(&headers)?;
     if !auth.remove_token(&token).await.unwrap_or(false) {
         return Err(StatusCode::NOT_FOUND);
     }
@@ -590,13 +736,14 @@ async fn whoami(
         .and_then(|s| s.strip_prefix("Bearer "))
         .map(String::from);
 
-    if let Some(token) = token {
-        if let Some(user) = auth.verify_token(&token) {
-            return Ok(Json(serde_json::json!({
-                "username": user.name,
-                "is_admin": user.is_admin
-            })));
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Some(token) = token
+        && let Some(user) = auth.verify_token(&token)
+    {
+        return Ok(Json(serde_json::json!({
+            "username": user.name,
+            "is_admin": user.is_admin
+        })));
     }
 
     Err(StatusCode::UNAUTHORIZED)
@@ -612,9 +759,11 @@ struct SearchQuery {
 }
 
 async fn search(
-    State((store, _)): State<AppState>,
+    State((store, auth)): State<AppState>,
+    headers: HeaderMap,
     Query(query): Query<SearchQuery>,
 ) -> Result<Json<SearchResult>, StatusCode> {
+    auth.authorize_global_read(&headers)?;
     let limit = query.size.unwrap_or(20).min(100);
     let offset = query.from.unwrap_or(0);
     let results = store
@@ -638,3 +787,7 @@ async fn batch_publish(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     Err(StatusCode::NOT_IMPLEMENTED)
 }
+
+#[cfg(test)]
+#[path = "test/npm.rs"]
+mod tarball_scheme_tests;

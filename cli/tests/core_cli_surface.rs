@@ -77,9 +77,9 @@ fn test_primary_non_web_create_commands_scaffold_real_projects() {
             "ecosystem = \"app\"",
         ),
         (
-            vec!["create-lib", "lib-demo"],
+            vec!["create-lib", "rust", "lib-demo"],
             "lib-demo",
-            "package.json",
+            "Cargo.toml",
             "ecosystem = \"lib\"",
         ),
     ];

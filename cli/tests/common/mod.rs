@@ -1,10 +1,27 @@
 #![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::Instant;
 
 const MANIFEST: &str = env!("CARGO_MANIFEST_DIR");
+const COMMAND_TIMEOUT_SECS: u64 = 300;
+
+thread_local! {
+    /// Each integration test gets isolated caches shared by its CLI child processes.
+    /// Mỗi integration test có cache riêng, dùng chung cho các tiến trình CLI con.
+    static ISOLATED_TEST_CACHE: std::cell::OnceCell<tempfile::TempDir> = const {
+        std::cell::OnceCell::new()
+    };
+}
+
+fn isolated_test_cache_root() -> PathBuf {
+    ISOLATED_TEST_CACHE.with(|cache| {
+        cache
+            .get_or_init(|| tempfile::tempdir().expect("create isolated MGC test cache"))
+            .path()
+            .to_path_buf()
+    })
+}
 
 /// Run mgc command from workspace root.
 pub fn mgc(args: &[&str]) -> (bool, String) {
@@ -17,12 +34,6 @@ pub fn mgc_in(dir: &Path, args: &[&str]) -> (bool, String) {
 }
 
 fn run_mg(args: &[&str], cwd: &Path) -> (bool, String) {
-    let workspace_manifest = Path::new(MANIFEST).join("../Cargo.toml");
-    let workspace_root = workspace_manifest
-        .parent()
-        .expect("workspace manifest should have a parent");
-    let debug_bin = workspace_root.join("target").join("debug").join("mgc");
-
     let runtime_bin = std::env::var("CARGO_BIN_EXE_mgc")
         .ok()
         .map(PathBuf::from)
@@ -30,22 +41,35 @@ fn run_mg(args: &[&str], cwd: &Path) -> (bool, String) {
     let compile_bin = option_env!("CARGO_BIN_EXE_mgc")
         .map(PathBuf::from)
         .filter(|path| path.exists());
-
-    let mut command = if let Some(bin) = runtime_bin.or(compile_bin) {
-        Command::new(bin)
-    } else if debug_bin.exists() {
-        Command::new(debug_bin)
-    } else {
-        let mut fallback = Command::new("cargo");
-        fallback
-            .arg("run")
-            .arg("--bin")
-            .arg("mgc")
-            .arg("--manifest-path")
-            .arg(&workspace_manifest)
-            .arg("--");
-        fallback
+    let bin = runtime_bin
+        .or(compile_bin)
+        .expect("Cargo must provide CARGO_BIN_EXE_mgc for CLI integration tests");
+    let mut options = mgc_exec::run::ExecOptions {
+        cwd: Some(cwd.to_path_buf()),
+        timeout: Some(std::time::Duration::from_secs(COMMAND_TIMEOUT_SECS)),
+        capture_full_stdout: true,
+        // A CLI error is evidence returned to the test, never a successful command.
+        // Trả mã lỗi cho assertion của test, không coi CLI lỗi là thành công.
+        allowed_exit_codes: (1..=255).collect(),
+        ..Default::default()
     };
+    let cache_root = isolated_test_cache_root();
+    options.env.push((
+        "MGC_TEMPLATES_DIR".into(),
+        cache_root.join("templates").to_string_lossy().into_owned(),
+    ));
+    options.env.push((
+        "MGC_SCAFFOLDS_DIR".into(),
+        cache_root.join("scaffolds").to_string_lossy().into_owned(),
+    ));
+    options.env.push((
+        "XDG_CACHE_HOME".into(),
+        cache_root.join("xdg-cache").to_string_lossy().into_owned(),
+    ));
+
+    let workspace_root = Path::new(MANIFEST)
+        .parent()
+        .expect("CLI manifest should have a parent");
 
     // Only pin workspace templates when the tree actually holds template
     // content — the repo may keep just placeholder READMEs and rely on the
@@ -59,22 +83,38 @@ fn run_mg(args: &[&str], cwd: &Path) -> (bool, String) {
         .is_file();
 
     if template_contract {
-        command.env("MAGICORE_TEMPLATE_DIR", template_disk);
+        options.env.push((
+            "MAGICORE_TEMPLATE_DIR".into(),
+            template_disk.to_string_lossy().into_owned(),
+        ));
     }
 
-    let output = command
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .expect("failed to run mgc");
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    run_binary_with_options(&bin, args, &options)
+}
+
+pub fn run_binary_with_options(
+    bin: &Path,
+    args: &[&str],
+    options: &mgc_exec::run::ExecOptions,
+) -> (bool, String) {
+    // Reuse the platform's bounded process-tree executor instead of unbounded output().
+    // Dùng executor có timeout và kill cây tiến trình thay output() không giới hạn.
+    let arguments = args
+        .iter()
+        .map(|arg| (*arg).to_string())
+        .collect::<Vec<_>>();
+    let output = match mgc_exec::run::run_project_binary(bin, &arguments, options) {
+        Ok(report) => report,
+        Err(error) => return (false, format!("MGC test command failed: {error:#}")),
+    };
+    let stdout = output.stdout_full;
+    let stderr = output.stderr_tail;
     let combined = if stderr.is_empty() {
         stdout
     } else {
         format!("{stdout}\n{stderr}")
     };
-    (output.status.success(), combined)
+    (output.exit_code == 0, combined)
 }
 
 /// Create a temp directory for scaffold testing.

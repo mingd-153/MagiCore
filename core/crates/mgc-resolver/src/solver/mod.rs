@@ -92,7 +92,7 @@ impl From<String> for SolveError {
 
 /// Dependency provider trait — each ecosystem must implement this.
 ///
-/// ⚠ Both methods return `Result`. On network failure, error propagates.
+/// WARN: Both methods return `Result`. On network failure, error propagates.
 ///    Empty vec is valid (package exists with no versions / no deps).
 #[async_trait]
 pub trait DependencyProvider: Send + Sync {
@@ -236,27 +236,28 @@ pub fn check_dependency_confusion(
                     "Dependency confusion: '{}' is both workspace package and external dep. Use \"workspace:*\".", dep.name
                 ));
         }
-        if dep.name.starts_with('@') {
-            if let Some(scope) = dep.name.split('/').next() {
-                if let Some(expected) = scoped_registries.get(scope) {
-                    if dep.registry.as_deref() != Some(expected.as_str()) {
-                        warnings.push(format!(
-                            "Dependency confusion: '{}' should resolve from '{}' but resolves from '{}'",
-                            dep.name, expected, dep.registry.as_deref().unwrap_or("public npm")
-                        ));
-                    }
-                }
-            }
+        // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+        if dep.name.starts_with('@')
+            && let Some(scope) = dep.name.split('/').next()
+            && let Some(expected) = scoped_registries.get(scope)
+            && dep.registry.as_deref() != Some(expected.as_str())
+        {
+            warnings.push(format!(
+                "Dependency confusion: '{}' should resolve from '{}' but resolves from '{}'",
+                dep.name,
+                expected,
+                dep.registry.as_deref().unwrap_or("public npm")
+            ));
         }
-        if !trusted_registries.is_empty() {
-            if let Some(ref reg) = dep.registry {
-                if !trusted_registries.contains(reg) {
-                    warnings.push(format!(
-                        "Dependency confusion: '{}' from '{}' not in trusted registries",
-                        dep.name, reg
-                    ));
-                }
-            }
+        // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+        if !trusted_registries.is_empty()
+            && let Some(ref reg) = dep.registry
+            && !trusted_registries.contains(reg)
+        {
+            warnings.push(format!(
+                "Dependency confusion: '{}' from '{}' not in trusted registries",
+                dep.name, reg
+            ));
         }
         // Typosquat check: Levenshtein distance against top npm packages
         if !dep.name.starts_with('@') && !dep.name.contains('/') {
@@ -335,10 +336,21 @@ pub struct Resolver {
 
 impl std::fmt::Debug for Resolver {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Debug must never panic: poisoned memos render as placeholders.
+        let dedupe_pref = self
+            .dedupe_pref
+            .read()
+            .map(|guard| format!("{:?}", *guard))
+            .unwrap_or_else(|_| "<poisoned>".to_string());
+        let existing_versions = self
+            .existing_versions
+            .read()
+            .map(|guard| format!("{} entries", guard.len()))
+            .unwrap_or_else(|_| "<poisoned>".to_string());
         f.debug_struct("Resolver")
             .field("overrides", &self.overrides)
-            .field("dedupe_pref", &self.dedupe_pref.read().unwrap())
-            .field("existing_versions", &self.existing_versions.read().unwrap())
+            .field("dedupe_pref", &dedupe_pref)
+            .field("existing_versions", &existing_versions)
             .finish()
     }
 }
@@ -387,14 +399,20 @@ impl Resolver {
     }
 
     /// Set dedupe preference (02 §2.1). Default is PreferLatest (safe).
+    /// Poisoned lock keeps the previous preference instead of panicking.
     pub fn set_dedupe_pref(&self, pref: DedupePref) {
-        *self.dedupe_pref.write().unwrap() = pref;
+        if let Ok(mut guard) = self.dedupe_pref.write() {
+            *guard = pref;
+        }
     }
 
     /// Provide versions already present in the project (from lockfile) so
     /// PreferExisting can reuse them instead of installing new instances.
+    /// Poisoned lock keeps the previous table instead of panicking.
     pub fn set_existing_versions(&self, existing: HashMap<String, Version>) {
-        *self.existing_versions.write().unwrap() = existing;
+        if let Ok(mut guard) = self.existing_versions.write() {
+            *guard = existing;
+        }
     }
 
     /// Get dependency memoization cache statistics.
@@ -420,12 +438,22 @@ impl Resolver {
         spec: &str,
         versions: &[Version],
     ) -> Option<Version> {
-        if *self.dedupe_pref.read().unwrap() == DedupePref::PreferExisting {
-            if let Some(existing) = self.existing_versions.read().unwrap().get(name) {
-                if constraint.matches(existing) {
-                    return Some(existing.clone());
-                }
-            }
+        // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+        // Poisoned preference memo falls back to normal selection
+        // (PreferLatest) instead of panicking the resolve.
+        let prefer_existing = matches!(
+            self.dedupe_pref.read(),
+            Ok(guard) if *guard == DedupePref::PreferExisting
+        );
+        if prefer_existing
+            && let Some(existing) = self
+                .existing_versions
+                .read()
+                .ok()
+                .and_then(|guard| guard.get(name).cloned())
+            && constraint.matches(&existing)
+        {
+            return Some(existing);
         }
         Self::select_best_version(versions, constraint, spec)
     }
@@ -629,7 +657,7 @@ impl Resolver {
                     None => {
                         return Err(SolveError {
                             message: format!("no version of '{}' matches '{}'", name_str, spec),
-                        })
+                        });
                     }
                 }
             }
@@ -646,7 +674,9 @@ impl Resolver {
                 let mut dependency_results = HashMap::new();
                 let mut uncached_ids = Vec::new();
                 {
-                    let cache = self.dep_memo_cache.read().unwrap();
+                    let cache = self.dep_memo_cache.read().map_err(|_| SolveError {
+                        message: "dependency memo cache lock poisoned".to_string(),
+                    })?;
                     for id in &ids {
                         let key = format!("{}@{}", id.name_str(), id.version());
                         if let Some(cached_deps) = cache.get(&key) {
@@ -672,7 +702,9 @@ impl Resolver {
                         })?;
 
                     // Store in cache
-                    let mut cache = self.dep_memo_cache.write().unwrap();
+                    let mut cache = self.dep_memo_cache.write().map_err(|_| SolveError {
+                        message: "dependency memo cache lock poisoned".to_string(),
+                    })?;
                     for (id, deps) in fetched {
                         let key = format!("{}@{}", id.name_str(), id.version());
                         let deps_arc = Arc::<[ResolvedDep]>::from(deps.clone());

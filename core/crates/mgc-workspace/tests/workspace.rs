@@ -2,8 +2,8 @@
 //! mgc-workspace tests — RULE §5 (test/).
 
 use mgc_workspace::{
-    discover_workspace_targets, filter_matches, topo_levels, WorkspaceGraph, WorkspaceNode,
-    WorkspacePackageManifest,
+    WorkspaceGraph, WorkspaceNode, WorkspacePackageManifest, discover_workspace_targets,
+    filter_matches, topo_levels,
 };
 use std::path::{Path, PathBuf};
 
@@ -86,6 +86,41 @@ fn discover_respects_custom_layout() {
         .collect();
     assert!(names.iter().any(|n| n.ends_with("x")));
     assert!(names.iter().any(|n| n.ends_with("y")));
+}
+
+#[test]
+fn discover_rejects_layout_paths_that_escape_the_project_root() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("project");
+    let outside = tmp.path().join("outside");
+    std::fs::create_dir_all(outside.join("pkg")).unwrap();
+    std::fs::write(outside.join("pkg/package.json"), "{}").unwrap();
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("magicore.workspace.toml"),
+        "[layout]\napps_dir = \"../outside\"\npackages_dir = \"packages\"\n",
+    )
+    .unwrap();
+
+    let error = discover_workspace_targets(&root).unwrap_err();
+
+    assert!(error.to_string().contains("workspace layout path"));
+}
+
+#[cfg(unix)]
+#[test]
+fn discover_rejects_symlinked_workspace_directories() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("project");
+    let outside = tmp.path().join("outside");
+    std::fs::create_dir_all(outside.join("pkg")).unwrap();
+    std::fs::write(outside.join("pkg/package.json"), "{}").unwrap();
+    std::fs::create_dir_all(&root).unwrap();
+    std::os::unix::fs::symlink(&outside, root.join("apps")).unwrap();
+
+    let error = discover_workspace_targets(&root).unwrap_err();
+
+    assert!(error.to_string().contains("symlink"));
 }
 
 // --- graph + topo ---
@@ -389,5 +424,73 @@ fn test_computation_caching_roundtrip_and_invalidation() {
     assert!(
         should_rebuild_dep_changed,
         "Changed upstream dependency must trigger rebuild"
+    );
+}
+
+#[test]
+fn computation_cache_rejects_missing_package_root() {
+    let tmp = tempfile::tempdir().unwrap();
+    let missing_root = tmp.path().join("missing-package");
+
+    let result = mgc_workspace::compute_package_source_hash(&missing_root);
+
+    assert!(
+        result.is_err(),
+        "a missing source tree must not hash as empty"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn computation_cache_rejects_symlinked_source_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg_root = tmp.path().join("package");
+    let outside = tmp.path().join("outside.ts");
+    std::fs::create_dir_all(&pkg_root).unwrap();
+    std::fs::write(&outside, "outside source").unwrap();
+    std::os::unix::fs::symlink(&outside, pkg_root.join("source.ts")).unwrap();
+
+    let result = mgc_workspace::compute_package_source_hash(&pkg_root);
+
+    assert!(
+        result.is_err(),
+        "a symlink must not enter a cached source hash"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn computation_cache_rejects_symlinked_source_directory() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg_root = tmp.path().join("package");
+    let outside = tmp.path().join("outside");
+    std::fs::create_dir_all(&pkg_root).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("source.ts"), "outside source").unwrap();
+    std::os::unix::fs::symlink(&outside, pkg_root.join("linked")).unwrap();
+
+    let result = mgc_workspace::compute_package_source_hash(&pkg_root);
+
+    assert!(
+        result.is_err(),
+        "a symlinked directory must not enter a cached source hash"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn computation_cache_rejects_symlinked_package_root() {
+    let tmp = tempfile::tempdir().unwrap();
+    let real_root = tmp.path().join("real-package");
+    let linked_root = tmp.path().join("linked-package");
+    std::fs::create_dir_all(&real_root).unwrap();
+    std::fs::write(real_root.join("source.ts"), "source").unwrap();
+    std::os::unix::fs::symlink(&real_root, &linked_root).unwrap();
+
+    let result = mgc_workspace::compute_package_source_hash(&linked_root);
+
+    assert!(
+        result.is_err(),
+        "a symlinked package root must not be cached"
     );
 }

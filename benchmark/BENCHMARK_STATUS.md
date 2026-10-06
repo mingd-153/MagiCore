@@ -1,6 +1,50 @@
-# Benchmark Status — 2026-08-27
+# Benchmark Status — INVALIDATED (RC-3 Audit)
 
-## Current Progress
+> **📌 SINGLE SOURCE OF TRUTH (2026-09-12)**: This file is the ONLY
+> authoritative benchmark status. Every performance number anywhere in
+> this repository must carry one of four labels — **VALIDATED**
+> (reproduced under the strict analyzer), **EXPERIMENTAL** (run but not
+> validated), **UNVERIFIED** (no acceptable evidence), **INVALIDATED**
+> (withdrawn). As of this writing there are **ZERO VALIDATED numbers**;
+> any older file quoting speeds (BENCHMARK_SUMMARY_*, results/*.md,
+> README claims predating this banner) is superseded here.
+
+> **⚠️ NOTICE (2026-09-05)**: All performance claims from prior releases (v1.0.x, RC-1, RC-2) have been **WITHDRAWN** due to validation gaps found in RC-2.1 audit. Data marked **INVALIDATED** pending rerun with strict analyzer.
+
+## Current Status: DATA VALIDATION IN PROGRESS
+
+**Status**: READY FOR EXECUTION
+
+### What's New (P1.1 Fix)
+
+**Infrastructure Complete:**
+- ✅ `run_suite_20.sh`: Automated 20-run benchmark suite per PM
+- ✅ `analyze_results.py`: Statistical analysis (median/p95/stddev)
+- ✅ Methodology updated: Target 20-30 runs (was 5)
+- ✅ Results directory: `benchmark/results/p1_suite/`
+
+**Scripts Created:**
+```bash
+# Run 20 benchmarks for mgc
+./benchmark/scripts/run_suite_20.sh mgc
+
+# Run 20 benchmarks for pnpm
+./benchmark/scripts/run_suite_20.sh pnpm
+
+# Analyze results (median/p95/stddev)
+./benchmark/scripts/analyze_results.py mgc
+./benchmark/scripts/analyze_results.py pnpm
+```
+
+**Statistical Measures (P1.1 Requirement):**
+- ✅ Median (50th percentile)
+- ✅ P95 (95th percentile)
+- ✅ StdDev (standard deviation)
+- ✅ CV (coefficient of variation)
+- ✅ Min/Max (range)
+- ✅ Mean (average)
+
+### Previous Status (Reference)
 
 **Task #2 Status:** IN PROGRESS (sample runs to verify infrastructure)
 
@@ -109,3 +153,70 @@ Result: Faster overall completion
 ---
 
 **Status:** Benchmark infrastructure ready, sample run identified issues (timeouts), pivot to parallel Gates recommended.
+
+
+## Execution Plan (P1.1)
+
+### Phase 1: mgc Benchmark (20 runs)
+```bash
+./benchmark/scripts/run_suite_20.sh mgc
+```
+**Estimated time**: 1-2 hours (depends on cold/warm install times)
+**Output**: `benchmark/results/p1_suite/mgc_run1.json` ... `mgc_run20.json`
+
+### Phase 2: pnpm Benchmark (20 runs)
+```bash
+./benchmark/scripts/run_suite_20.sh pnpm
+```
+**Estimated time**: 2-3 hours (pnpm has higher variance)
+**Output**: `benchmark/results/p1_suite/pnpm_run1.json` ... `pnpm_run20.json`
+
+### Phase 3: Analysis
+```bash
+./benchmark/scripts/analyze_results.py mgc
+./benchmark/scripts/analyze_results.py pnpm
+```
+**Output**:
+- `mgc_analysis.json` - Statistical summary with median/p95/stddev
+- `pnpm_analysis.json` - Statistical summary with median/p95/stddev
+
+### Phase 4: Report Generation
+Update `BENCHMARK_SUMMARY_V1.0_FINAL.md` with:
+- 20-run statistical data
+- Median/P95/StdDev instead of just mean
+- Updated claims with higher confidence
+
+## P1.1 Completion Criteria
+
+- [x] Create `run_suite_20.sh` script
+- [x] Create `analyze_results.py` script
+- [x] Update methodology (5 runs → 20-30 runs)
+- [x] Document statistical measures (median/p95/stddev)
+- [x] Execute mgc 20-run suite (31 runs completed 2026-09-04) ✅
+- [x] Execute pnpm 20-run suite (24 runs completed 2026-09-04) ✅
+- [x] Run analysis scripts ✅
+- [x] Update BENCHMARK_SUMMARY with P1.1 data ✅
+
+**Status**: ⚠️ **DATA VALIDATION IN PROGRESS** (2026-09-05)
+
+**⚠️ ALL CLAIMS UNVERIFIED** - Audit identified methodology issues:
+- Analyzer accepted negative metrics, NaN, failed exit codes
+- Run counts inconsistent (claimed 139, actual valid unknown)
+- High CV (>100%) indicates mixed conditions
+- Workload normalization incomplete
+
+**Previous claims withdrawn pending clean benchmark**:
+- ~~"26x faster than pnpm"~~ - UNVERIFIED, rerun required
+- ~~"21x faster P95"~~ - UNVERIFIED
+- All comparative claims suspended
+
+**Next steps**:
+1. Run clean benchmark with strict validation
+2. Verify identical workload (manifest hash, lockfile hash)
+3. Controlled environment (cache state, network)
+4. Statistical significance with confidence intervals
+
+**P1.1 status**: Infrastructure complete, data validation incomplete
+**Documentation**: See `benchmark/results/FULL_PM_COMPARISON.md` for current status
+
+**For public beta**: No performance claims until validation completes.

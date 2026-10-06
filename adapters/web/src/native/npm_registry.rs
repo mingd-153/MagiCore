@@ -4,6 +4,19 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
+/// Accept header for packument fetches: abbreviated (small) normally,
+/// FULL document when this client's age gate is armed (abbreviated docs
+/// omit the `time` map the gate needs — fetching abbreviated under an
+/// armed gate would silently keep everything).
+/// (Header Accept: full doc khi cổng tuổi bật.)
+fn metadata_accept_header(armed: bool) -> &'static str {
+    if armed {
+        "application/json"
+    } else {
+        "application/vnd.npm.install-v1+json"
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PackageMetadata {
     pub name: String,
@@ -23,11 +36,21 @@ pub struct VersionInfo {
     pub dev_dependencies: Option<std::collections::HashMap<String, String>>,
     #[serde(rename = "peerDependencies")]
     pub peer_dependencies: Option<std::collections::HashMap<String, String>>,
+    #[serde(default, rename = "peerDependenciesMeta")]
+    pub peer_dependencies_meta: std::collections::HashMap<String, PeerDependencyMeta>,
     #[serde(rename = "optionalDependencies")]
     pub optional_dependencies: Option<std::collections::HashMap<String, String>>,
     pub os: Option<Vec<String>>,
     pub cpu: Option<Vec<String>>,
     pub dist: Option<DistInfo>,
+}
+
+/// npm marks peer edges that must not be auto-installed via this metadata.
+/// (npm dùng metadata này để đánh dấu peer không được tự cài.)
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PeerDependencyMeta {
+    #[serde(default)]
+    pub optional: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,6 +67,11 @@ pub struct NpmRegistry {
     /// tiếp khi primary 404/network/5xx — KHÔNG fallback khi 401/403 (auth
     /// fail = fail-closed, không leak package từ registry khác).
     fallbacks: Vec<(String, Option<String>)>,
+    /// Per-client age-gate fetch mode (P0/F6): armed by the owning
+    /// provider per operation — full packuments + no stale abbreviated
+    /// cache. Never a process global.
+    /// (Chế độ fetch theo cổng tuổi — riêng từng client.)
+    age_armed: std::sync::atomic::AtomicBool,
 }
 
 pub enum DownloadedTarball {
@@ -86,43 +114,57 @@ fn network_profile_log(kind: &str, target: &str, message: &str) {
 
 /// Primary HTTP client: used for metadata fetches. Optimized for many concurrent
 /// short-lived requests against the same host (registry.npmjs.org).
-fn global_http_client() -> &'static reqwest::Client {
-    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
-    CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
-            // Increased pool: 256 concurrent connections per registry host.
-            .pool_max_idle_per_host(256)
-            .pool_idle_timeout(Duration::from_secs(90))
-            .tcp_keepalive(Duration::from_secs(30))
-            // Metadata responses are small; 30s is plenty.
-            .timeout(Duration::from_secs(30))
-            .user_agent(format!("MagiCore/{}", env!("CARGO_PKG_VERSION")))
-            // H2 stream window: 4 MiB — allows multiple concurrent streams without
-            // stalling when one response is slow.
-            .http2_initial_stream_window_size(4 * 1024 * 1024)
-            // H2 connection window: 32 MiB
-            .http2_initial_connection_window_size(32 * 1024 * 1024)
-            .build()
-            .expect("failed to build HTTP client")
-    })
+/// Built once and cheaply cloned (`Client` is reference-counted); a build
+/// failure (broken TLS backend) is an explicit error, never a
+/// process-wide panic.
+fn global_http_client() -> mgc_types::MgResult<reqwest::Client> {
+    use mgc_types::MgError;
+    static CLIENT: std::sync::OnceLock<Result<reqwest::Client, String>> =
+        std::sync::OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            reqwest::Client::builder()
+                // Increased pool: 256 concurrent connections per registry host.
+                .pool_max_idle_per_host(256)
+                .pool_idle_timeout(Duration::from_secs(90))
+                .tcp_keepalive(Duration::from_secs(30))
+                // Metadata responses are small; 30s is plenty.
+                .timeout(Duration::from_secs(30))
+                .user_agent(format!("MagiCore/{}", env!("CARGO_PKG_VERSION")))
+                // H2 stream window: 4 MiB — allows multiple concurrent streams without
+                // stalling when one response is slow.
+                .http2_initial_stream_window_size(4 * 1024 * 1024)
+                // H2 connection window: 32 MiB
+                .http2_initial_connection_window_size(32 * 1024 * 1024)
+                .build()
+                .map_err(|error| format!("cannot build HTTP client: {error}"))
+        })
+        .clone()
+        .map_err(MgError::Other)
 }
 
 /// Batch HTTP client: used for tarball streaming. Optimized for large bodies.
-pub fn batch_http_client() -> &'static reqwest::Client {
-    static BATCH_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
-    BATCH_CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
-            .pool_max_idle_per_host(256)
-            .pool_idle_timeout(Duration::from_secs(300))
-            .tcp_keepalive(Duration::from_secs(60))
-            // Long timeout for massive tarballs like @next/swc (>200 MB).
-            .timeout(Duration::from_secs(300))
-            .user_agent(format!("MagiCore/{}/batch", env!("CARGO_PKG_VERSION")))
-            .http2_initial_stream_window_size(16 * 1024 * 1024)
-            .http2_initial_connection_window_size(64 * 1024 * 1024)
-            .build()
-            .expect("failed to build batch HTTP client")
-    })
+/// Same fail-closed construction as [`global_http_client`].
+pub fn batch_http_client() -> mgc_types::MgResult<reqwest::Client> {
+    use mgc_types::MgError;
+    static BATCH_CLIENT: std::sync::OnceLock<Result<reqwest::Client, String>> =
+        std::sync::OnceLock::new();
+    BATCH_CLIENT
+        .get_or_init(|| {
+            reqwest::Client::builder()
+                .pool_max_idle_per_host(256)
+                .pool_idle_timeout(Duration::from_secs(300))
+                .tcp_keepalive(Duration::from_secs(60))
+                // Long timeout for massive tarballs like @next/swc (>200 MB).
+                .timeout(Duration::from_secs(300))
+                .user_agent(format!("MagiCore/{}/batch", env!("CARGO_PKG_VERSION")))
+                .http2_initial_stream_window_size(16 * 1024 * 1024)
+                .http2_initial_connection_window_size(64 * 1024 * 1024)
+                .build()
+                .map_err(|error| format!("cannot build batch HTTP client: {error}"))
+        })
+        .clone()
+        .map_err(MgError::Other)
 }
 
 fn jitter_ms(attempt: u32) -> u64 {
@@ -138,6 +180,7 @@ impl NpmRegistry {
             registry_url: registry_url.to_string(),
             token: None,
             fallbacks: Vec::new(),
+            age_armed: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -146,6 +189,7 @@ impl NpmRegistry {
             registry_url: registry_url.to_string(),
             token,
             fallbacks: Vec::new(),
+            age_armed: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -159,7 +203,22 @@ impl NpmRegistry {
             registry_url: registry_url.to_string(),
             token,
             fallbacks,
+            age_armed: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    /// Arm/disarm full-packument fetch mode for this client (called by
+    /// the owning provider when it (re-)arms its age policy).
+    /// (Bật/tắt chế độ fetch full doc cho client này.)
+    pub fn set_age_gate_armed(&self, armed: bool) {
+        self.age_armed
+            .store(armed, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Full packuments when armed (abbreviated docs omit `time`).
+    /// (Full doc khi cổng tuổi bật.)
+    pub fn age_gate_armed(&self) -> bool {
+        self.age_armed.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     fn chain(&self) -> Vec<(String, Option<String>)> {
@@ -197,25 +256,29 @@ impl NpmRegistry {
         &self,
         package: &str,
     ) -> Result<(PackageMetadata, Option<String>)> {
-        let client = global_http_client();
+        let client = global_http_client().map_err(|error| anyhow::anyhow!("{error}"))?;
         let chain = self.chain();
         let mut last_err: Option<anyhow::Error> = None;
+        let accept = metadata_accept_header(self.age_gate_armed());
 
         for (url, token) in chain {
             let endpoint = format!("{}/{}", url.trim_end_matches('/'), package);
             let endpoint_for_closure = endpoint.clone();
             let token_for_closure = token.clone();
+            // `Client` is reference-counted — per-attempt clones are cheap.
+            let client = client.clone();
             let result = with_retry("metadata", package, move || {
                 let resp_future = client.get(&endpoint_for_closure);
                 let token_owned = token_for_closure.clone();
-                let metadata_future = async move {
+                // Return the async block directly — trả thẳng async block (clippy let_and_return).
+                async move {
                     let req = if let Some(tok) = token_owned.as_deref() {
                         resp_future.header("Authorization", format!("Bearer {tok}"))
                     } else {
                         resp_future
                     };
                     let resp = req
-                        .header("Accept", "application/vnd.npm.install-v1+json")
+                        .header("Accept", accept)
                         .send()
                         .await?
                         .error_for_status()?;
@@ -226,20 +289,21 @@ impl NpmRegistry {
                         .map(str::to_owned);
                     let metadata: PackageMetadata = resp.json().await?;
                     Ok((metadata, etag))
-                };
-                metadata_future
+                }
             })
             .await;
 
-            match result {
-                Ok(ok) => return Ok(ok),
-                Err(e) => {
-                    if is_auth_error(&e) {
-                        return Err(e);
-                    }
-                    last_err = Some(e);
-                }
+            // Return immediately on success — trả ngay khi thành công.
+            if let Ok(ok) = result {
+                return Ok(ok);
             }
+            let Err(e) = result else {
+                unreachable!("checked Ok arm above")
+            };
+            if is_auth_error(&e) {
+                return Err(e);
+            }
+            last_err = Some(e);
         }
 
         Err(last_err
@@ -253,11 +317,13 @@ impl NpmRegistry {
     ) -> Result<Option<(PackageMetadata, String)>> {
         let url = format!("{}/{}", self.registry_url, package);
         let etag_owned = etag.map(|s| s.to_string());
+        let client = global_http_client().map_err(|error| anyhow::anyhow!("{error}"))?;
 
         with_retry("metadata-conditional", package, move || {
+            let accept = metadata_accept_header(self.age_gate_armed());
             let mut req = self
-                .with_auth(global_http_client().get(&url), &url)
-                .header("Accept", "application/vnd.npm.install-v1+json");
+                .with_auth(client.get(&url), &url)
+                .header("Accept", accept);
             if let Some(ref etag_val) = etag_owned {
                 req = req.header("If-None-Match", etag_val);
             }
@@ -288,7 +354,12 @@ impl NpmRegistry {
     pub async fn download_tarball(&self, url: &str) -> Result<Vec<u8>> {
         with_retry("tarball", url, || async {
             let resp = self
-                .with_auth(global_http_client().get(url), url)
+                .with_auth(
+                    global_http_client()
+                        .map_err(|error| anyhow::anyhow!("{error}"))?
+                        .get(url),
+                    url,
+                )
                 .send()
                 .await?
                 .error_for_status()?;
@@ -317,21 +388,39 @@ impl NpmRegistry {
                 tokio::fs::create_dir_all(parent).await?;
             }
             let resp = self
-                .with_auth(batch_http_client().get(url), url)
+                .with_auth(
+                    batch_http_client()
+                        .map_err(|error| anyhow::anyhow!("{error}"))?
+                        .get(url),
+                    url,
+                )
                 .send()
                 .await?
                 .error_for_status()?;
 
-            let mut file = tokio::fs::File::create(dest).await?;
+            let mut file = tokio::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(dest)
+                .await?;
             let mut stream = resp.bytes_stream();
             let mut hasher = sha2::Sha512::new();
 
-            while let Some(chunk) = stream.next().await {
-                let chunk = chunk?;
-                hasher.update(&chunk);
-                file.write_all(&chunk).await?;
+            let streamed = async {
+                while let Some(chunk) = stream.next().await {
+                    let chunk = chunk?;
+                    hasher.update(&chunk);
+                    file.write_all(&chunk).await?;
+                }
+                file.flush().await?;
+                Ok::<(), anyhow::Error>(())
             }
-            file.flush().await?;
+            .await;
+            if let Err(error) = streamed {
+                drop(file);
+                let _ = tokio::fs::remove_file(dest).await;
+                return Err(error);
+            }
 
             let digest = hasher.finalize();
             let b64 = base64_encode(&digest);
@@ -355,7 +444,12 @@ impl NpmRegistry {
             }
 
             let resp = self
-                .with_auth(batch_http_client().get(url), url)
+                .with_auth(
+                    batch_http_client()
+                        .map_err(|error| anyhow::anyhow!("{error}"))?
+                        .get(url),
+                    url,
+                )
                 .send()
                 .await?
                 .error_for_status()?;
@@ -366,18 +460,31 @@ impl NpmRegistry {
                 return Ok(DownloadedTarball::Bytes(bytes.to_vec()));
             }
 
-            let mut file = tokio::fs::File::create(dest).await?;
+            let mut file = tokio::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(dest)
+                .await?;
             let mut stream = resp.bytes_stream();
             let mut hasher = sha2::Sha512::new();
             let mut bytes_len = 0u64;
 
-            while let Some(chunk) = stream.next().await {
-                let chunk = chunk?;
-                bytes_len += chunk.len() as u64;
-                hasher.update(&chunk);
-                file.write_all(&chunk).await?;
+            let streamed = async {
+                while let Some(chunk) = stream.next().await {
+                    let chunk = chunk?;
+                    bytes_len += chunk.len() as u64;
+                    hasher.update(&chunk);
+                    file.write_all(&chunk).await?;
+                }
+                file.flush().await?;
+                Ok::<(), anyhow::Error>(())
             }
-            file.flush().await?;
+            .await;
+            if let Err(error) = streamed {
+                drop(file);
+                let _ = tokio::fs::remove_file(dest).await;
+                return Err(error);
+            }
 
             let digest = hasher.finalize();
             let b64 = base64_encode(&digest);
@@ -418,7 +525,7 @@ pub async fn batch_fetch_metadata(
 }
 
 pub async fn batch_download_tarball(url: &str) -> Result<Vec<u8>> {
-    let client = batch_http_client();
+    let client = batch_http_client().map_err(|error| anyhow::anyhow!("{error}"))?;
     with_retry("batch-tarball", url, || async {
         let resp = client.get(url).send().await?.error_for_status()?;
         let bytes = resp.bytes().await?;
@@ -429,7 +536,7 @@ pub async fn batch_download_tarball(url: &str) -> Result<Vec<u8>> {
 
 /// Batch download kèm auth token (registry private)
 pub async fn batch_download_tarball_with_auth(url: &str, token: Option<&str>) -> Result<Vec<u8>> {
-    let client = batch_http_client();
+    let client = batch_http_client().map_err(|error| anyhow::anyhow!("{error}"))?;
     with_retry("batch-tarball", url, || async {
         let mut req = client.get(url);
         if let Some(t) = token {
@@ -547,7 +654,16 @@ where
             }
         }
     }
-    Err(last_error.expect("retry loop should capture an error"))
+    // The loop above always runs at least once and returns on the first
+    // success, so a fall-through guarantees an error was captured. The
+    // `None` arm is unreachable by construction — it carries a real error
+    // anyway so a future refactor can never turn it into a panic.
+    match last_error {
+        Some(error) => Err(error),
+        None => Err(anyhow::anyhow!(
+            "retry loop for {kind} {target} exhausted attempts without capturing an error"
+        )),
+    }
 }
 
 #[cfg(test)]

@@ -16,7 +16,7 @@ fn game_dev_bevy_runs_cargo() {
     .unwrap();
     let (cmd, args) = game_dev_command(&dir).unwrap();
     assert_eq!(cmd, "cargo");
-    assert_eq!(args, vec!["run"]);
+    assert_eq!(args, vec!["run", "--locked", "--offline"]);
 }
 
 #[test]

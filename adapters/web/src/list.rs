@@ -1,7 +1,7 @@
-//! `list.rs` — List installed web dependencies in node_modules / lockfile.
+//! `list.rs` — List installed web dependencies from materialized package manifests.
 
 use mgc_types::adapter::InstalledPackage;
-use mgc_types::{MgResult, PackageId, Version};
+use mgc_types::{MgError, MgResult, PackageId, Version};
 use std::path::Path;
 
 use crate::lockfile::{installed_package_version, read_web_lockfile_checked};
@@ -21,21 +21,22 @@ pub async fn run_list(project_root: &Path) -> MgResult<Vec<InstalledPackage>> {
                 continue;
             }
 
-            let version = installed_package_version(&path)
-                .or_else(|| {
-                    lockfile.as_ref().and_then(|lock| {
-                        lock.packages
-                            .iter()
-                            .find(|pkg| pkg.name == dep.name.as_str())
-                            .and_then(|pkg| Version::parse(&pkg.version).ok())
-                    })
-                })
-                .unwrap_or_else(|| Version::new(0, 0, 0));
+            let version = installed_package_version(&path).ok_or_else(|| MgError::Unsupported {
+                core: "web",
+                capability: "list installed package version",
+                guidance: format!(
+                    "cannot verify the installed version of '{}': its materialized package.json has no valid version; a lock pin alone is not proof of installed state",
+                    dep.name.as_str()
+                ),
+            })?;
 
             let integrity = lockfile.as_ref().and_then(|lock| {
                 lock.packages
                     .iter()
-                    .find(|pkg| pkg.name == dep.name.as_str())
+                    .find(|pkg| {
+                        pkg.name == dep.name.as_str()
+                            && Version::parse(&pkg.version).ok().as_ref() == Some(&version)
+                    })
                     .map(|pkg| pkg.integrity.clone())
             });
             let is_direct = lockfile

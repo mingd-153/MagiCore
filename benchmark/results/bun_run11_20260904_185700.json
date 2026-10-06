@@ -1,0 +1,26 @@
+{
+  "pm": "bun",
+  "run": 11,
+  "timestamp": "20260904_185700",
+  "machine": {
+  "cpu": "Apple M2",
+  "cores": 8,
+  "memory_gb": 16,
+  "os": "Darwin 25.5.0",
+  "node_version": "v25.9.0",
+  "timestamp": "20260904_185700"
+},
+  "cold_install": {
+    "duration_seconds": 127.931590000,
+    "disk_mb": 362,
+    "memory_delta_mb": 0
+  },
+  "warm_install": {
+    "duration_seconds": .412409000
+  },
+  "package_count": 20,
+  "logs": {
+    "cold": "bun install v1.3.14 (0d9b296a) Resolving dependencies error: Fail extracting tarball for \"@next/swc-darwin-arm64\" Resolved, downloaded and extracted [1231] error: Fail extracting tarball from @next/swc-darwin-arm64 ",
+    "warm": "bun install v1.3.14 (0d9b296a) Saved lockfile  + @types/lodash@4.17.25 + @types/node@20.19.43 (v26.4.1 available) + @types/react@18.3.31 (v19.2.18 available) + autoprefixer@10.5.4 + eslint@8.57.1 (v10.9.1 available) + postcss@8.5.28 + prettier@3.9.6 + tailwindcss@3.4.19 (v4.3.3 available) + typescript@5.9.3 (v7.0.2 available) + vitest@1.6.1 (v5.0.0 available) + axios@1.20.0 + clsx@2.1.1 + date-fns@2.30.0 (v4.4.0 available) + framer-motion@10.18.0 (v13.2.0 available) + lodash@4.18.1 + next@14.2.35 (v16.3.4 available) + react@18.3.1 (v19.2.8 available) "
+  }
+}

@@ -31,6 +31,11 @@ fn test_deploy_without_cicd_project_fails() {
 #[test]
 fn test_cicd_verbs_hint_direction() {
     let dir = common::work_dir();
+    std::fs::write(
+        dir.join("mgc.toml"),
+        "name = \"ci-test\"\necosystem = \"cicd\"\n[cicd]\nprovider = \"github-actions\"\n",
+    )
+    .unwrap();
     let (ok, out) = common::mgc_in(&dir, &["add-cicd", "somepkg"]);
     assert!(!ok, "add-cicd must fail");
     assert!(

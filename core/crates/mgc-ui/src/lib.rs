@@ -31,7 +31,7 @@ pub fn print_banner() {
     let banner = style(
         r#"
     ╔══════════════════════════════════════════╗
-    ║           🚀  MagiCore  🚀              ║
+    ║            MagiCore               ║
     ║      Universal Package Manager           ║
     ╚══════════════════════════════════════════╝
     "#,
@@ -127,7 +127,7 @@ pub fn warning(msg: &str) {
     if is_quiet() {
         return;
     }
-    println!("  {} {}", style("⚠").yellow().bold(), msg);
+    println!("  {} {}", style("WARN:").yellow().bold(), msg);
 }
 
 /// Print an info message
@@ -170,7 +170,7 @@ pub fn print_next_steps(project_name: &str) {
     );
     println!(
         "  {}",
-        style("┃           ✅  All done!                   ┃")
+        style("┃            All done!                   ┃")
             .green()
             .bold()
     );
@@ -188,6 +188,25 @@ pub fn print_next_steps(project_name: &str) {
 
 /// Print a summary table after install
 pub fn print_install_summary(added: usize, cached: usize, duration_ms: u64, disk_saved: &str) {
+    print_install_summary_source(added, cached, duration_ms, disk_saved, None)
+}
+
+/// Print a summary table after install, naming WHERE the cache bytes
+/// came from (P0-6/B-series honesty): "shared mgc store" when the
+/// mgc-owned shared store served the bytes, "native toolchain cache"
+/// when the toolchain's own cache did. Never let bytes=0 read as
+/// "nothing was cached".
+/// Bảng summary sau install, nêu rõ byte cache đến TỪ ĐÂU (P0-6/
+/// B-series): "shared mgc store" khi store chia sẻ của mgc phục vụ,
+/// "native toolchain cache" khi cache toolchain gốc phục vụ. bytes=0
+/// không bao giờ được đọc là "không cache được gì".
+pub fn print_install_summary_source(
+    added: usize,
+    cached: usize,
+    duration_ms: u64,
+    disk_saved: &str,
+    cache_source: Option<&str>,
+) {
     if is_quiet() {
         return;
     }
@@ -208,6 +227,13 @@ pub fn print_install_summary(added: usize, cached: usize, duration_ms: u64, disk
     );
     println!("  {} {:>3} packages installed", style("│").cyan(), added);
     println!("  {} {:>3} from cache", style("│").cyan(), cached);
+    if let Some(source) = cache_source {
+        println!(
+            "  {}   cache source: {}",
+            style("│").cyan(),
+            style(source).dim()
+        );
+    }
     println!("  {} {:>5} ms total", style("│").cyan(), duration_ms);
     println!(
         "  {} {:>10} saved (CAS dedup)",

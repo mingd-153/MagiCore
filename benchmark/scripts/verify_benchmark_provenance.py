@@ -89,59 +89,31 @@ def require_text(path: Path, snippets: tuple[str, ...]) -> list[str]:
 
 
 def main() -> int:
-    """Validate raw data and public docs — Kiểm tra raw data và tài liệu public."""
+    """Validate raw data and withdrawn-claim state — Kiểm tra dữ liệu và trạng thái rút claim."""
     mgc = load_suite("mgc")
     pnpm = load_suite("pnpm")
     if mgc.machine != pnpm.machine:
         raise ValueError(f"mixed machines across suites: mgc={mgc.machine}, pnpm={pnpm.machine}")
-    warm_ratio = mgc.warm_mean / pnpm.warm_mean
-    disk_overhead = round((mgc.disk_mb[0] - pnpm.disk_mb[0]) / pnpm.disk_mb[0] * 100)
 
-    mgc_rows = tuple(
-        f"| {run}   | {cold:<8.2f} | {warm:<8.2f} | {disk:<9} |"
-        for run, (cold, warm, disk) in enumerate(zip(mgc.cold, mgc.warm, mgc.disk_mb), start=1)
-    )
-    pnpm_rows = tuple(
-        f"| {run}   | {cold:<8.2f} | {warm:<8.2f} |"
-        for run, (cold, warm) in enumerate(zip(pnpm.cold, pnpm.warm), start=1)
-    )
-
-    expected = {
-        ROOT / "benchmark" / "results" / "BENCHMARK_SUMMARY_V1.0_FINAL.md": (
-            f"**pnpm**: {pnpm.cold_mean:.2f}s ± {pnpm.cold_stdev:.2f}s",
-            f"**pnpm**: {pnpm.warm_mean:.2f}s ± {pnpm.warm_stdev:.2f}s",
-            *mgc_rows,
-            *pnpm_rows,
-            f"| **Mean** | **{pnpm.cold_mean:.2f}** | **{pnpm.warm_mean:.2f}** |",
-            f"| **CV** | **{pnpm.cold_cv}%** | **{pnpm.warm_cv}%** |",
-            f"Measured: {mgc.cold_mean:.2f}s vs {pnpm.cold_mean:.2f}s pnpm average (5 runs each)",
-            f"**pnpm**: {pnpm.disk_mb[0]}MB (hardlink store)",
-        ),
-        ROOT / "README.md": (
-            f"| **Cold Install** | {mgc.cold_mean:.1f}s | {pnpm.cold_mean:.0f}s |",
-            f"| **Warm Install** | {mgc.warm_mean:.1f}s | {pnpm.warm_mean:.1f}s | pnpm {warm_ratio:.1f}x faster",
-            f"pnpm {pnpm.cold_cv}%",
-            f"| **Disk Usage** | {mgc.disk_mb[0]}MB | {pnpm.disk_mb[0]}MB | +{disk_overhead}% CAS overhead |",
-        ),
-        ROOT / "CHANGELOG.md": (
-            f"**Cold install**: {mgc.cold_mean:.2f}s average",
-            f"**Warm install**: {mgc.warm_mean:.2f}s (pnpm {warm_ratio:.1f}x faster",
-        ),
-        ROOT / "benchmark" / "BENCHMARK_METHODOLOGY.md": (
-            f"{pnpm.cold_mean:.2f}s / {mgc.cold_mean:.2f}s",
-            f"{mgc.cold_mean:.1f}s vs {pnpm.cold_mean:.0f}s pnpm",
-            f"High CV ({pnpm.cold_cv}%)",
+    invalidated_docs = {
+        ROOT / "benchmark" / "BENCHMARK_STATUS.md": ("INVALIDATED", "WITHDRAWN"),
+        ROOT / "benchmark" / "results" / "MGC_VS_PNPM_VALIDATED.md": (
+            "INVALIDATED",
+            "Do not cite or use for performance claims",
         ),
     }
-
     errors: list[str] = []
-    for path, snippets in expected.items():
+    for path, snippets in invalidated_docs.items():
         errors.extend(require_text(path, snippets))
 
-    # Reject stale absolute marketing claims — Chặn claim marketing tuyệt đối đã lỗi thời.
-    public_text = "\n".join(path.read_text(encoding="utf-8") for path in expected)
-    if re.search(r"\b(?:39|45(?:\.7)?)x\s+(?:faster|slower|speedup)\b", public_text, re.IGNORECASE):
-        errors.append("stale absolute performance multiplier remains in public documentation")
+    # Public release docs must not reactivate invalidated comparisons.
+    # Tài liệu phát hành public không được kích hoạt lại so sánh đã invalidated.
+    public_paths = (ROOT / "README.md", ROOT / "CHANGELOG.md")
+    public_text = "\n".join(path.read_text(encoding="utf-8") for path in public_paths)
+    if re.search(r"\b\d+(?:\.\d+)?x\s+(?:faster|slower|speedup)\b", public_text, re.IGNORECASE):
+        errors.append("active performance multiplier remains in public release documentation")
+    if "2.63s average" in public_text or "2.01s" in public_text:
+        errors.append("withdrawn V1.0 benchmark measurements remain in public release documentation")
 
     if errors:
         print("Benchmark provenance verification failed:", file=sys.stderr)
@@ -153,7 +125,7 @@ def main() -> int:
         print("Benchmark provenance verification failed: unexpected phased pnpm run 5", file=sys.stderr)
         return 1
 
-    print("Benchmark provenance verified from phased 2026-08-28 results.")
+    print("Legacy benchmark provenance parsed; public performance claims remain withdrawn.")
     return 0
 
 

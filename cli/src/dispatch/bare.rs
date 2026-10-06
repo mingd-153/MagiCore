@@ -1,5 +1,5 @@
-use crate::dispatch::types::{detect_ecosystem, CoreCommand, DispatchCommand};
 use crate::Commands;
+use crate::dispatch::types::{CoreCommand, DispatchCommand, detect_ecosystem};
 
 /// Bare verb commands (install/add/remove/update/list) → CoreCommand theo --core hoặc detect_ecosystem.
 pub fn bare_core_command(
@@ -10,7 +10,24 @@ pub fn bare_core_command(
 
     // Bare commands must use --core or a detected project marker.
     // Lệnh bare phải có --core hoặc marker project, không fallback web âm thầm.
-    let ecosystem = ecosystem.or_else(|| detect_ecosystem().ok().flatten());
+    let ecosystem = match ecosystem {
+        Some(core) => Some(core),
+        None => detect_ecosystem()?,
+    };
+
+    // The bare `install --offline` flag used to be threaded only to Web;
+    // other core variants silently discarded it. Until a lane explicitly
+    // implements cache-only replay, reject instead of pretending the
+    // caller's no-network constraint was honored.
+    // (`install --offline` trước đây bị bỏ âm thầm ở các core khác Web.)
+    if matches!(&command, Commands::Install { offline: true, .. })
+        && !matches!(ecosystem.as_deref(), Some("web" | "lib"))
+    {
+        anyhow::bail!(
+            "offline install is not implemented for core '{}'; the request was not run",
+            ecosystem.as_deref().unwrap_or("unknown")
+        );
+    }
 
     let dispatch = match command {
         Commands::Install {
@@ -22,6 +39,7 @@ pub fn bare_core_command(
             repair,
             dry_run,
             offline, // T4.1
+            compat_runtime,
         } => SomeCore(match require_ecosystem("install", ecosystem.as_deref())? {
             "web" => CoreCommand::InstallWeb {
                 packages,
@@ -31,18 +49,53 @@ pub fn bare_core_command(
                 prefer_dedupe,
                 repair,
                 offline, // T4.1
+                compat_runtime,
             },
-            "game" => CoreCommand::InstallGame { packages },
-            "ai" => CoreCommand::InstallAi { packages, dry_run },
-            "clo" => CoreCommand::InstallClo { packages, dry_run },
-            "cicd" => CoreCommand::InstallCicd { packages, dry_run },
-            "iot" => CoreCommand::InstallIot { packages },
-            "app" => CoreCommand::InstallApp { packages, dry_run },
-            "lib" => CoreCommand::InstallLib { packages },
+            "game" => CoreCommand::InstallGame {
+                packages,
+                compat_runtime,
+            },
+            "ai" => CoreCommand::InstallAi {
+                packages,
+                dry_run,
+                compat_runtime,
+                frozen,
+            },
+            "clo" => CoreCommand::InstallClo {
+                packages,
+                dry_run,
+                compat_runtime,
+            },
+            "cicd" => CoreCommand::InstallCicd {
+                packages,
+                dry_run,
+                compat_runtime,
+            },
+            "iot" => CoreCommand::InstallIot {
+                packages,
+                compat_runtime,
+            },
+            "app" => CoreCommand::InstallApp {
+                packages,
+                dry_run,
+                compat_runtime,
+                frozen,
+            },
+            "lib" => CoreCommand::InstallLib {
+                packages,
+                compat_runtime,
+                frozen,
+                offline,
+            },
+            "hardware" => CoreCommand::InstallHardware {
+                packages,
+                compat_runtime,
+            },
             other => return Err(crate::error::unknown_core(other)),
         }),
         Commands::Add {
             packages,
+            version,
             dev,
             global,
             exact,
@@ -50,7 +103,7 @@ pub fn bare_core_command(
             peer,
             no_save,
             no_install,
-            ..
+            compat_runtime,
         } => SomeCore(match require_ecosystem("add", ecosystem.as_deref())? {
             "web" => CoreCommand::AddWeb {
                 packages,
@@ -61,6 +114,8 @@ pub fn bare_core_command(
                 no_save,
                 install: !no_install,
                 global,
+                compat_runtime,
+                version,
             },
             "game" => CoreCommand::AddGame {
                 packages,
@@ -70,6 +125,8 @@ pub fn bare_core_command(
                 peer,
                 no_save,
                 global,
+                compat_runtime,
+                version,
             },
             "ai" => CoreCommand::AddAi {
                 packages,
@@ -79,6 +136,8 @@ pub fn bare_core_command(
                 peer,
                 no_save,
                 global,
+                compat_runtime,
+                version,
             },
             "clo" => CoreCommand::AddClo {
                 packages,
@@ -88,6 +147,8 @@ pub fn bare_core_command(
                 peer,
                 no_save,
                 global,
+                compat_runtime,
+                version,
             },
             "cicd" => CoreCommand::AddCicd {
                 packages,
@@ -97,6 +158,8 @@ pub fn bare_core_command(
                 peer,
                 no_save,
                 global,
+                compat_runtime,
+                version,
             },
             "iot" => CoreCommand::AddIot {
                 packages,
@@ -106,6 +169,8 @@ pub fn bare_core_command(
                 peer,
                 no_save,
                 global,
+                compat_runtime,
+                version,
             },
             "app" => CoreCommand::AddApp {
                 packages,
@@ -115,8 +180,14 @@ pub fn bare_core_command(
                 peer,
                 no_save,
                 global,
+                compat_runtime,
+                version,
             },
-            "hardware" => CoreCommand::AddHardware { packages },
+            "hardware" => CoreCommand::AddHardware {
+                packages,
+                compat_runtime,
+                version,
+            },
             "lib" => CoreCommand::AddLib {
                 packages,
                 dev,
@@ -125,51 +196,121 @@ pub fn bare_core_command(
                 peer,
                 no_save,
                 global,
+                compat_runtime,
+                version,
             },
             other => return Err(crate::error::unknown_core(other)),
         }),
         Commands::Remove {
             packages,
             no_install,
+            compat_runtime,
         } => SomeCore(match require_ecosystem("remove", ecosystem.as_deref())? {
             "web" => CoreCommand::RemoveWeb {
                 packages,
                 install: !no_install,
+                compat_runtime,
             },
-            "game" => CoreCommand::RemoveGame { packages },
-            "ai" => CoreCommand::RemoveAi { packages },
-            "clo" => CoreCommand::RemoveClo { packages },
-            "cicd" => CoreCommand::RemoveCicd { packages },
-            "iot" => CoreCommand::RemoveIot { packages },
-            "app" => CoreCommand::RemoveApp { packages },
-            "lib" => CoreCommand::RemoveLib { packages },
+            "game" => CoreCommand::RemoveGame {
+                packages,
+                compat_runtime,
+            },
+            "ai" => CoreCommand::RemoveAi {
+                packages,
+                compat_runtime,
+            },
+            "clo" => CoreCommand::RemoveClo {
+                packages,
+                compat_runtime,
+            },
+            "cicd" => CoreCommand::RemoveCicd {
+                packages,
+                compat_runtime,
+            },
+            "iot" => CoreCommand::RemoveIot {
+                packages,
+                compat_runtime,
+            },
+            "app" => CoreCommand::RemoveApp {
+                packages,
+                compat_runtime,
+            },
+            "lib" => CoreCommand::RemoveLib {
+                packages,
+                compat_runtime,
+            },
+            "hardware" => CoreCommand::RemoveHardware {
+                packages,
+                compat_runtime,
+            },
             other => return Err(crate::error::unknown_core(other)),
         }),
-        Commands::Update { packages, install } => {
-            SomeCore(match require_ecosystem("update", ecosystem.as_deref())? {
-                "web" => CoreCommand::UpdateWeb { packages, install },
-                "game" => CoreCommand::UpdateGame { packages, install },
-                "ai" => CoreCommand::UpdateAi { packages, install },
-                "clo" => CoreCommand::UpdateClo { packages, install },
-                "cicd" => CoreCommand::UpdateCicd { packages, install },
-                "iot" => CoreCommand::UpdateIot { packages, install },
-                "app" => CoreCommand::UpdateApp { packages, install },
-                "lib" => CoreCommand::UpdateLib { packages, install },
+        Commands::Update {
+            packages,
+            install,
+            compat_runtime,
+        } => SomeCore(match require_ecosystem("update", ecosystem.as_deref())? {
+            "web" => CoreCommand::UpdateWeb {
+                packages,
+                install,
+                compat_runtime,
+            },
+            "game" => CoreCommand::UpdateGame {
+                packages,
+                install,
+                compat_runtime,
+            },
+            "ai" => CoreCommand::UpdateAi {
+                packages,
+                install,
+                compat_runtime,
+            },
+            "clo" => CoreCommand::UpdateClo {
+                packages,
+                install,
+                compat_runtime,
+            },
+            "cicd" => CoreCommand::UpdateCicd {
+                packages,
+                install,
+                compat_runtime,
+            },
+            "iot" => CoreCommand::UpdateIot {
+                packages,
+                install,
+                compat_runtime,
+            },
+            "app" => CoreCommand::UpdateApp {
+                packages,
+                install,
+                compat_runtime,
+            },
+            "lib" => CoreCommand::UpdateLib {
+                packages,
+                install,
+                compat_runtime,
+            },
+            "hardware" => CoreCommand::UpdateHardware {
+                packages,
+                install,
+                compat_runtime,
+            },
+            other => return Err(crate::error::unknown_core(other)),
+        }),
+        Commands::List { compat_runtime } => {
+            SomeCore(match require_ecosystem("list", ecosystem.as_deref())? {
+                "web" => CoreCommand::ListWeb { compat_runtime },
+                "game" => CoreCommand::ListGame { compat_runtime },
+                "ai" => CoreCommand::ListAi { compat_runtime },
+                "clo" => CoreCommand::ListClo { compat_runtime },
+                "cicd" => CoreCommand::ListCicd { compat_runtime },
+                "iot" => CoreCommand::ListIot { compat_runtime },
+                "app" => CoreCommand::ListApp { compat_runtime },
+                "lib" => CoreCommand::ListLib { compat_runtime },
+                "hardware" => CoreCommand::ListHardware { compat_runtime },
                 other => return Err(crate::error::unknown_core(other)),
             })
         }
-        Commands::List => SomeCore(match require_ecosystem("list", ecosystem.as_deref())? {
-            "web" => CoreCommand::ListWeb,
-            "game" => CoreCommand::ListGame,
-            "ai" => CoreCommand::ListAi,
-            "clo" => CoreCommand::ListClo,
-            "cicd" => CoreCommand::ListCicd,
-            "iot" => CoreCommand::ListIot,
-            "app" => CoreCommand::ListApp,
-            "lib" => CoreCommand::ListLib,
-            "hardware" => CoreCommand::ListHardware,
-            other => return Err(crate::error::unknown_core(other)),
-        }),
         _ => unreachable!("Unhandled command"),
     };
     Ok(dispatch)

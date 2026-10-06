@@ -2,7 +2,7 @@
 //! Ed25519 ký và verify sử dụng ring
 
 use crate::{CryptoError, CryptoResult};
-use ring::signature::{Ed25519KeyPair, KeyPair as _, UnparsedPublicKey, ED25519};
+use ring::signature::{ED25519, Ed25519KeyPair, KeyPair as _, UnparsedPublicKey};
 use serde::{Deserialize, Serialize};
 
 /// Ed25519 signature (64 bytes) — Ed25519 chữ ký (64 bytes)

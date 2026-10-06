@@ -3,8 +3,8 @@
 
 //! Cache module tests for app adapter.
 
-use mgc_app_adapter::cache::{cache_dir, cache_size, clear_cache};
 use mgc_app_adapter::AppLanguage;
+use mgc_app_adapter::cache::{cache_dir, cache_size, clear_cache};
 
 #[test]
 fn flutter_cache_dir_points_to_pub_cache() {

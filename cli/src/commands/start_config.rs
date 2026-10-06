@@ -1,6 +1,6 @@
 // Start bind configuration — validates local production server binding.
 // Cấu hình bind cho `mgc start` — giữ mặc định local-first và port đúng RULE.
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 
 pub const DEFAULT_WEB_START_HOST: &str = "localhost";
 pub const DEFAULT_WEB_START_PORT: u16 = 4315;

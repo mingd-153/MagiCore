@@ -34,7 +34,7 @@ pub fn topo_levels(graph: &WorkspaceGraph) -> Result<Vec<Vec<usize>>, TopoError>
     let mut queue: std::collections::VecDeque<usize> = indegree
         .iter()
         .enumerate()
-        .filter(|(_, &degree)| degree == 0)
+        .filter(|(_, degree)| **degree == 0)
         .map(|(index, _)| index)
         .collect();
 
@@ -71,7 +71,7 @@ fn cycle_path(graph: &WorkspaceGraph, indegree: &[usize]) -> Vec<String> {
     let remaining: Vec<usize> = indegree
         .iter()
         .enumerate()
-        .filter(|(_, &degree)| degree > 0)
+        .filter(|(_, degree)| **degree > 0)
         .map(|(index, _)| index)
         .collect();
     if remaining.is_empty() {

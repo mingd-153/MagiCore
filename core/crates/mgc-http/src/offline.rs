@@ -1,7 +1,7 @@
 //! Offline mode (12 §9)
 //! (Deterministic offline - stale metadata with warning, cache-only)
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use reqwest::Client;
 use std::collections::HashMap;
 use std::path::Path;
@@ -35,8 +35,12 @@ impl OfflineClient {
 
             if age > self.ttl {
                 // Stale metadata - cho dùng nhưng warning lớn (12 §9)
-                eprintln!("WARNING: stale metadata for {} (age: {:.0}s, ttl: {:.0}s) - cannot verify latest version from registry",
-                    url, age.as_secs(), self.ttl.as_secs());
+                eprintln!(
+                    "WARNING: stale metadata for {} (age: {:.0}s, ttl: {:.0}s) - cannot verify latest version from registry",
+                    url,
+                    age.as_secs(),
+                    self.ttl.as_secs()
+                );
                 return Ok(data.clone());
             }
             return Ok(data.clone());

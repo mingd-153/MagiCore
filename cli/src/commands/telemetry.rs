@@ -8,11 +8,11 @@ use clap::Subcommand;
 pub enum TelemetryCmd {
     /// Show telemetry status (enabled/disabled)
     Status,
-    /// Show locally queued events (minh bạch — không gửi đi đâu)
+    /// Show locally queued events (transparent — events are never sent anywhere)
     Log,
-    /// Enable telemetry (env MAGICORE_TELEMETRY=1, persist tới ~/.config/magicore/env)
+    /// Enable telemetry (env MAGICORE_TELEMETRY=1, persists to ~/.config/magicore/env)
     On,
-    /// Disable telemetry (mặc định sẵn)
+    /// Disable telemetry (default state)
     Off,
 }
 
@@ -56,8 +56,7 @@ pub fn handle(cmd: TelemetryCmd) -> Result<()> {
             lines.push(format!("MAGICORE_TELEMETRY={}", if on { "1" } else { "0" }));
             std::fs::write(&env_file, lines.join("\n") + "\n")?;
             println!(
-                "telemetry: {} (add a line to ~/.config/magicore/env — the shell prompt must source it; default OFF if absent)"
-                ,
+                "telemetry: {} (add a line to ~/.config/magicore/env — the shell prompt must source it; default OFF if absent)",
                 if on { "ON" } else { "OFF" }
             );
         }

@@ -1,13 +1,11 @@
-use super::*;
-
 #[test]
-fn remove_args_uv_uses_remove() {
-    let args = remove_args(&["flask".to_string()], "uv");
-    assert_eq!(args, vec!["remove", "flask"]);
-}
-
-#[test]
-fn remove_args_pip_uninstalls_yes() {
-    let args = remove_args(&["a b".to_string()], "pip");
-    assert_eq!(args, vec!["uninstall", "-y", "a", "b"]);
+fn ai_remove_refuses_foreign_python_lock_without_native_mutation() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("requirements.lock"), "requests==2.0\\n").unwrap();
+    let err =
+        crate::commands::core::shared::require_native_ai_python(root.path(), "remove").unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("No external package manager was invoked")
+    );
 }

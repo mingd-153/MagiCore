@@ -13,28 +13,24 @@ fn tmp() -> TempDir {
 }
 
 #[tokio::test]
-async fn test_flash_esp32_fails_closed_not_fake_success() {
-    let tmp = tmp();
-    let err = flash_firmware(IotFramework::Esp32Rust, tmp.path(), None)
-        .await
-        .unwrap_err();
-    assert!(
-        err.to_string().contains("espflash"),
-        "lỗi phải chỉ rõ tool passthrough: {err}"
-    );
-}
-
-#[tokio::test]
-async fn test_flash_all_frameworks_fail_closed() {
+async fn flash_is_unsupported_without_a_native_mgc_backend() {
     let tmp = tmp();
     for fw in [
         IotFramework::Esp32Rust,
         IotFramework::Platformio,
         IotFramework::Zephyr,
     ] {
+        let error = flash_firmware(fw, tmp.path(), None)
+            .await
+            .expect_err("external flasher must not produce a successful result");
+        let message = error.to_string();
         assert!(
-            flash_firmware(fw, tmp.path(), None).await.is_err(),
-            "{fw:?} phải Err khi chưa có passthrough"
+            message.contains("no MagiCore-owned firmware flashing backend"),
+            "expected explicit native-backend limitation for {fw:?}, got: {message}"
+        );
+        assert!(
+            message.contains(fw.as_str()),
+            "framework missing in error: {message}"
         );
     }
 }

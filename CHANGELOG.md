@@ -8,13 +8,103 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [1.1.0-rc.9] - 2026-09-19
+
+### Added
+- `mgc completion <bash|zsh|fish|powershell|elvish>` (shell completions from the real CLI schema)
+
+### Fixed
+- `outdated` no longer reports "up to date" when every registry fetch failed (hard error instead)
+- Godot install/download stubs returned fake success — now fail closed with guidance
+- `model quantize` python3 spawns routed through the mgc_exec gate (allowlist + audit + timeout)
+
+## [1.1.0-rc.8] - 2026-09-19
+
+### Fixed
+- Windows build: `windows-sys` needs `Win32_Foundation` for `MoveFileExW` (all Windows CI jobs failed to compile)
+- Single-core builds: `OPTIMIZER_PKG`/`BENCH_PKG` cfg-gate turned them into pattern bindings (E0408 in every non-all build)
+- Release Binary E2E: ai/flutter `install` steps now pass the required `--compat-runtime` opt-in flag
+
+## [1.1.0-rc.7] - 2026-09-19
+
+### Added
+- `mgc why` implemented: reverse-dependency lookup over v2/v3/v4 lockfiles (dependents, root, leftover, missing)
+- GPU detection (macOS/Linux/Windows) + measured GPU facts (`gpu.env`) + vendor-conditioned accelerator env (PyTorch/Candle)
+- Hardware core: `create/add/install/list-hardware` work end-to-end (optimizer/bench templates)
+- `create-clo/cdk`, `create-game/bevy`, `create-iot/esp32-rust` scaffolds work via built-in generators
+- npm dist-tag support (`latest`, `next`, …) in install/dlx resolution
+
+### Fixed
+- `create-clo` "Unknown core: clo" (layer namespace is `cloud/`)
+- `install-game`/`install-iot` delegated lanes died in mgc-native resolve; `add` tail skipped resolve-less adapters via probe
+- `install-web` PHP failed without HOME (hermetic project-scoped HOME + composer dirs)
+- `dlx` replaced PATH (broke interpreter shebangs), swallowed stdout, rejected `latest`
+- `patch verify` never passed (SRI prefix vs bare hex)
+- `migrate lock --to v4` rejected the documented spelling; `stage --dir` failed on relative paths
+- `install.ps1` / `install-from-gh.sh` built wrong artifact names (404 vs release contract)
+- NuGet test mock now mirrors live nuget.org (`@id` → catalog document)
+- Registry HTTP in mgc-resolver now goes through `mgc_http::HttpClient` (bounded timeouts + retries)
+- Wizard/GPU labels corrected to match implemented capability
+
+### Changed
+- Test infrastructure improvements (E2E lifecycle tests honest verification)
+- CI workflow now triggers on feature/** branches
+- Cache tests fixed (race condition removed)
+- Install smoke tests added (structure verification)
+
+### Fixed
+- Web/AI lifecycle tests now call REAL mgc create commands
+- Cache tests use per-command env (no global set_var)
+- Removed `|| true` from CI (no silent failures)
+
+### Dependencies
+- Updated lightningcss to 1.0.0-alpha.72
+
+---
+
+## [1.1.0-rc.1] - 2026-09-03 (Pending Release)
+
+### 🎯 RC Release - Multi-Core Support
+
+**Status**: Release Candidate for multi-language project management (Web, AI, App, Lib cores).
+
+### Added
+- ✅ **Multi-Core Architecture**: Unified CLI for Web, AI, App, Lib ecosystems
+- ✅ **Embedded Templates**: Vanilla web, Python AI agent, Flutter app, Rust lib
+- ✅ **Lifecycle Commands**: create, install, build, test, run, clean per core
+- ✅ **Core Detection**: Auto-detect project type via .mgc.core marker
+- ✅ **Adapter System**: Pluggable runtime adapters (npm, pip, cargo, flutter)
+- ✅ **Cache System**: Multi-core cache with integrity checks
+- ✅ **Security Gates**: Allowlist validation, test runner sandboxing
+
+### Testing
+- ✅ Web lifecycle E2E (vanilla embedded template)
+- ✅ AI lifecycle E2E (python-agent embedded)
+- ✅ Lib lifecycle E2E (Rust/Cargo native)
+- ✅ App lifecycle E2E (Flutter - requires SDK)
+- ✅ Cache stress tests (5/5 scenarios)
+- ✅ Security tests (9/9 allowlist checks)
+- ✅ CLI surface tests (7/7 error cases)
+- ✅ Install smoke tests (4/4 structure checks)
+
+### Quality Gates
+- Clippy: PASS (all targets, -D warnings)
+- Format: PASS (rustfmt --check)
+- Build: PASS (locked dependencies)
+- Tests: 2/4 local (Web ✅, Lib ✅, AI/App require CI runtimes)
+
+### Known Limitations
+- Template system uses embedded for core templates (registry-first architecture)
+- Some transitive dependencies have security advisories (documented in SECURITY_EXCEPTIONS.toml)
+- Install via brew/scoop requires published distributions
+
 ---
 
 ## [1.0.0] - 2026-08-27
 
 ### 🚧 Beta Launch - V1.0.0 (Web)
 
-**Status**: Beta-ready for web projects (npm/pnpm replacement). Multi-language cores experimental.
+**Status**: Beta-ready for web projects (npm/pnpm-compatible workflow — NOT a drop-in replacement; see benchmark status labels: no VALIDATED performance data exists yet). Multi-language cores experimental.
 
 ### Added
 - ✅ **SBOM Generation**: `mgc sbom` with CycloneDX/SPDX formats
@@ -24,15 +114,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - ✅ **Next.js/React/TypeScript support**: Tested with 20-package dev manifests
 - ✅ **Cross-PM Migration**: Import npm/pnpm/yarn/bun lockfiles
 
-### Performance (Beta — Limited Scope)
-- **Cold install**: 2.63s average on test workload (macOS M2, 20 packages)
-- **Warm install**: 2.01s (pnpm 1.2x faster due to hardlinks)
-- **Disk usage**: 462MB (CAS deduplication)
-- **Caveat**: Single platform, dev workload only. Cross-platform validation deferred to V1.1
+### Performance (Data Invalidated)
+- Prior V1.0 benchmark numbers were withdrawn after provenance and methodology gaps were found.
+- No comparative performance claim from that dataset should be cited.
 
 ### Known Issues
 - ⚠️ **vitest crash**: Projects with `vitest@^1.0.0` encounter "illegal hardware instruction" (workaround: use jest, fix in V1.1)
-- ⚠️ **Warm cache**: pnpm slight edge (1.2x) due to hardlink efficiency
+- ⚠️ **Performance**: competitive benchmark rerun is required before publishing comparisons
 - ⚠️ **Multi-language cores**: ai/app/lib remain experimental, reaching parity in V1.1
 
 ### Documentation
@@ -60,7 +148,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### 🚧 Status
 
-**Beta-ready for web projects.** MagiCore V1.0.0 includes SBOM generation, cryptographically signed lockfiles, and trust policies. Web (npm/pnpm replacement) is beta-ready; multi-language cores (ai/app/lib) remain experimental. Full core parity targeted for V1.1.
+**Beta-ready for web projects.** MagiCore V1.0.0 includes SBOM generation, cryptographically signed lockfiles, and trust policies. Web (npm/pnpm-compatible workflow — NOT a drop-in replacement; no VALIDATED benchmark data exists, see benchmark status labels) is beta-ready; multi-language cores (ai/app/lib) remain experimental. Full core parity targeted for V1.1.
 
 ### Added
 

@@ -29,25 +29,25 @@ impl CicdProvider {
 }
 
 pub fn detect_provider(root: &Path) -> Option<CicdProvider> {
-    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml")) {
-        if let Ok(v) = toml::from_str::<toml::Value>(&content) {
-            if let Some(p) = v
-                .get("cicd")
-                .and_then(|c| c.get("provider"))
-                .and_then(|p| p.as_str())
-            {
-                return match p {
-                    "github-actions" => Some(CicdProvider::GithubActions),
-                    "gitlab" => Some(CicdProvider::Gitlab),
-                    "circleci" => Some(CicdProvider::CircleCi),
-                    "cloudflare" => Some(CicdProvider::Cloudflare),
-                    "aws" => Some(CicdProvider::Aws),
-                    "gcp" => Some(CicdProvider::Gcp),
-                    "argocd" => Some(CicdProvider::Argocd),
-                    _ => None,
-                };
-            }
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Ok(Some(content)) =
+        mgc_config::project::read_regular_project_text(&root.join("mgc.toml"), "project config")
+        && let Ok(v) = toml::from_str::<toml::Value>(&content)
+        && let Some(p) = v
+            .get("cicd")
+            .and_then(|c| c.get("provider"))
+            .and_then(|p| p.as_str())
+    {
+        return match p {
+            "github-actions" => Some(CicdProvider::GithubActions),
+            "gitlab" => Some(CicdProvider::Gitlab),
+            "circleci" => Some(CicdProvider::CircleCi),
+            "cloudflare" => Some(CicdProvider::Cloudflare),
+            "aws" => Some(CicdProvider::Aws),
+            "gcp" => Some(CicdProvider::Gcp),
+            "argocd" => Some(CicdProvider::Argocd),
+            _ => None,
+        };
     }
     if root.join("wrangler.toml").exists() {
         return Some(CicdProvider::Cloudflare);
@@ -71,16 +71,16 @@ pub fn detect_provider(root: &Path) -> Option<CicdProvider> {
 }
 
 pub(crate) fn manifest_is_cicd(root: &Path) -> bool {
-    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml")) {
-        if let Ok(v) = toml::from_str::<toml::Value>(&content) {
-            if let Some(eco) = v.get("ecosystem").and_then(|e| e.as_str()) {
-                if eco == "cicd" {
-                    return true;
-                }
-            }
-            if v.get("cicd").is_some() {
-                return true;
-            }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Ok(Some(content)) =
+        mgc_config::project::read_regular_project_text(&root.join("mgc.toml"), "project config")
+        && let Ok(v) = toml::from_str::<toml::Value>(&content)
+    {
+        if v.get("ecosystem").and_then(|e| e.as_str()) == Some("cicd") {
+            return true;
+        }
+        if v.get("cicd").is_some() {
+            return true;
         }
     }
     detect_provider(root).is_some()

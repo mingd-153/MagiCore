@@ -1,27 +1,30 @@
-//! Offline mode state management
-//! Quản lý trạng thái offline mode
+//! Offline mode state — propagated via `InstallOptions.offline` and the
+//! `MGC_OFFLINE_MODE` env var (read by adapters: resolve/install gates).
+//! Trạng thái offline — truyền qua InstallOptions.offline và env MGC_OFFLINE_MODE
+//! (adapter đọc để đóng cổng resolve/install fail-closed).
 
-use std::cell::Cell;
-
-thread_local! {
-    /// Thread-local offline mode flag — Cờ offline mode thread-local
-    static OFFLINE_MODE: Cell<bool> = const { Cell::new(false) };
-}
-
-/// Set offline mode for current thread — Đặt offline mode cho thread hiện tại
+/// Enable offline mode globally (env var) — bật offline toàn cục qua env var.
+/// Adapters check this flag before any network-dependent resolution path.
+/// SAFETY: mgc sets the flag at install entry (before adapters spawn worker
+/// threads); CLI commands run one at a time — single writer, no race.
+/// AN TOÀN: ghi ở install entry trước khi adapter spawn thread; 1 writer.
+#[allow(unsafe_code)]
 pub fn set_offline_mode(offline: bool) {
-    OFFLINE_MODE.with(|f| f.set(offline));
+    unsafe {
+        if offline {
+            std::env::set_var("MGC_OFFLINE_MODE", "1");
+        } else {
+            std::env::remove_var("MGC_OFFLINE_MODE");
+        }
+    }
 }
 
-/// Check if offline mode is enabled — Kiểm tra offline mode có bật không
+/// Check if offline mode is enabled — kiểm tra offline mode có bật không.
 pub fn is_offline_mode() -> bool {
-    OFFLINE_MODE.with(|f| f.get())
-}
-
-/// Reset offline mode (for tests) — Reset offline mode (cho tests)
-#[cfg(test)]
-pub fn reset_offline_mode() {
-    OFFLINE_MODE.with(|f| f.set(false));
+    std::env::var("MGC_OFFLINE_MODE")
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
 }
 
 #[cfg(test)]

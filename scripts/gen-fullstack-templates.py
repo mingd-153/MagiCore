@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Generate monorepo backend + fullstack templates."""
 import os
+from pathlib import Path
 
-BASE = "/Users/doanmihh/Documents/Workspace/MagiCore/templates/web"
+# Resolve templates from this checkout rather than one user's workspace.
+# (Tìm template theo checkout, không phụ thuộc workspace của một người.)
+BASE = str(Path(__file__).resolve().parents[1] / "templates" / "web")
 
 def ensure_dir(path):
     os.makedirs(path, exist_ok=True)

@@ -1,0 +1,26 @@
+{
+  "pm": "bun",
+  "run": 17,
+  "timestamp": "20260904_190802",
+  "machine": {
+  "cpu": "Apple M2",
+  "cores": 8,
+  "memory_gb": 16,
+  "os": "Darwin 25.5.0",
+  "node_version": "v25.9.0",
+  "timestamp": "20260904_190802"
+},
+  "cold_install": {
+    "duration_seconds": 9494.280338000,
+    "disk_mb": 0,
+    "memory_delta_mb": 0
+  },
+  "warm_install": {
+    "duration_seconds": .097009000
+  },
+  "package_count": 20,
+  "logs": {
+    "cold": "bun install v1.3.14 (0d9b296a) Resolving dependencies error: Fail extracting tarball for \"next\" error: Integrity check failed for tarball: graceful-fs Resolved, downloaded and extracted [1261] error: Fail extracting tarball from next  error: IntegrityCheckFailed extracting tarball from graceful-fs  error: No version matching \"14.2.35\" found for specifier \"@next/env\" (but package exists)  error: FailedToOpenSocket downloading tarball pathval@1.1.1  error: ConnectionRefused downloading package manifest math-intrinsics  error: ConnectionRefused downloading tarball deep-eql@4.1.4  error: FailedToOpenSocket downloading package manifest gopd  error: ConnectionRefused downloading tarball get-func-name@2.0.2 ",
+    "warm": "bun install v1.3.14 (0d9b296a) Resolving dependencies Resolved, downloaded and extracted [120] error: ConnectionRefused downloading package manifest react  error: ConnectionRefused downloading package manifest date-fns  error: ConnectionRefused downloading package manifest framer-motion  error: ConnectionRefused downloading package manifest lodash  error: ConnectionRefused downloading package manifest next  error: FailedToOpenSocket downloading package manifest clsx  error: ConnectionRefused downloading package manifest tailwindcss  error: ConnectionRefused downloading package manifest typescript  error: ConnectionRefused downloading package manifest vitest "
+  }
+}

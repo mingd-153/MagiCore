@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Generate feature-gated backend templates for all frameworks."""
 import os
+from pathlib import Path
 
-BASE = "/Users/doanmihh/Documents/Workspace/MagiCore/templates/web"
+# Resolve templates from the repository instead of a developer-specific path.
+# (Tìm template từ repo, không phụ thuộc đường dẫn máy cá nhân.)
+BASE = str(Path(__file__).resolve().parents[1] / "templates" / "web")
 
 # === Source templates ===
 

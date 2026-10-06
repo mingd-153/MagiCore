@@ -1,16 +1,29 @@
-//! Game engine installation for game adapter.
-//! Bevy (cargo orchestrate), Godot (binary), Unity (UPM), Unreal (stub).
+//! Public Game install facade. Package installation is unsupported until
+//! MagiCore owns the selected engine's resolver, lock, fetch, and materializer.
+//! Facade install Game công khai; hiện fail-closed tới khi MGC sở hữu đủ engine.
 
 use crate::engine::GameEngine;
-use mgc_types::MgResult;
+use mgc_types::{MgError, MgResult};
 use std::path::Path;
 
-pub mod bevy;
-pub mod godot;
-pub mod unity;
-pub mod unreal;
+/// Install dependencies for a game project.
+/// Install dependency cho project game.
+pub async fn install_dependencies(
+    engine: GameEngine,
+    _project_root: &Path,
+) -> MgResult<InstallSummary> {
+    Err(MgError::Unsupported {
+        core: "game",
+        capability: "install",
+        guidance: format!(
+            "MagiCore does not own dependency installation for the {engine:?} engine; no provider package manager was invoked"
+        ),
+    })
+}
 
-/// Install summary per engine
+/// Summary retained for source compatibility; unsupported installs never
+/// fabricate one.
+/// Giữ kiểu summary để tương thích source; install unsupported không bịa summary.
 #[derive(Debug, Clone)]
 pub struct InstallSummary {
     pub engine: GameEngine,
@@ -18,31 +31,6 @@ pub struct InstallSummary {
     pub bytes_downloaded: u64,
     pub duration_ms: u64,
     pub verified: bool,
-}
-
-/// Install dependencies for game project
-pub async fn install_dependencies(
-    engine: GameEngine,
-    project_root: &Path,
-) -> MgResult<InstallSummary> {
-    let start = std::time::Instant::now();
-
-    let (packages, bytes, verified) = match engine {
-        GameEngine::Bevy => bevy::install_dependencies(project_root).await?,
-        GameEngine::Godot => godot::install_dependencies(project_root).await?,
-        GameEngine::Unity => unity::install_dependencies(project_root).await?,
-        GameEngine::Unreal => unreal::install_dependencies(project_root).await?,
-    };
-
-    let duration_ms = start.elapsed().as_millis() as u64;
-
-    Ok(InstallSummary {
-        engine,
-        installed_packages: packages,
-        bytes_downloaded: bytes,
-        duration_ms,
-        verified,
-    })
 }
 
 #[cfg(test)]

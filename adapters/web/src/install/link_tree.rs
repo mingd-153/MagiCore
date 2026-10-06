@@ -159,23 +159,47 @@ pub fn hardlink_tree_with_profile(
 
     directories.sort_by_key(|path| path.components().count());
     for target in directories {
-        std::fs::create_dir_all(&target).map_err(|err| {
-            MgError::Other(format!(
-                "failed to create directory '{}' while cloning '{}': {}",
-                target.display(),
-                source_root.display(),
-                err
-            ))
-        })?;
+        // Parents are already present because entries are depth-sorted; avoid
+        // rechecking the full ancestor chain for every new directory.
+        // Cha đã tồn tại do đường dẫn được sắp theo độ sâu; tránh kiểm tra lại
+        // toàn bộ chuỗi thư mục cha cho mỗi thư mục mới.
+        if let Err(err) = std::fs::create_dir(&target) {
+            if err.kind() != std::io::ErrorKind::AlreadyExists {
+                return Err(MgError::Other(format!(
+                    "failed to create directory '{}' while cloning '{}': {}",
+                    target.display(),
+                    source_root.display(),
+                    err
+                )));
+            }
+            std::fs::create_dir_all(&target).map_err(|err| {
+                MgError::Other(format!(
+                    "failed to create directory '{}' while cloning '{}': {}",
+                    target.display(),
+                    source_root.display(),
+                    err
+                ))
+            })?;
+        }
     }
 
-    hardlink_pool()?.install(|| {
-        files
-            .into_par_iter()
-            .try_for_each(|(path, target)| -> MgResult<()> {
-                backing_link_file(&path, &target, profile, reflink_enabled)
-            })
-    })?;
+    // Reuse the current Rayon pool for files when packages are already being
+    // materialized in parallel; only use the dedicated pool from non-Rayon callers.
+    // Dùng lại pool Rayon hiện tại để xử lý file khi package đã chạy song song;
+    // chỉ dùng pool riêng khi caller không nằm trong Rayon.
+    if rayon::current_thread_index().is_some() {
+        files.into_par_iter().try_for_each(|(path, target)| {
+            backing_link_file(&path, &target, profile, reflink_enabled)
+        })?;
+    } else {
+        hardlink_pool()?.install(|| {
+            files
+                .into_par_iter()
+                .try_for_each(|(path, target)| -> MgResult<()> {
+                    backing_link_file(&path, &target, profile, reflink_enabled)
+                })
+        })?;
+    }
 
     Ok(())
 }
@@ -221,13 +245,6 @@ pub fn backing_link_file(
         }
     }
 
-    if let Ok(()) = std::fs::hard_link(source, target) {
-        if let Some(profile) = profile {
-            profile.record_hardlink();
-        }
-        return Ok(());
-    }
-
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent).map_err(|err| {
             MgError::Other(format!(
@@ -247,12 +264,12 @@ pub fn backing_link_file(
             ))
         })?;
     }
-    if std::fs::hard_link(source, target).is_ok() {
-        if let Some(profile) = profile {
-            profile.record_hardlink();
-        }
-        return Ok(());
-    }
+    // A hardlink is not an isolation-safe fallback: an in-place edit in a
+    // project would mutate the shared extracted package/cache and every
+    // other project linked to it. Prefer a real copy when the filesystem
+    // cannot provide copy-on-write reflinks.
+    // Hardlink không cô lập: sửa in-place trong project sẽ làm đổi cache
+    // package dùng chung và các project khác; filesystem không reflink thì copy.
     std::fs::copy(source, target).map_err(|err| {
         MgError::Other(format!(
             "failed to materialize '{}' to '{}': {}",
@@ -266,4 +283,33 @@ pub fn backing_link_file(
         profile.record_copy();
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::hardlink_tree;
+    use rayon::prelude::*;
+
+    #[test]
+    fn nested_parallel_package_materialization_does_not_reenter_custom_pool() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let source = temp.path().join("source");
+        std::fs::create_dir_all(source.join("nested")).expect("source dirs");
+        for index in 0..64 {
+            std::fs::write(
+                source.join("nested").join(format!("{index}.js")),
+                b"export {}",
+            )
+            .expect("source file");
+        }
+
+        (0..32usize)
+            .into_par_iter()
+            .try_for_each(|index| {
+                hardlink_tree(&source, &temp.path().join(format!("target-{index}")))
+            })
+            .expect("nested package materialization");
+
+        assert!(temp.path().join("target-31/nested/63.js").is_file());
+    }
 }

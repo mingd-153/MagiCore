@@ -370,13 +370,54 @@ impl Scaffolder {
 
     pub fn scaffold(config: &ScaffoldConfig) -> Result<PathBuf> {
         let target = Self::target_dir(config);
-        if target.exists() {
-            return Err(crate::error::dir_already_exists(&target));
+        let claim = Self::claim_target(&target)?;
+
+        // Atomic scaffold: build in a hidden temp dir on the SAME filesystem,
+        // rename into place only when fully written. A crash mid-write can
+        // never leave a partial project visible at the target path.
+        // Scaffold nguyên tử: ghi trong temp dir ẩn CÙNG filesystem, chỉ
+        // rename sang target khi hoàn tất — crash giữa chừng không để lại
+        // project partial ở vị trí cuối.
+        let parent = target.parent().map(Path::to_path_buf).unwrap_or_default();
+        let staging = tempfile::tempdir_in(&parent).map_err(|e| {
+            let _ = std::fs::remove_file(&claim);
+            crate::error::scaffold_staging_failed(&target, anyhow::anyhow!(e))
+        })?;
+        let staging_path = staging.path().to_path_buf();
+
+        let write_result = (|| -> Result<()> {
+            std::fs::create_dir_all(&staging_path)?;
+            Self::write_common_files(&staging_path, config)?;
+            Self::write_core_files(&staging_path, config)?;
+            Ok(())
+        })();
+
+        if let Err(err) = write_result {
+            // Fail atomically — staging dir is removed by TempDir drop and
+            // the claim slot is released; the target was never touched.
+            // Fail nguyên tử — staging dọn bởi TempDir drop, claim được giải
+            // phóng; target chưa từng bị chạm nên không có phần dư.
+            let _ = std::fs::remove_file(&claim);
+            return Err(crate::error::scaffold_staging_failed(&target, err));
         }
 
-        std::fs::create_dir_all(&target)?;
-        Self::write_common_files(&target, config)?;
-        Self::write_core_files(&target, config)?;
+        // Rename is atomic within one filesystem. The claim slot guarantees
+        // no other process renamed a directory over our target meanwhile.
+        // Rename nguyên tử trong cùng filesystem. Claim-slot bảo đảm không
+        // process nào khác rename directory đè lên target trong lúc đó.
+        if let Err(e) = std::fs::rename(&staging_path, &target) {
+            let _ = std::fs::remove_file(&claim);
+            return Err(crate::error::scaffold_staging_failed(
+                &target,
+                anyhow::anyhow!(e),
+            ));
+        }
+        // Keep the TempDir handle from cleaning the now-renamed path, then
+        // release the claim so future creates for this name are possible.
+        // Giữ TempDir không dọn path vừa rename, rồi giải phóng claim để
+        // lần create sau cho tên này vẫn khả dụng.
+        std::mem::forget(staging);
+        let _ = std::fs::remove_file(&claim);
 
         mgc_ui::success(&format!(
             "Created {} project: {}",
@@ -386,8 +427,83 @@ impl Scaffolder {
         Ok(target)
     }
 
+    /// Hidden claim-slot path next to the target (same parent, dot-prefixed).
+    /// Đường dẫn claim-slot ẩn cạnh target (cùng parent, tiền tố dot).
+    fn claim_slot_path(target: &Path) -> PathBuf {
+        let name = target
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "project".to_string());
+        let claim_name = format!(".mgc-create-{name}.lock");
+        match target.parent() {
+            Some(parent) => parent.join(claim_name),
+            None => PathBuf::from(claim_name),
+        }
+    }
+
+    /// Atomically claim a target name, then check it while holding the claim.
+    /// Claim tên target nguyên tử, rồi kiểm tra khi vẫn đang giữ claim.
+    fn claim_target(target: &Path) -> Result<PathBuf> {
+        // The exclusive claim must precede the target check: checking first lets
+        // a loser acquire the claim after the winner publishes and releases it.
+        // Phải lấy claim độc quyền trước khi kiểm tra target: nếu kiểm tra trước,
+        // process thua có thể lấy claim sau khi process thắng đã tạo target và nhả khóa.
+        let claim = Self::claim_slot_path(target);
+        let claim_file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&claim)
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::AlreadyExists {
+                    crate::error::create_claim_conflict(&claim)
+                } else {
+                    crate::error::scaffold_staging_failed(target, anyhow::anyhow!(e))
+                }
+            })?;
+        // Release the handle early; the claim is guarded by its file's existence.
+        // Nhả handle sớm; claim được giữ bằng sự tồn tại của file khóa.
+        drop(claim_file);
+
+        let target_exists = match target.try_exists() {
+            Ok(exists) => exists,
+            Err(error) => {
+                let _ = std::fs::remove_file(&claim);
+                return Err(crate::error::scaffold_staging_failed(
+                    target,
+                    anyhow::anyhow!(error),
+                ));
+            }
+        };
+        if target_exists {
+            let conflict = crate::error::dir_already_exists(target);
+            if let Err(cleanup_error) = std::fs::remove_file(&claim) {
+                return Err(crate::error::scaffold_staging_failed(
+                    target,
+                    anyhow::anyhow!(
+                        "{conflict}; failed to release claim slot '{}': {cleanup_error}",
+                        claim.display()
+                    ),
+                ));
+            }
+            return Err(conflict);
+        }
+
+        Ok(claim)
+    }
+
     pub fn display_name(project_dir: &Path) -> String {
         project_dir
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "project".to_string())
+    }
+
+    /// Display name derived from the configured project name rather than
+    /// the (possibly staging temp) target path.
+    /// Tên hiển thị lấy từ project name trong config, không phải từ target
+    /// path (có thể là temp dir của staging nguyên tử).
+    fn config_display_name(config: &ScaffoldConfig) -> String {
+        Path::new(&config.project_name)
             .file_name()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| "project".to_string())
@@ -440,7 +556,11 @@ impl Scaffolder {
             return Ok(());
         }
 
-        let name = Self::display_name(target);
+        // Derive the display name from the config, NOT from the target path —
+        // during atomic staging the target is a random temp dir name.
+        // Lấy tên hiển thị từ config, KHÔNG từ target path — trong staging
+        // nguyên tử, target là temp dir với tên random.
+        let name = Self::config_display_name(config);
         let framework = Self::framework(config);
 
         Self::write_file(
@@ -456,13 +576,18 @@ impl Scaffolder {
     }
 
     fn write_core_files(target: &Path, config: &ScaffoldConfig) -> Result<()> {
-        let name = Self::display_name(target);
+        // Same as write_common_files: name must come from the config because
+        // the target path during staging has a random temp name.
+        // Giống write_common_files: tên phải lấy từ config vì target trong
+        // staging nguyên tử mang tên temp random.
+        let name = Self::config_display_name(config);
         let framework = Self::framework(config);
+        let context = CoreTemplateContext::try_new(config, &name, &framework)?;
 
         if config.core != "web" {
             let layer = Self::core_template_layer(&config.core, &framework);
             if Self::layer_has_contract(&layer) {
-                return Self::materialize_core_template(target, &layer, config, &name, &framework);
+                return Self::materialize_core_template(target, &layer, &context);
             }
         }
 
@@ -472,7 +597,12 @@ impl Scaffolder {
             "ai" => super::processors::ai::AiProcessor::files(target, &name, &framework),
             "clo" => super::processors::clo::CloProcessor::files(target, &name, &framework),
             "cicd" => super::processors::cicd::CicdProcessor::files(target, &name, &framework),
-            "iot" => super::processors::iot::IotProcessor::files(target, &name, &framework),
+            "iot" => super::processors::iot::IotProcessor::files(
+                target,
+                &name,
+                &framework,
+                &context.board,
+            ),
             "app" => {
                 if framework == "multi" {
                     super::processors::app::AppProcessor::files_multi(target, &name)
@@ -481,6 +611,9 @@ impl Scaffolder {
                 }
             }
             "lib" => super::processors::lib::LibProcessor::files(target, &name, &framework),
+            "hardware" => {
+                super::processors::hardware::HardwareProcessor::files(target, &name, &framework)
+            }
             other => Err(crate::error::unsupported_scaffold_core(other)),
         }
     }
@@ -491,28 +624,69 @@ impl Scaffolder {
         name: &str,
         framework: &str,
     ) -> Result<()> {
-        match Self::resolve_web_template_layers(config) {
+        let write_result = match Self::resolve_web_template_layers(config) {
             Ok(layers) => Self::materialize_web_templates(target, config, &layers),
             Err(err) => {
                 if let Some(files) =
                     crate::scaffold::embedded_kernel::get_embedded_template("web", framework)
                 {
                     Self::ensure_web_fallback_common_files(target, name, framework)?;
-                    return crate::scaffold::embedded_kernel::materialize_embedded(
-                        target, name, &files,
-                    );
+                    crate::scaffold::embedded_kernel::materialize_embedded(target, name, &files)
+                } else if effective_web_mode(config) == "backend"
+                    && let Some(language) = infer_backend_language(framework)
+                {
+                    Self::ensure_web_fallback_common_files(target, name, framework)?;
+                    Self::write_minimal_backend_fallback(target, name, framework, language)
+                } else {
+                    return Err(err);
                 }
-                if effective_web_mode(config) == "backend" {
-                    if let Some(language) = infer_backend_language(framework) {
-                        Self::ensure_web_fallback_common_files(target, name, framework)?;
-                        return Self::write_minimal_backend_fallback(
-                            target, name, framework, language,
-                        );
-                    }
-                }
-                Err(err)
             }
+        };
+        write_result?;
+        Self::ensure_web_test_runner(target, name)
+    }
+
+    fn ensure_web_test_runner(target: &Path, name: &str) -> Result<()> {
+        let package_path = target.join("package.json");
+        let mut manifest = if package_path.is_file() {
+            serde_json::from_slice::<serde_json::Value>(&std::fs::read(&package_path)?)?
+        } else {
+            serde_json::json!({
+                "name": slugify(name),
+                "private": true,
+                "version": "0.1.0"
+            })
+        };
+        let Some(package) = manifest.as_object_mut() else {
+            return Err(crate::error::package_json_root_object());
+        };
+        let scripts = package
+            .entry("scripts")
+            .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+        let Some(scripts) = scripts.as_object_mut() else {
+            return Err(crate::error::package_json_scripts_object());
+        };
+        match scripts.get("test") {
+            Some(serde_json::Value::String(_)) => return Ok(()),
+            Some(_) => return Err(crate::error::package_json_scripts_object()),
+            None => {}
         }
+        scripts.insert(
+            "test".to_string(),
+            serde_json::Value::String("node --test test/scaffold.test.cjs".to_string()),
+        );
+        // This file stays in the claimed staging tree until atomic publication.
+        // File này ở trong cây staging đã claim cho tới khi publish nguyên tử.
+        std::fs::write(&package_path, serde_json::to_vec_pretty(&manifest)?)?;
+
+        let smoke_test = target.join("test/scaffold.test.cjs");
+        if !smoke_test.exists() {
+            Self::write_file(
+                &smoke_test,
+                "const test = require('node:test');\nconst assert = require('node:assert/strict');\nconst fs = require('node:fs');\nconst path = require('node:path');\n\nconst root = path.resolve(__dirname, '..');\nconst htmlPath = path.join(root, 'index.html');\nif (fs.existsSync(htmlPath)) {\n  test('HTML document has valid local script entries', () => {\n    const html = fs.readFileSync(htmlPath, 'utf8');\n    assert.match(html, /<html\\b/i);\n    for (const [, entry] of html.matchAll(/<script[^>]+src=[\\\"']([^\\\"']+)[\\\"']/gi)) {\n      const url = new URL(entry, 'http://magicore.local');\n      if (url.origin !== 'http://magicore.local') continue;\n      const relative = decodeURIComponent(url.pathname).replace(/^\\/+/, '');\n      const localPath = path.resolve(root, relative);\n      assert.ok(localPath === root || localPath.startsWith(root + path.sep), 'script entry escapes project: ' + entry);\n      assert.ok(fs.existsSync(localPath), 'missing local script entry: ' + entry);\n    }\n  });\n} else {\n  const candidates = ['src/server', 'src/index', 'src/main', 'src/app', 'server', 'index', 'main', 'app'].flatMap((base) => ['.js', '.mjs', '.cjs', '.ts', '.mts', '.cts'].map((extension) => base + extension));\n  const entry = candidates.map((file) => path.join(root, file)).find((file) => fs.existsSync(file));\n  test('Node project contains a source entrypoint', () => {\n    assert.ok(entry, 'no Node source entrypoint found');\n    assert.ok(fs.readFileSync(entry, 'utf8').trim().length > 0, 'Node source entrypoint is empty');\n  });\n}\n",
+            )?;
+        }
+        Ok(())
     }
 
     fn ensure_web_fallback_common_files(target: &Path, name: &str, framework: &str) -> Result<()> {
@@ -878,16 +1052,13 @@ impl Scaffolder {
     fn materialize_core_template(
         target: &Path,
         layer: &TemplateRoot,
-        config: &ScaffoldConfig,
-        name: &str,
-        framework: &str,
+        context: &CoreTemplateContext,
     ) -> Result<()> {
         let Some(manifest) = TemplateManifest::load(layer)? else {
             return Err(crate::error::template_layer_missing_manifest(
                 &layer.logical_rel(),
             ));
         };
-        let context = CoreTemplateContext::new(config, name, framework);
         let active_features: HashSet<&str> = config_feature_set(&context.features);
         let active_files = manifest
             .files
@@ -897,7 +1068,7 @@ impl Scaffolder {
 
         let mut seen_targets = HashSet::new();
         for file in &active_files {
-            let target_path = render_core_target_path(&file.target, &context);
+            let target_path = render_core_target_path(&file.target, context);
             if !seen_targets.insert(target_path.clone()) {
                 return Err(crate::error::duplicate_template_target(
                     &file.target,
@@ -914,7 +1085,7 @@ impl Scaffolder {
                     &layer.logical_rel(),
                 ));
             }
-            let target_path = render_core_target_path(&file.target, &context);
+            let target_path = render_core_target_path(&file.target, context);
             let bytes = layer.read(&source_rel)?;
             match std::str::from_utf8(&bytes) {
                 Ok(contents) => {
@@ -1294,12 +1465,37 @@ struct CoreTemplateContext {
 }
 
 impl CoreTemplateContext {
-    fn new(config: &ScaffoldConfig, name: &str, framework: &str) -> Self {
+    /// Build template context and reject IoT boards outside the selected framework.
+    /// Dựng context template và từ chối board IoT không thuộc framework đã chọn.
+    fn try_new(config: &ScaffoldConfig, name: &str, framework: &str) -> Result<Self> {
         let project_name = Scaffolder::display_name(Path::new(name));
         let project_slug = slugify(&project_name);
         let board = config.features.first().cloned().unwrap_or_default();
-        let target = iot_target_for_board(&board);
-        Self {
+        let target = if config.core == "iot" {
+            #[cfg(feature = "iot")]
+            {
+                let supported = mgc_iot_adapter::boards_for_framework(framework);
+                mgc_iot_adapter::board_target_for_framework(framework, &board).ok_or_else(|| {
+                    let choices = supported
+                        .iter()
+                        .map(|entry| entry.id.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    if board.is_empty() {
+                        crate::error::no_board_specified(&choices)
+                    } else {
+                        crate::error::unsupported_board(&board, &choices)
+                    }
+                })?
+            }
+            #[cfg(not(feature = "iot"))]
+            {
+                anyhow::bail!("the iot core is not included in this MagiCore build")
+            }
+        } else {
+            legacy_template_target(&board)
+        };
+        Ok(Self {
             project_name,
             project_slug: project_slug.clone(),
             project_package: project_slug.replace('-', "_"),
@@ -1308,7 +1504,7 @@ impl CoreTemplateContext {
             features: quoted_list(&config.features),
             board,
             target,
-        }
+        })
     }
 
     fn value(&self, key: &str) -> Option<&str> {
@@ -1379,6 +1575,8 @@ fn render_core_target_path(target: &str, context: &CoreTemplateContext) -> Strin
 
 #[derive(Debug, Deserialize)]
 struct TemplateManifest {
+    #[serde(default)]
+    tokens: Vec<TemplateToken>,
     files: Vec<TemplateFile>,
 }
 
@@ -1394,8 +1592,33 @@ impl TemplateManifest {
         }
 
         let contents = String::from_utf8(layer.read("template.toml")?)?;
-        Ok(Some(toml::from_str(&contents)?))
+        let mut manifest: Self = toml::from_str(&contents)?;
+        manifest.apply_root_token_contracts();
+        Ok(Some(manifest))
     }
+
+    fn apply_root_token_contracts(&mut self) {
+        if self.tokens.is_empty() {
+            return;
+        }
+
+        let root_tokens = self
+            .tokens
+            .iter()
+            .map(|token| token.name.clone())
+            .collect::<Vec<_>>();
+
+        for file in &mut self.files {
+            if file.required_context.is_empty() {
+                file.required_context = root_tokens.clone();
+            }
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct TemplateToken {
+    name: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1521,13 +1744,13 @@ fn slugify(name: &str) -> String {
     }
 }
 
-/// ponytail: board registry tĩnh P1 — add board vào đây; P2 chuyển assets/boards/*.json
-fn iot_target_for_board(board: &str) -> String {
+/// Preserve the target context emitted to existing non-IoT template layers.
+/// Giữ nguyên target context đã cấp cho các template layer không thuộc IoT.
+fn legacy_template_target(board: &str) -> String {
     match board {
         "esp32" => "xtensa-esp32-none-elf".to_string(),
         "esp32s3" => "xtensa-esp32s3-none-elf".to_string(),
-        "nrf52dk_nrf52832" => "thumbv7em-none-eabihf".to_string(),
-        "stm32f4_disc" => "thumbv7em-none-eabihf".to_string(),
+        "nrf52dk_nrf52832" | "stm32f4_disc" => "thumbv7em-none-eabihf".to_string(),
         _ => "riscv32imac-unknown-none-elf".to_string(),
     }
 }

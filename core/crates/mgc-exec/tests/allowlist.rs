@@ -8,12 +8,10 @@ use mgc_exec::prelude::*;
 fn allows_known_tools() {
     for tool in [
         "cargo",
-        "pip",
         "python",
         "python3",
         "go",
         "mvn",
-        "composer",
         "node",
         "git",
         "docker",
@@ -25,11 +23,55 @@ fn allows_known_tools() {
 }
 
 #[test]
+fn android_debug_bridge_is_allowed_only_for_device_control_scope() {
+    use mgc_exec::allowlist::check_tool_with_scope;
+    use std::path::Path;
+
+    assert!(
+        check_tool_with_scope("adb", ExecutionScope::DeviceControl, Some(Path::new("."))).is_ok()
+    );
+    for scope in [
+        ExecutionScope::Install,
+        ExecutionScope::TestRunner,
+        ExecutionScope::BuildRunner,
+        ExecutionScope::DevServer,
+    ] {
+        assert!(
+            check_tool_with_scope("adb", scope, Some(Path::new("."))).is_err(),
+            "adb must not be available in {scope:?} scope"
+        );
+    }
+}
+
+#[test]
+fn xcrun_simctl_is_allowed_only_for_device_control_scope() {
+    use mgc_exec::allowlist::check_tool_with_scope;
+    use std::path::Path;
+
+    assert!(
+        check_tool_with_scope("xcrun", ExecutionScope::DeviceControl, Some(Path::new("."))).is_ok()
+    );
+    for scope in [
+        ExecutionScope::Install,
+        ExecutionScope::TestRunner,
+        ExecutionScope::BuildRunner,
+        ExecutionScope::DevServer,
+    ] {
+        assert!(
+            check_tool_with_scope("xcrun", scope, Some(Path::new("."))).is_err(),
+            "xcrun must not be available in {scope:?} scope"
+        );
+    }
+}
+
+#[test]
 fn rejects_forbidden_npm_family() {
-    for tool in ["npm", "npx", "pnpm", "yarn", "bun", "bunx"] {
+    for tool in [
+        "npm", "npx", "pnpm", "yarn", "bun", "deno", "bunx", "composer", "pub",
+    ] {
         let err = check_tool(tool).unwrap_err();
         assert!(
-            err.to_string().contains("permanently forbidden"),
+            err.to_string().contains("is forbidden"),
             "npm-family error must be explicit, got: {err}"
         );
     }
@@ -44,9 +86,39 @@ fn rejects_forbidden_absolute_pm_paths() {
     ] {
         let err = check_tool(tool).unwrap_err();
         assert!(
-            err.to_string().contains("permanently forbidden"),
+            err.to_string().contains("is forbidden"),
             "absolute PM path must be blocked, got: {err}"
         );
+    }
+}
+
+#[test]
+fn package_managers_are_blocked_in_every_execution_scope_even_with_compat() {
+    use mgc_exec::allowlist::{check_tool_with_scope, check_tool_with_scope_compat};
+    use std::path::Path;
+
+    let root = Path::new("/tmp/project");
+    for scope in [
+        ExecutionScope::Install,
+        ExecutionScope::TestRunner,
+        ExecutionScope::BuildRunner,
+        ExecutionScope::DevServer,
+        ExecutionScope::DeviceControl,
+    ] {
+        for tool in ["npm", "pnpm", "yarn", "bun", "deno", "npx", "bunx"] {
+            assert!(
+                check_tool_with_scope(tool, scope, Some(root)).is_err(),
+                "{tool} unexpectedly allowed in {scope:?}"
+            );
+        }
+        for rival in ["bun", "deno", "composer", "pub"] {
+            let err = check_tool_with_scope_compat(rival, scope, Some(root), Some(rival))
+                .expect_err("legacy compat mode must never authorize a rival runtime");
+            assert!(
+                err.to_string().contains("forbidden"),
+                "{rival} must be refused by the executor deny-list in {scope:?}: {err}"
+            );
+        }
     }
 }
 
@@ -84,6 +156,35 @@ fn rejects_forbidden_pm_anywhere_in_script() {
             "unexpected error for {script}: {err}"
         );
     }
+}
+
+#[test]
+fn rejects_package_manager_javascript_entrypoints() {
+    use mgc_exec::allowlist::find_forbidden_tool_in_script;
+
+    for (script, expected) in [
+        ("node ./node_modules/pnpm/bin/pnpm.cjs install", "pnpm"),
+        ("node ./node_modules/npm/bin/npm-cli.js install", "npm"),
+        ("node .\\node_modules\\yarn\\bin\\yarn.js install", "yarn"),
+    ] {
+        assert_eq!(
+            find_forbidden_tool_in_script(script),
+            Some(expected),
+            "must detect package-manager entrypoint in {script}"
+        );
+    }
+}
+
+#[test]
+fn rejects_package_manager_invoked_from_inline_javascript() {
+    use mgc_exec::allowlist::find_forbidden_tool_in_script;
+
+    let script = r#"node -e "const cmd='pnpm install'; require('child_process').execSync(cmd)""#;
+    assert_eq!(
+        find_forbidden_tool_in_script(script),
+        Some("pnpm"),
+        "must detect a package manager named inside inline JavaScript"
+    );
 }
 
 #[test]
@@ -138,6 +239,33 @@ fn rejects_shell_control_in_simple_script() {
         assert!(
             err.to_string().contains("unsupported shell control"),
             "unexpected error for {script}: {err}"
+        );
+    }
+}
+
+#[test]
+fn and_chain_preserves_quoted_and_escaped_arguments() {
+    use mgc_exec::allowlist::parse_script_chain;
+    for script in [
+        r#"vite build --base "dist&&preview" && tsc --noEmit"#,
+        r"vite build --base dist\&\&preview && tsc --noEmit",
+    ] {
+        let commands = parse_script_chain(script).unwrap();
+        assert_eq!(commands.len(), 2);
+        assert_eq!(commands[0].args.last().unwrap(), "dist&&preview");
+        assert_eq!(commands[1].program, "tsc");
+    }
+    for script in [
+        "vite &&",
+        "&& vite",
+        "vite || tsc",
+        "vite; tsc",
+        "vite && 'tsc",
+        "vite && tsc\\",
+    ] {
+        assert!(
+            parse_script_chain(script).is_err(),
+            "invalid chain accepted: {script}"
         );
     }
 }

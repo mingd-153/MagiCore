@@ -4,7 +4,9 @@
 //! Install module integration tests.
 
 use mgc_lib_adapter::install::fetch::{crate_tarball_url, pypi_package_index_url};
-use mgc_lib_adapter::install::verify::{verify_cargo_lock, verify_python_package};
+use mgc_lib_adapter::install::verify::{
+    verify_cargo_lock, verify_python_package, verify_wheel_record,
+};
 use mgc_types::{PackageId, PackageName, Version};
 
 #[test]
@@ -40,28 +42,43 @@ fn verify_cargo_lock_missing_file() {
 }
 
 #[test]
-fn verify_cargo_lock_exists_passes() {
+fn verify_cargo_lock_does_not_claim_unverified_integrity() {
     let tmp = std::env::temp_dir().join(format!("mgc-lock-ok-{}", std::process::id()));
     std::fs::create_dir_all(&tmp).unwrap();
     std::fs::write(tmp.join("Cargo.lock"), "# Cargo.lock\n").unwrap();
 
     let result = verify_cargo_lock(&tmp);
-    // Currently trusts cargo's verification, so should pass
-    assert!(result.is_ok());
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("cannot verify"));
 
     std::fs::remove_dir_all(&tmp).unwrap();
 }
 
 #[test]
-fn verify_python_package_no_hash_warns_but_passes() {
+fn verify_python_package_without_hash_fails_closed() {
     let tmp = std::env::temp_dir().join(format!("mgc-py-pkg-{}", std::process::id()));
     std::fs::create_dir_all(&tmp).unwrap();
     let pkg_path = tmp.join("test.whl");
     std::fs::write(&pkg_path, b"fake wheel content").unwrap();
 
-    // No hash provided - should warn but pass
+    // Missing artifact integrity evidence must not be reported as verified.
     let result = verify_python_package(&pkg_path, None);
-    assert!(result.is_ok());
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("hash"));
+
+    std::fs::remove_dir_all(&tmp).unwrap();
+}
+
+#[test]
+fn verify_wheel_record_does_not_accept_extension_as_integrity_evidence() {
+    let tmp = std::env::temp_dir().join(format!("mgc-wheel-record-{}", std::process::id()));
+    std::fs::create_dir_all(&tmp).unwrap();
+    let wheel_path = tmp.join("fake.whl");
+    std::fs::write(&wheel_path, b"not a zip archive").unwrap();
+
+    let result = verify_wheel_record(&wheel_path);
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("RECORD"));
 
     std::fs::remove_dir_all(&tmp).unwrap();
 }

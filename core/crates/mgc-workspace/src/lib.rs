@@ -7,14 +7,17 @@ mod filter;
 mod graph;
 mod topo;
 
-pub use catalog::{load_workspace_catalogs, resolve_catalog_specifier, WorkspaceCatalogs};
+pub use catalog::{WorkspaceCatalogs, load_workspace_catalogs, resolve_catalog_specifier};
 pub use computation_cache::{
-    check_package_build_freshness, compute_composite_hash, compute_package_source_hash,
-    load_package_build_cache, save_package_build_cache, PackageBuildCache,
+    PackageBuildCache, check_package_build_freshness, compute_composite_hash,
+    compute_package_source_hash, load_package_build_cache, save_package_build_cache,
 };
-pub use discover::{build_workspace_graph, discover_workspace_targets, DiscoverOptions};
+pub use discover::{
+    DiscoverOptions, build_workspace_graph, discover_workspace_targets, read_workspace_config,
+    resolve_workspace_layout_dir, workspace_entry_is_directory,
+};
 pub use filter::filter_matches;
 pub use graph::{
-    read_package_manifest, WorkspaceEdge, WorkspaceGraph, WorkspaceNode, WorkspacePackageManifest,
+    WorkspaceEdge, WorkspaceGraph, WorkspaceNode, WorkspacePackageManifest, read_package_manifest,
 };
-pub use topo::{topo_levels, TopoError};
+pub use topo::{TopoError, topo_levels};

@@ -1,62 +1,84 @@
 //! Trust commands for lockfile signing and verification
 //! Lệnh trust cho ký và xác minh lockfile
 
+pub mod anchor;
 pub mod approve;
 pub mod deny;
 pub mod init;
 pub mod list;
+pub mod pending;
 pub mod policy;
 pub mod prune;
+pub mod script_policy;
 pub mod sign;
 pub mod verify;
 
 use clap::Subcommand;
 
-/// Trust subcommands — Lệnh con trust
+/// Trust subcommands (help text English — RULE §7).
+/// Lệnh con trust (text help tiếng Anh — RULE §7).
 #[derive(Debug, Clone, Subcommand)]
 pub enum TrustCmd {
-    /// Initialize keyring — Khởi tạo keyring
+    /// Initialize keyring
     Init {
-        /// Force reinitialize — Buộc khởi tạo lại
+        /// Force reinitialize
         #[arg(long)]
         force: bool,
     },
 
-    /// Sign lockfile — Ký lockfile
+    /// Sign lockfile
     Sign {
-        /// Lockfile path — Đường dẫn lockfile
+        /// Lockfile path
         #[arg(default_value = "mgc.lock")]
         lockfile: String,
 
-        /// Key ID to use — Key ID để dùng
+        /// Key ID to use
         #[arg(long)]
         key_id: Option<String>,
     },
 
-    /// Verify lockfile — Xác minh lockfile
+    /// Verify lockfile
     Verify {
-        /// Lockfile path — Đường dẫn lockfile
+        /// Lockfile path
         #[arg(default_value = "mgc.lock")]
         lockfile: String,
     },
 
-    /// List keys — Liệt kê keys
+    /// List keys
     List,
 
-    /// Approve package lifecycle scripts — Cho phép lifecycle scripts của package
+    /// Approve package lifecycle scripts
     Approve {
-        /// Package name — Tên package
+        /// Package name
         package: String,
     },
 
-    /// Deny package lifecycle scripts — Từ chối lifecycle scripts của package
+    /// Deny package lifecycle scripts
     Deny {
-        /// Package name — Tên package
+        /// Package name
         package: String,
     },
 
-    /// Prune stale trust policies — Dọn policy cũ (package đã gỡ)
+    /// Prune stale trust policies
     Prune,
+
+    /// List installed packages with lifecycle scripts but no policy yet
+    Pending,
+
+    /// Attest the project core identity (binds .mgc.core + mgc.toml to a key)
+    Anchor {
+        /// Re-attest even when the current attestation still verifies
+        #[arg(long)]
+        re_attest: bool,
+
+        /// Rotate to a freshly generated key (keeps one previous key)
+        #[arg(long)]
+        rotate: bool,
+
+        /// Key ID to use (not combinable with --rotate, which generates one)
+        #[arg(long)]
+        key_id: Option<String>,
+    },
 }
 
 /// Execute trust command — Thực thi lệnh trust
@@ -69,6 +91,12 @@ pub fn execute(cmd: TrustCmd) -> anyhow::Result<()> {
         TrustCmd::Approve { package } => approve::execute(&package),
         TrustCmd::Deny { package } => deny::execute(&package),
         TrustCmd::Prune => prune::execute(),
+        TrustCmd::Pending => pending::execute(),
+        TrustCmd::Anchor {
+            re_attest,
+            rotate,
+            key_id,
+        } => anchor::execute(re_attest, rotate, key_id.as_deref()),
     }
 }
 

@@ -1,30 +1,29 @@
 #![cfg(test)]
 #![allow(clippy::unwrap_used)]
-//! Adapter install summary tests.
-//! Kiểm tra summary install adapter game không phụ thuộc network.
 
 use super::*;
 
-use tempfile::TempDir;
-
-fn tmp() -> TempDir {
-    TempDir::new().unwrap()
-}
-
 #[tokio::test]
-async fn test_install_bevy_stub() {
-    let tmp = tmp();
-    // Create a Cargo project without remote deps — giữ test hermetic, không gọi crates.io.
-    std::fs::create_dir_all(tmp.path().join("src")).unwrap();
-    std::fs::write(tmp.path().join("src/lib.rs"), "").unwrap();
+async fn package_install_fails_closed_for_every_game_engine() {
+    let tmp = tempfile::tempdir().unwrap();
     std::fs::write(
         tmp.path().join("Cargo.toml"),
-        "[package]\nname=\"test\"\nversion=\"0.1.0\"\nedition=\"2021\"\n",
+        "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\n",
     )
     .unwrap();
 
-    let summary = install_dependencies(GameEngine::Bevy, tmp.path())
-        .await
-        .unwrap();
-    assert_eq!(summary.engine, GameEngine::Bevy);
+    for engine in [
+        GameEngine::Bevy,
+        GameEngine::Godot,
+        GameEngine::Unity,
+        GameEngine::Unreal,
+    ] {
+        let error = install_dependencies(engine, tmp.path()).await.unwrap_err();
+        assert!(matches!(error, MgError::Unsupported { core: "game", .. }));
+        assert!(
+            error
+                .to_string()
+                .contains("no provider package manager was invoked")
+        );
+    }
 }

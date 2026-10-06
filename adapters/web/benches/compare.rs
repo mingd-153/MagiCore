@@ -1,5 +1,6 @@
 #![allow(clippy::unwrap_used)]
-use mgc_types::{adapter::InstallOptions, PackageAdapter};
+use mgc_types::capabilities::{ContentStoreProvider, DependencyResolver};
+use mgc_types::{PackageAdapter, adapter::InstallOptions};
 /// Compare MagiCore vs npm / pnpm / bun on the same packages.
 /// Usage: cargo bench -p mgc-web-adapter --bench compare
 use std::time::{Duration, Instant};
@@ -9,7 +10,7 @@ const PKG_JSON: &str = r#"{"name":"cmp","version":"0.1.0","dependencies":{"lodas
 
 fn run_mg(_label: &str, dir: &std::path::Path) -> (Duration, Duration, Duration) {
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let adapter = mgc_web_adapter::WebAdapter::new();
+    let adapter = mgc_web_adapter::WebAdapter::new().unwrap();
 
     let t0 = Instant::now();
     let manifest = rt.block_on(adapter.parse_manifest(dir)).unwrap();
@@ -145,15 +146,16 @@ fn measure_disk(dir: &std::path::Path) -> String {
         .args(["-sh", dir.join("node_modules").to_str().unwrap_or("")])
         .output()
         .ok();
-    if let Some(out) = output {
-        if out.status.success() {
-            return String::from_utf8_lossy(&out.stdout)
-                .trim()
-                .split('\t')
-                .next()
-                .unwrap_or("?")
-                .to_string();
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Some(out) = output
+        && out.status.success()
+    {
+        return String::from_utf8_lossy(&out.stdout)
+            .trim()
+            .split('\t')
+            .next()
+            .unwrap_or("?")
+            .to_string();
     }
     "?".to_string()
 }

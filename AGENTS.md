@@ -1,7 +1,7 @@
 # AGENTS.md — MagiCore
 
-- Đọc `RULE.md` trước MỌI task — bắt buộc (workflow 5 bước, naming, song ngữ).
-- Nguồn chân lý: `sys-mgc/11-folder-structure.md` (cây folder) + `sys-mgc/00-index.md` (quyết định).
+- Đọc `RULE.md` trước MỌI task — bắt buộc (DEFINE→PLAN→BUILD→VERIFY→REVIEW→SHIP, hai vòng build/verify/review, naming, song ngữ).
+- Nguồn chuẩn: RULE.md cho quy tắc; manifests, source và tests hiện tại cho trạng thái triển khai; docs/README.md là mục lục tài liệu. Chỉ spec được user duyệt mới là requirement/design đang hiệu lực.
 - Báo cáo tiếng Việt; code/design không tự ý vượt phase đã duyệt.
 - **BÁO CÁO SAU MỖI LẦN SỬA (BẮT BUỘC, user 2026-08-15):** sau mỗi lần sửa xong (code/design/docs/RULE) → APPEND 1 entry vào `docs/specs/magiCoreChangeLog.md` — ghi: sửa gì, động file nào, RULE đổi gì (nếu có), thời gian ISO. KHÔNG sửa đè entry cũ. RULE thay đổi → cập nhật AGENTS.md/RULE.md + ghi vào changeLog. **Changelog/docs nội bộ là local-only mặc định: không `git add`, không `git add -f`, không commit/push bất kỳ `.md` trong `docs/` nếu user chưa cho phép đúng file đó.**
 - **CORE PARITY (user 2026-08-25):** không dồn năng lực vào mỗi `web`; khi thêm CLI/scaffold/test/quality gate phải cân bằng tối thiểu 4 core chính `web`, `ai`, `app`, `lib` hoặc ghi rõ lý do scope cục bộ.
@@ -18,7 +18,7 @@ DEFINE → PLAN → BUILD → VERIFY → REVIEW → SHIP
 
 | Bước | Yêu cầu tối thiểu | Skill tương ứng (đã cài) |
 |---|---|---|
-| 1. DEFINE | Spec/PRD rõ trước code: mục tiêu, phạm vi, ràng buộc, reference RULE + sys-mgc | `spec-driven-development`, `interview-me` (nếu yêu cầu mập mờ) |
+| 1. DEFINE | Spec/PRD rõ trước code: mục tiêu, phạm vi, ràng buộc, reference RULE.md + spec được user duyệt hoặc acceptance criteria từ user | `spec-driven-development`, `interview-me` (nếu yêu cầu mập mờ) |
 | 2. PLAN | Task nhỏ, atomic, criterion chấp nhận, thứ tự dependency, todo list | `planning-and-task-breakdown` |
 | 3. BUILD | Từng slice nhỏ, test-driven, an toàn (fail-closed + escape hatch), bám RULE | `incremental-implementation`, `test-driven-development`, `source-driven-development`, `security-and-hardening` (khi chạm input/auth/storage) |
 | 4. VERIFY | Chạy test riêng + chung (`cargo test --workspace`), sửa fail, bằng chứng pass | `debugging-and-error-recovery` (khi fail), `browser-testing-with-devtools` (web runtime) |
@@ -36,30 +36,30 @@ Dùng skill tool (`using-agent-skills`) để chọn + thực thi skill đúng b
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **MagiCore** (7610 symbols, 18136 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **MagiCore** (10929 symbols, 26830 relationships, 836 execution flows).
 
-> Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
+> Index stale? Run `node .gitnexus/run.cjs analyze --index-only` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? Bootstrap with `npx`, `bunx`, or `pnpm dlx` — e.g. `bunx gitnexus@latest analyze` (npm 11 npx crash; #1939).
 
 ## Always Do
 
-- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
-- **MUST run `detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows. For regression review, compare against the default branch: `detect_changes({scope: "compare", base_ref: "main"})`.
-- **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
-- When exploring unfamiliar code, use `query({search_query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
-- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `context({name: "symbolName"})`.
+- **MUST run impact before editing.** Use `impact({target: "symbolName", direction: "upstream"})` or `node .gitnexus/run.cjs impact "symbolName" --direction upstream --repo .`; report callers, processes, and risk. Never substitute grep for graph analysis.
+- **MUST analyze graph changes before committing.** Use `detect_changes({scope: "all"})` (MCP) or `node .gitnexus/run.cjs detect-changes --scope all --repo .` (CLI fallback). `partial: true` or `truncated: true` is not a clean check — a zero means unseen, not unaffected; re-run it. For regression review: `detect_changes({scope: "compare", base_ref: "main"})` or `node .gitnexus/run.cjs detect-changes --scope compare --base-ref "main" --repo .`.
+- MUST warn on HIGH/CRITICAL `risk` pre-edit; never use `riskSharedAxes` to waive a HIGH/CRITICAL `risk` warning. Compare File/symbol: MCP File omits axes; Graph-RAG expands File.
+- **MUST treat `risk: UNKNOWN` as unresolved, not as low.** An empty caller set is not evidence the symbol is unused — it can also mean the callers are not resolvable by the index (plain-object property access, dynamic dispatch, cross-language calls). `impact` pairs `UNKNOWN` with a `riskNote` saying so. Confirm with a text search before treating the symbol as safe to change or delete; do not proceed on the strength of a zero.
+- **MUST use `query({search_query: "concept"})` for concepts/flows, `context({name: "symbolName"})` for a named symbol, or `impact` for blast radius, on read-only callers, dependencies, imports, or execution flow.** Graph first; text search only for empty/`UNKNOWN`/literals.
 - For security review, `explain({target: "fileOrSymbol"})` lists taint findings (source→sink flows; needs `analyze --pdg`).
 
 ## Never Do
 
-- NEVER edit a function, class, or method without first running `impact` on it.
-- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
+- NEVER edit a function, class, or method before MCP/CLI impact analysis.
+- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis, and never read `UNKNOWN` as an all-clear — it means the walk could not answer, which is the one verdict that requires confirming by other means.
 - NEVER rename symbols with find-and-replace — use `rename` which understands the call graph.
-- NEVER commit changes without running `detect_changes()` to check affected scope.
+- NEVER commit before MCP/CLI graph change analysis.
 
 ## Resources
 
 | Resource | Use for |
-|----------|---------|
+| --- | --- |
 | `gitnexus://repo/MagiCore/context` | Codebase overview, check index freshness |
 | `gitnexus://repo/MagiCore/clusters` | All functional areas |
 | `gitnexus://repo/MagiCore/processes` | All execution flows |
@@ -68,12 +68,12 @@ This project is indexed by GitNexus as **MagiCore** (7610 symbols, 18136 relatio
 ## CLI
 
 | Task | Read this skill file |
-|------|---------------------|
-| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
-| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
-| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md` |
-| Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
-| Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
-| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
+| --- | --- |
+| Understand architecture / "How does X work?" | `.claude/skills/gitnexus-exploring/SKILL.md` |
+| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus-impact-analysis/SKILL.md` |
+| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus-debugging/SKILL.md` |
+| Rename / extract / split / refactor | `.claude/skills/gitnexus-refactoring/SKILL.md` |
+| Tools, resources, schema reference | `.claude/skills/gitnexus-guide/SKILL.md` |
+| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus-cli/SKILL.md` |
 
 <!-- gitnexus:end -->

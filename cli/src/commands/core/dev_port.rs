@@ -81,25 +81,9 @@ pub fn resolve_port(core: &str, port_override: Option<u16>) -> Option<u16> {
     Some(chosen)
 }
 
-/// Kiểm tra conflict giữa nhiều core chạy song song.
-/// `cores`: danh sách (core_name, port_override) — thứ tự launch.
-/// Return danh sách cặp conflict `(core_a, core_b, port)`.
-pub fn check_multi_core_conflicts(cores: &[(&str, Option<u16>)]) -> Vec<(String, String, u16)> {
-    let mut port_map: std::collections::HashMap<u16, String> = std::collections::HashMap::new();
-    let mut conflicts = vec![];
-    for (core, override_port) in cores {
-        let port = match override_port.or_else(|| default_port(core)) {
-            Some(p) => p,
-            None => continue,
-        };
-        if let Some(existing) = port_map.get(&port) {
-            conflicts.push((existing.clone(), core.to_string(), port));
-        } else {
-            port_map.insert(port, core.to_string());
-        }
-    }
-    conflicts
-}
+// check_multi_core_conflicts removed: sole caller (legacy run_multi router) was
+// dead code; re-add together with a real multi-core dev command when it ships.
+// Đã xóa cùng router run_multi chết — sẽ thêm lại khi có lệnh multi-core dev thật.
 
 // ────────────────────────────────────────────────────────────────
 // Tests

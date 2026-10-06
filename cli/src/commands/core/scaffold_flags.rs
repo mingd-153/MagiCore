@@ -7,8 +7,11 @@ pub struct ScaffoldFlags {
     // ── Project identity ──────────────────────────────────────────
     #[arg(long, help = "Project display name (defaults to directory name)")]
     pub name: Option<String>,
-    #[arg(long, help = "Target directory")]
-    pub dir: Option<String>,
+    // NOTE: no `--dir` here on purpose — the GLOBAL `--dir` (PathBuf,
+    // "run from another directory") already occupies the flag name; a
+    // second `--dir: String` on create-* commands panicked every
+    // invocation with one (clap type-downcast mismatch). Use global `-C/--dir`.
+    // (Cố ý không có `--dir` ở đây — dùng global.)
     #[arg(
         long,
         hide = true,

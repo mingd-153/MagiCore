@@ -12,7 +12,7 @@
 
 use std::fs;
 
-use mgc_e2e::{free_port, mgc, RegistryServer, TEST_ADMIN_TOKEN};
+use mgc_e2e::{RegistryServer, TEST_ADMIN_TOKEN, free_port, mgc};
 
 #[test]
 fn e2e_import_lockfile_seeds_install() {

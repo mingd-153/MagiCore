@@ -21,7 +21,8 @@ pub struct PatchSpec {
     pub package: String,
     /// Version range áp dụng patch (vd: "1.0.0 - 1.2.0")
     pub version_range: VersionRange,
-    /// Đường dẫn patch file (tương đối trong ~/.magicore/patches/)
+    /// Project-relative patch filename under `.magicore/patches/`.
+    /// (Tên file patch tương đối trong `.magicore/patches/` của project.)
     pub patch_path: String,
     /// SHA256 hash của nội dung diff — verify integrity
     pub integrity: String,

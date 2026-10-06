@@ -3,6 +3,7 @@
 #
 # Quick start:
 #   cp registry.env.example registry.env          # fill in secrets
+#   cp .env.example .env                          # optional CLI sidecar token
 #   docker compose up -d
 #   docker compose logs -f registry
 #
@@ -20,19 +21,23 @@ services:
     image: magicore/registry-server:latest
     container_name: mgc-registry
     restart: unless-stopped
+    # Host API port is loopback-only; remote clients must use the TLS proxy.
+    # Port trên host chỉ mở loopback; client từ xa phải đi qua TLS proxy.
     ports:
-      - "${MAGICORE_REGISTRY_PORT:-8080}:8080"
+      - "127.0.0.1:${MAGICORE_REGISTRY_PORT:-4315}:4315"
     volumes:
       - registry-data:/data
     env_file:
       - registry.env
     environment:
       MAGICORE_REGISTRY_HOST: "0.0.0.0"
-      MAGICORE_REGISTRY_PORT: "8080"
+      MAGICORE_REGISTRY_PORT: "4315"
       MAGICORE_REGISTRY_STORE_DIR: "/data"
       MAGICORE_LOG_LEVEL: "${MAGICORE_LOG_LEVEL:-info}"
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/v2/"]
+      # Accept the expected auth challenge; keep other Wget failures unhealthy.
+      # Chấp nhận thử thách xác thực dự kiến; các lỗi Wget khác vẫn báo unhealthy.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:4315/v2/ >/dev/null 2>&1 || test $$? -eq 6"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -47,6 +52,8 @@ services:
 
   # ── mgc CLI sidecar (one-shot) ──────────────────────────────────────────────
   # Usage:  docker compose run --rm mgc-cli mgc publish ./my-pkg
+  # Optional publish token: set MGC_NPM_TOKEN in .env before using --profile cli.
+  # Token publish tùy chọn: đặt MGC_NPM_TOKEN trong .env trước khi dùng --profile cli.
   mgc-cli:
     image: magicore/cli:latest
     build:
@@ -59,8 +66,8 @@ services:
       registry:
         condition: service_healthy
     environment:
-      MGC_REGISTRY: "http://registry:8080"
-      MGC_AUTH_TOKEN: "${MGC_AUTH_TOKEN:-}"
+      MGC_REGISTRY: "http://registry:4315"
+      MGC_NPM_TOKEN: "${MGC_NPM_TOKEN:-}"
     volumes:
       - "${HOST_WORKSPACE:-./workspace}:/workspace:rw"
     working_dir: /workspace

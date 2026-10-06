@@ -1,7 +1,7 @@
 //! Tests for simd module
 //! Tests cho module simd
 
-use mgc_crypto::simd::{detect_simd, simd_info, SimdCapability};
+use mgc_crypto::simd::{SimdCapability, detect_simd, simd_info};
 
 #[test]
 fn test_detect_simd() {

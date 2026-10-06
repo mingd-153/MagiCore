@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:magicore:schemas:coverage-manifest:v1",
+  "title": "MagiCore capability coverage manifest skeleton",
+  "description": "Phase 0 shape only. This file is not a capability source of truth until the registry/generator phase is implemented.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "manifest_kind", "lanes"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "manifest_kind": { "const": "coverage-skeleton" },
+    "lanes": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/lane" }
+    }
+  },
+  "$defs": {
+    "lane": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["core", "language", "framework", "operation", "target", "dependency_owner", "status", "evidence"],
+      "properties": {
+        "core": { "enum": ["web", "ai", "app", "lib", "game", "iot", "clo", "cicd", "hardware"] },
+        "language": { "type": "string", "minLength": 1 },
+        "framework": { "type": "string", "minLength": 1 },
+        "operation": {
+          "enum": ["detect", "resolve", "lock", "fetch", "verify", "store", "materialize", "install", "add", "remove", "update", "list", "frozen-install", "offline-reinstall", "audit", "build", "test", "run", "dev", "publish"]
+        },
+        "target": { "type": "string", "minLength": 1 },
+        "dependency_owner": { "enum": ["mgc-native", "delegated", "scaffold-only", "unsupported", "unverified"] },
+        "status": { "enum": ["native-experimental", "supported", "delegated", "scaffold-only", "unsupported", "unverified"] },
+        "evidence": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/evidence" }
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "commit", "result"],
+      "properties": {
+        "kind": { "enum": ["unit", "integration", "release-artifact", "clean-machine", "benchmark"] },
+        "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "result": { "enum": ["pass", "fail", "unverified"] },
+        "artifact_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "workflow_run": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

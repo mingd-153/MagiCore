@@ -9,11 +9,11 @@ use std::time::Duration;
 const DEFAULT_LIFECYCLE_TIMEOUT_SECS: u64 = 300;
 const LIFECYCLE_TIMEOUT_ENV: &str = "MGC_LIFECYCLE_TIMEOUT_SECS";
 
-#[derive(Debug, Deserialize, Default)]
-struct PackageScripts {
-    preinstall: Option<String>,
-    install: Option<String>,
-    postinstall: Option<String>,
+#[derive(Debug, Deserialize, Default, Clone)]
+pub(crate) struct PackageScripts {
+    pub(crate) preinstall: Option<String>,
+    pub(crate) install: Option<String>,
+    pub(crate) postinstall: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -22,36 +22,174 @@ struct PackageManifest {
     scripts: PackageScripts,
 }
 
+/// Lifecycle executor available to the guarded install flow.
+/// Bộ chạy lifecycle chỉ được gọi từ luồng install đã kiểm tra trust.
+///
+/// External callers cannot bypass that approval gate:
+/// Caller bên ngoài không thể bỏ qua cổng phê duyệt đó:
+///
+/// ```compile_fail
+/// use mgc_web_adapter::lifecycle::LifecycleRunner;
+/// use std::path::Path;
+/// LifecycleRunner::run_scripts(Path::new("."), Path::new(".")).unwrap();
+/// ```
 pub struct LifecycleRunner;
 
+impl PackageScripts {
+    pub(crate) fn has_hooks(&self) -> bool {
+        self.preinstall.is_some() || self.install.is_some() || self.postinstall.is_some()
+    }
+}
+
+/// Read lifecycle scripts from a no-follow, size-bounded manifest snapshot.
+/// Policy inspection and execution must share this exact parsed value.
+/// Đọc snapshot không theo symlink; policy và thực thi phải dùng cùng dữ liệu.
+pub(crate) fn load_package_scripts(pkg_dir: &Path) -> MgResult<PackageScripts> {
+    let package_json = pkg_dir.join("package.json");
+    let contents =
+        mgc_config::project::read_regular_project_text(&package_json, "installed package manifest")
+            .map_err(|error| {
+                MgError::Other(format!(
+                    "failed to safely read package.json for lifecycle '{}': {error}",
+                    package_json.display()
+                ))
+            })?;
+    let Some(contents) = contents else {
+        return Ok(PackageScripts::default());
+    };
+    let manifest: PackageManifest = serde_json::from_str(&contents).map_err(|error| {
+        MgError::Other(format!(
+            "failed to parse package.json for lifecycle '{}': {error}",
+            package_json.display()
+        ))
+    })?;
+    Ok(manifest.scripts)
+}
+
 impl LifecycleRunner {
-    pub fn run_scripts(pkg_dir: &Path, project_root: &Path) -> MgResult<()> {
-        let package_json = pkg_dir.join("package.json");
-        if !package_json.exists() {
-            return Ok(());
+    #[cfg(test)]
+    pub(crate) fn run_scripts(pkg_dir: &Path, project_root: &Path) -> MgResult<()> {
+        let scripts = load_package_scripts(pkg_dir)?;
+        Self::run_scripts_with_snapshot(pkg_dir, project_root, scripts)
+    }
+
+    pub(crate) fn run_scripts_with_snapshot(
+        pkg_dir: &Path,
+        project_root: &Path,
+        scripts: PackageScripts,
+    ) -> MgResult<()> {
+        let owner_before =
+            mgc_config::project::ProjectConfig::detect_core(project_root).map_err(|error| {
+                MgError::Other(format!(
+                    "cannot validate project core identity before lifecycle scripts: {error}"
+                ))
+            })?;
+        let identity_snapshot = mgc_config::project::snapshot_project_identity(project_root)
+            .map_err(|error| {
+                MgError::Other(format!(
+                    "cannot snapshot project identity before lifecycle scripts: {error}"
+                ))
+            })?;
+        // Test-only deterministic failure injector (transaction E2E):
+        // MGC_LIFECYCLE_FAIL_PACKAGES names package dirs (comma-separated,
+        // "*" matches all) whose scripts must FAIL before running anything.
+        // No side effects — the test proves transaction boundaries, not
+        // script behavior. Env-gated like failpoints: whoever controls the
+        // process environment already controls the process.
+        // (Móc lỗi deterministic chỉ-cho-test cho E2E transaction.)
+        if let Ok(filter) = std::env::var("MGC_LIFECYCLE_FAIL_PACKAGES") {
+            let dir_name = pkg_dir
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            if filter
+                .split(',')
+                .map(str::trim)
+                .any(|f| f == "*" || f == dir_name)
+            {
+                return Err(MgError::Other(format!(
+                    "lifecycle injected failure for '{dir_name}' (MGC_LIFECYCLE_FAIL_PACKAGES)"
+                )));
+            }
         }
-
-        let contents = std::fs::read_to_string(&package_json).map_err(|e| {
-            MgError::Other(format!("failed to read package.json for lifecycle: {e}"))
-        })?;
-
-        let manifest: PackageManifest = serde_json::from_str(&contents).map_err(|e| {
-            MgError::Other(format!(
-                "failed to parse package.json for lifecycle '{}': {e}",
-                package_json.display()
-            ))
-        })?;
-
-        if let Some(script) = manifest.scripts.preinstall {
+        if let Some(script) = scripts.preinstall {
             Self::run_script(pkg_dir, project_root, "preinstall", &script)?;
+            Self::ensure_project_identity(project_root, &owner_before, &identity_snapshot)?;
         }
-        if let Some(script) = manifest.scripts.install {
+        if let Some(script) = scripts.install {
             Self::run_script(pkg_dir, project_root, "install", &script)?;
+            Self::ensure_project_identity(project_root, &owner_before, &identity_snapshot)?;
         }
-        if let Some(script) = manifest.scripts.postinstall {
+        if let Some(script) = scripts.postinstall {
             Self::run_script(pkg_dir, project_root, "postinstall", &script)?;
+            Self::ensure_project_identity(project_root, &owner_before, &identity_snapshot)?;
         }
 
+        Self::ensure_project_identity(project_root, &owner_before, &identity_snapshot)?;
+
+        Ok(())
+    }
+
+    fn ensure_project_identity(
+        project_root: &Path,
+        expected_owner: &Option<String>,
+        identity_snapshot: &mgc_config::project::ProjectIdentitySnapshot,
+    ) -> MgResult<()> {
+        let identity_matches =
+            mgc_config::project::project_identity_matches_snapshot(project_root, identity_snapshot)
+                .map_err(|error| {
+                    let restore = mgc_config::project::restore_project_identity(
+                        project_root,
+                        identity_snapshot,
+                    );
+                    match restore {
+                        Ok(()) => MgError::Other(format!(
+                            "project core identity could not be verified during lifecycle scripts and was restored: {error}"
+                        )),
+                        Err(restore_error) => MgError::Other(format!(
+                            "project core identity could not be verified during lifecycle scripts: {error}; restoration also failed: {restore_error}"
+                        )),
+                    }
+                })?;
+        if !identity_matches {
+            let restore =
+                mgc_config::project::restore_project_identity(project_root, identity_snapshot);
+            let detail = match restore {
+                Ok(()) => "; original identity files were restored".to_owned(),
+                Err(error) => format!("; restoration also failed: {error}"),
+            };
+            return Err(MgError::Other(format!(
+                "lifecycle scripts modified project core identity files; install aborted{detail}"
+            )));
+        }
+        let owner_after =
+            mgc_config::project::ProjectConfig::detect_core(project_root).map_err(|error| {
+                let restore = mgc_config::project::restore_project_identity(
+                    project_root,
+                    identity_snapshot,
+                );
+                match restore {
+                    Ok(()) => MgError::Other(format!(
+                        "project core identity became invalid during lifecycle scripts and was restored: {error}"
+                    )),
+                    Err(restore_error) => MgError::Other(format!(
+                        "project core identity became invalid during lifecycle scripts: {error}; restoration also failed: {restore_error}"
+                    )),
+                }
+            })?;
+        if owner_after != *expected_owner {
+            let restore =
+                mgc_config::project::restore_project_identity(project_root, identity_snapshot);
+            let detail = match restore {
+                Ok(()) => "; original identity files were restored".to_owned(),
+                Err(error) => format!("; restoration also failed: {error}"),
+            };
+            return Err(MgError::Other(format!(
+                "lifecycle scripts changed project core identity from '{}' to '{}'; install aborted{detail}",
+                expected_owner.as_deref().unwrap_or("unclaimed"),
+                owner_after.as_deref().unwrap_or("unclaimed"),
+            )));
+        }
         Ok(())
     }
 
@@ -71,6 +209,7 @@ impl LifecycleRunner {
             timeout: Some(lifecycle_timeout()),
             env,
             clean_env: true,
+            execution_scope: Some(mgc_exec::allowlist::ExecutionScope::Install),
             ..Default::default()
         };
 

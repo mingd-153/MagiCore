@@ -1,3 +1,3 @@
 # Docker deploy
 
-Dockerfile + compose + env.example — content tạo Phase 6 (sys-mgc/17).
+Dockerfile, Compose configuration and environment example for registry deployment.

@@ -8,9 +8,58 @@ use mgc_types::{PackageId, PackageName, Version, VersionRange};
 use std::sync::Arc;
 
 use crate::cache::{
-    load_metadata_with_fallback, metadata_concurrency_limit, MetadataCache, SharedWebCache,
+    MetadataCache, SharedWebCache, load_metadata_with_fallback, metadata_concurrency_limit,
 };
 use crate::native;
+
+/// Age-gate policy: cutoff plus the missing-timestamp rule. Missing or
+/// unparsable timestamps REJECT the version by default (fail-closed —
+/// a policy that silently keeps unstamped versions is a bypass); the
+/// explicit `allow_missing_time` escape hatch exists for private
+/// registries that omit `time`.
+/// (Policy cổng tuổi: thiếu timestamp thì reject, trừ escape hatch.)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AgePolicy {
+    /// Minimum age in hours.
+    pub cutoff_hours: u64,
+    /// Keep versions with missing/unparsable timestamps (private
+    /// registries). Default false.
+    pub allow_missing_time: bool,
+}
+
+/// Parse npm `time` values (`2026-09-18T12:00:00.000Z` or without millis)
+/// to unix seconds. Returns None when unparseable (caller keeps version).
+/// (Parse thời gian npm ra unix seconds.)
+pub(crate) fn parse_npm_time(raw: &str) -> Option<u64> {
+    let normalized = raw.trim_end_matches('Z');
+    let (date, time) = normalized.split_once('T')?;
+    let mut date_parts = date.split('-');
+    let (y, m, d) = (
+        date_parts.next()?.parse::<u64>().ok()?,
+        date_parts.next()?.parse::<u64>().ok()?,
+        date_parts.next()?.parse::<u64>().ok()?,
+    );
+    let time = time.split('.').next()?;
+    let mut time_parts = time.split(':');
+    let (hh, mm, ss) = (
+        time_parts.next()?.parse::<u64>().ok()?,
+        time_parts.next()?.parse::<u64>().ok()?,
+        time_parts.next()?.parse::<u64>().ok()?,
+    );
+    if !(1..=12).contains(&m) || d == 0 || d > 31 || hh > 23 || mm > 59 || ss > 60 {
+        return None;
+    }
+    // Days-from-civil (Howard Hinnant) — no chrono dependency here.
+    // (Ngày từ dân sự — không cần chrono.)
+    let y_adj = if m <= 2 { y - 1 } else { y };
+    let era = y_adj / 400;
+    let yoe = y_adj - era * 400;
+    let mp = (m + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146097 + doe - 719468;
+    Some(days * 86400 + hh * 3600 + mm * 60 + ss)
+}
 
 pub struct NpmDependencyProvider {
     pub registry: native::npm_registry::NpmRegistry,
@@ -20,6 +69,10 @@ pub struct NpmDependencyProvider {
     pub shared_cache: Option<SharedWebCache>,
     pub alias_targets: DashMap<String, PackageName>,
     pub optional_enqueue_cache: DashMap<String, bool>,
+    /// Per-instance age gate (P0/F6): armed per operation from that
+    /// operation's project — never a process-global first-wins.
+    /// (Cổng tuổi riêng từng instance.)
+    age_policy: std::sync::RwLock<Option<AgePolicy>>,
 }
 
 impl NpmDependencyProvider {
@@ -41,7 +94,44 @@ impl NpmDependencyProvider {
             shared_cache,
             alias_targets: DashMap::new(),
             optional_enqueue_cache: DashMap::new(),
+            age_policy: std::sync::RwLock::new(None),
         }
+    }
+
+    /// Overwrite this provider's gate (P0/F6 — every operation re-arms
+    /// from its own project; no first-writer-wins). A policy change evicts
+    /// version and optional-dependency decisions made under the old gate.
+    /// Also flips the registry client's fetch mode (full packuments + no stale
+    /// abbreviated cache) so fetchers and filters can never disagree.
+    /// (Đặt lại cổng tuổi; đổi policy thì xóa quyết định version cũ.)
+    pub fn set_age_policy(&self, policy: Option<AgePolicy>) {
+        let armed = policy.is_some_and(|p| p.cutoff_hours > 0);
+        let changed = {
+            let mut slot = self
+                .age_policy
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let changed = *slot != policy;
+            *slot = policy;
+            changed
+        };
+        if changed {
+            self.registry_cache.clear();
+            self.optional_enqueue_cache.clear();
+        }
+        self.registry.set_age_gate_armed(armed);
+    }
+
+    /// This provider's current policy (None = no filtering).
+    /// (Policy hiện tại của provider này.)
+    pub fn age_policy(&self) -> Option<AgePolicy> {
+        self.age_policy.read().ok().and_then(|p| *p)
+    }
+
+    /// Test/scope probe: is any cutoff armed on this instance.
+    /// (Probe: instance này có cutoff không.)
+    pub fn age_gate_armed_for_test(&self) -> bool {
+        self.age_policy().is_some_and(|p| p.cutoff_hours > 0)
     }
 
     pub async fn metadata(
@@ -152,6 +242,33 @@ impl NpmDependencyProvider {
             .collect()
     }
 
+    /// Collect installable edges from one npm version record. Optional peer
+    /// dependencies are compatibility hints, not dependencies to auto-fetch;
+    /// npm encodes that distinction in `peerDependenciesMeta`.
+    /// (Thu thập edge cài đặt từ metadata npm. Optional peer chỉ là gợi ý
+    /// tương thích, không được tự tải; npm khai báo trong `peerDependenciesMeta`.)
+    fn collect_version_dependencies(
+        &self,
+        version: &native::npm_registry::VersionInfo,
+    ) -> Vec<ResolvedDep> {
+        let mut dependencies =
+            self.collect_resolved_deps(version.dependencies.as_ref(), false, false);
+        dependencies.extend(self.collect_resolved_deps(
+            version.optional_dependencies.as_ref(),
+            true,
+            false,
+        ));
+        let mut peers = self.collect_resolved_deps(version.peer_dependencies.as_ref(), false, true);
+        peers.retain(|peer| {
+            !version
+                .peer_dependencies_meta
+                .get(peer.package.as_str())
+                .is_some_and(|metadata| metadata.optional)
+        });
+        dependencies.extend(peers);
+        dependencies
+    }
+
     pub async fn prefetch_resolution_metadata(
         &self,
         names: &[PackageName],
@@ -204,12 +321,12 @@ impl NpmDependencyProvider {
             return Err(e);
         }
 
-        for (alias_name, source_name) in alias_to_source {
-            if results.contains_key(&alias_name) {
+        for (alias_name, source_name) in &alias_to_source {
+            if results.contains_key(alias_name) {
                 continue;
             }
             if let Some(metadata) = source_results.get(source_name.as_str()) {
-                results.insert(alias_name, Arc::clone(metadata));
+                results.insert(alias_name.clone(), Arc::clone(metadata));
             }
         }
 
@@ -286,6 +403,7 @@ impl NpmDependencyProvider {
             .strip_prefix("@esbuild/")
             .or_else(|| name.strip_prefix("@next/swc-"))
             .or_else(|| name.strip_prefix("@swc/core-"))
+            .or_else(|| name.strip_prefix("@typescript/typescript-"))
             .or_else(|| name.strip_prefix("@rollup/rollup-"))
             .or_else(|| name.strip_prefix("@tailwindcss/oxide-"))
             .or_else(|| name.strip_prefix("lightningcss-"))
@@ -328,6 +446,120 @@ impl NpmDependencyProvider {
             .filter_map(|v| Version::parse(v).ok())
             .collect()
     }
+
+    /// Version list with the minimum-age gate applied — the ONLY place
+    /// version lists are built (get_versions + all prefetch paths funnel
+    /// here, so the gate cannot be bypassed by a second listing site).
+    /// Gate rejections propagate as precise errors (never a confusing
+    /// downstream "no version matches").
+    /// (Dựng danh sách version kèm cổng tuổi — điểm duy nhất.)
+    pub(crate) fn versions_with_age_gate(
+        &self,
+        package: &PackageName,
+        meta: &native::npm_registry::PackageMetadata,
+    ) -> Result<Vec<Version>, DependencyError> {
+        eligible_versions(package, meta, self.age_policy()).map_err(DependencyError)
+    }
+}
+
+/// Verify ONE explicitly selected version (dist-tag pin, add-latest,
+/// update target) against the age policy. Unlike list filtering, there
+/// is no fallback candidate — a rejected pin is a hard error telling
+/// the user to pin an older version explicitly.
+/// (Kiểm tra một version đã chọn theo policy tuổi.)
+pub fn check_pinned_version(
+    package: &PackageName,
+    meta: &native::npm_registry::PackageMetadata,
+    version: &str,
+    policy: Option<AgePolicy>,
+) -> Result<(), String> {
+    let Some(policy) = policy.filter(|p| p.cutoff_hours > 0) else {
+        return Ok(());
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    match meta.time.get(version).and_then(|text| parse_npm_time(text)) {
+        Some(ts) if now.saturating_sub(ts) >= policy.cutoff_hours.saturating_mul(3600) => Ok(()),
+        Some(_) => Err(format!(
+            "minimum-release-age: {}@{} is younger than {}h — pin an older version explicitly or relax [security] min_release_age",
+            package.as_str(),
+            version,
+            policy.cutoff_hours
+        )),
+        None if policy.allow_missing_time => Ok(()),
+        None => Err(format!(
+            "minimum-release-age: {}@{} has no registry timestamp — set [security] allow_missing_time for private registries",
+            package.as_str(),
+            version
+        )),
+    }
+}
+/// and every selection path share it): resolve, prefetch, dist-tag
+/// pinning, add-latest, update, outdated. `None` policy = historical
+/// behavior (all parsed versions). With a policy, young versions are
+/// excluded and unstamped versions are excluded unless the explicit
+/// `allow_missing_time` escape hatch; empty-after-filter on a non-empty
+/// candidate set is an explicit Err naming the policy.
+/// (Hàm eligible duy nhất — mọi đường chọn version đi qua đây.)
+pub fn eligible_versions(
+    package: &PackageName,
+    meta: &native::npm_registry::PackageMetadata,
+    policy: Option<AgePolicy>,
+) -> Result<Vec<Version>, String> {
+    let all: Vec<Version> = meta
+        .versions
+        .keys()
+        .filter_map(|v| Version::parse(v).ok())
+        .collect();
+    let Some(policy) = policy.filter(|p| p.cutoff_hours > 0) else {
+        return Ok(all);
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let mut kept = Vec::new();
+    let mut young = 0usize;
+    let mut unstamped = 0usize;
+    for version in all {
+        let key = version.to_string();
+        match meta.time.get(&key).and_then(|text| parse_npm_time(text)) {
+            Some(ts) if now.saturating_sub(ts) >= policy.cutoff_hours.saturating_mul(3600) => {
+                kept.push(version);
+            }
+            Some(_) => {
+                young += 1;
+            }
+            None => {
+                if policy.allow_missing_time {
+                    kept.push(version);
+                } else {
+                    unstamped += 1;
+                }
+            }
+        }
+    }
+    if kept.is_empty() && !meta.versions.is_empty() {
+        return Err(format!(
+            "minimum-release-age: all {} version(s) of {} excluded ({} too young, {} unstamped) — relax [security] min_release_age, set allow_missing_time, or pin an older version explicitly",
+            meta.versions.len(),
+            package.as_str(),
+            young,
+            unstamped
+        ));
+    }
+    if young > 0 || unstamped > 0 {
+        eprintln!(
+            "[magicore] minimum-release-age: excluded {} young + {} unstamped version(s) of {} (cutoff {}h)",
+            young,
+            unstamped,
+            package.as_str(),
+            policy.cutoff_hours
+        );
+    }
+    Ok(kept)
 }
 
 #[async_trait]
@@ -337,7 +569,7 @@ impl DependencyProvider for NpmDependencyProvider {
             return Ok(cached);
         }
         let meta = self.metadata(package).await?;
-        let v = Self::metadata_versions(&meta);
+        let v = self.versions_with_age_gate(package, &meta)?;
         self.insert_versions_for(package, v.clone());
         Ok(v)
     }
@@ -354,43 +586,31 @@ impl DependencyProvider for NpmDependencyProvider {
         let deps: Vec<ResolvedDep> = meta
             .versions
             .get(&package_id.version().to_string())
-            .map(|v| {
-                let mut collected =
-                    self.collect_resolved_deps(v.dependencies.as_ref(), false, false);
-                collected.extend(self.collect_resolved_deps(
-                    v.optional_dependencies.as_ref(),
-                    true,
-                    false,
-                ));
-                collected.extend(self.collect_resolved_deps(
-                    v.peer_dependencies.as_ref(),
-                    false,
-                    true,
-                ));
-                collected
-            })
+            .map(|version| self.collect_version_dependencies(version))
             .unwrap_or_default();
         self.registry_cache.insert_deps(cache_key, deps.clone());
         Ok(deps)
     }
 
     async fn should_enqueue(&self, dep: &ResolvedDep) -> Result<bool, DependencyError> {
-        if !dep.optional {
-            return Ok(true);
-        }
-
         let cache_key = Self::optional_enqueue_key(dep);
         if let Some(cached) = self.optional_enqueue_cache.get(&cache_key) {
             return Ok(*cached);
         }
 
+        // Platform-targeted native packages may appear as required edges; keep only the host build.
+        // (Gói native theo nền tảng đôi khi được khai báo bắt buộc; chỉ giữ bản cho host.)
         if let Some(supported) = Self::known_optional_native_binary_supported(&dep.package) {
             self.optional_enqueue_cache.insert(cache_key, supported);
             return Ok(supported);
         }
 
+        if !dep.optional {
+            return Ok(true);
+        }
+
         let meta = self.metadata(&dep.package).await?;
-        let versions = Self::metadata_versions(&meta);
+        let versions = self.versions_with_age_gate(&dep.package, &meta)?;
         self.insert_versions_for(&dep.package, versions.clone());
         let Some(selected) = Self::select_best_version(&versions, &dep.spec)? else {
             self.optional_enqueue_cache.insert(cache_key, false);
@@ -421,7 +641,7 @@ impl DependencyProvider for NpmDependencyProvider {
 
             let package_key = self.source_package_name(package).as_str().to_string();
             if let Some(metadata) = self.metadata_cache.get(&package_key) {
-                let versions = Self::metadata_versions(&metadata);
+                let versions = self.versions_with_age_gate(package, &metadata)?;
                 self.insert_versions_for(package, versions.clone());
                 results.push((package.clone(), versions));
                 continue;
@@ -441,7 +661,7 @@ impl DependencyProvider for NpmDependencyProvider {
                     package.as_str()
                 )));
             };
-            let versions = Self::metadata_versions(metadata);
+            let versions = self.versions_with_age_gate(&package, metadata)?;
             self.insert_versions_for(&package, versions.clone());
             results.push((package.clone(), versions));
         }
@@ -467,21 +687,7 @@ impl DependencyProvider for NpmDependencyProvider {
                 let deps = meta
                     .versions
                     .get(&id.version().to_string())
-                    .map(|v| {
-                        let mut collected =
-                            self.collect_resolved_deps(v.dependencies.as_ref(), false, false);
-                        collected.extend(self.collect_resolved_deps(
-                            v.optional_dependencies.as_ref(),
-                            true,
-                            false,
-                        ));
-                        collected.extend(self.collect_resolved_deps(
-                            v.peer_dependencies.as_ref(),
-                            false,
-                            true,
-                        ));
-                        collected
-                    })
+                    .map(|version| self.collect_version_dependencies(version))
                     .unwrap_or_default();
                 self.registry_cache.insert_deps(cache_key, deps.clone());
                 results.push((id.clone(), deps));
@@ -499,8 +705,16 @@ impl DependencyProvider for NpmDependencyProvider {
         let fetched_metadata = self.prefetch_resolution_metadata(&missing_names).await?;
 
         for package_id in preloaded {
+            // Results are keyed by ALIAS (the name edges request); fall
+            // back to the source name for unaliased packages. Looking up
+            // by source only broke every real npm: alias
+            // (e.g. `vite → @voidzero-dev/vite-plus-core` in Nuxt's tree).
+            // (Kết quả key theo ALIAS; fallback tên gốc.)
             let source_name = self.source_package_name(package_id.name());
-            let Some(meta) = fetched_metadata.get(source_name.as_str()) else {
+            let Some(meta) = fetched_metadata
+                .get(package_id.name_str())
+                .or_else(|| fetched_metadata.get(source_name.as_str()))
+            else {
                 return Err(DependencyError(format!(
                     "prefetch metadata missing result for '{}'",
                     package_id.name_str()
@@ -509,21 +723,7 @@ impl DependencyProvider for NpmDependencyProvider {
             let deps = meta
                 .versions
                 .get(&package_id.version().to_string())
-                .map(|v| {
-                    let mut collected =
-                        self.collect_resolved_deps(v.dependencies.as_ref(), false, false);
-                    collected.extend(self.collect_resolved_deps(
-                        v.optional_dependencies.as_ref(),
-                        true,
-                        false,
-                    ));
-                    collected.extend(self.collect_resolved_deps(
-                        v.peer_dependencies.as_ref(),
-                        false,
-                        true,
-                    ));
-                    collected
-                })
+                .map(|version| self.collect_version_dependencies(version))
                 .unwrap_or_default();
             self.registry_cache
                 .insert_deps(Self::version_key(&package_id), deps.clone());

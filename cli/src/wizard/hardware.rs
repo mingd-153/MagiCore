@@ -25,10 +25,10 @@ impl HardwareWizard {
             kind: QuestionKind::Select {
                 options: vec![
                     Answer::new(
-                        "optimizer (GPU/CPU texture+mesh optimize, FFI C ABI)",
+                        "optimizer (CPU/RAM/GPU profile + runtime configs)",
                         "optimizer",
                     ),
-                    Answer::new("bench (GPU vs CPU benchmark harness)", "bench"),
+                    Answer::new("bench (install benchmark harness)", "bench"),
                 ],
             },
         }

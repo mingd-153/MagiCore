@@ -1,19 +1,19 @@
 # RULE.md — Quy tắc bắt buộc cho AGENT (Agent Compliance Rules)
 
-> Version: 1.0 | Ngày: 2026-08-04
+> Version: 1.1 | Cập nhật: 2026-10-06
 > Đây là quy tắc **bắt buộc tuyệt đối**. Mọi task trong repo này phải tuân thủ.
 > This is an absolutely mandatory rule. Every task in this repository must comply.
 > Vi phạm = làm lại. Violation = redo.
 
 ---
 
-## 1. FOLDER-STRUCTURE — BẮT BUỘC TUÂN THEO (Mandatory Structure)
+## 1. CẤU TRÚC REPOSITORY — THEO TRẠNG THÁI THỰC TẾ (Repository Structure)
 
-Agent **bắt buộc** tuân theo cây folder tại: `sys-mgc/11-folder-structure.md` (source of truth — nguồn chân lý duy nhất).
+Cấu trúc hiện hành được xác định từ repository đang làm việc, workspace manifests, source và tests. Không có cây folder tĩnh nào được coi là nguồn chân lý.
 
-- Không tạo file/folder ngoài cây được phép. No files/folders outside the allowed tree.
-- Cây có thể thay đổi **chỉ khi** user duyệt bản cập nhật 11-folder-structure.md trước. Tree changes only after user approves.
-- Nghi ngờ → dừng hỏi. Uncertain → stop and ask. KHÔNG tự quyết định. NEVER guess.
+- Chỉ tạo file/folder khi nằm trong phạm vi task và ownership của module rõ ràng.
+- Thay đổi cấu trúc công khai hoặc contract kiến trúc phải có spec được user duyệt.
+- Nghi ngờ về phạm vi hoặc ownership → dừng hỏi; không tự suy đoán.
 
 ---
 
@@ -71,16 +71,16 @@ Trong `Checklist.md` của folder, mỗi task ghi 5 dòng tick:
 
 ## 4. TASK + REQUIREMENT + DESIGN — ĐỊNH NGHĨA RÕ 3 THỨ
 
-Mọi việc làm đều thuộc 1 trong 3 loại — ghi rõ ở đầu ProgressReport.md:
+Mọi việc làm đều thuộc một trong ba loại:
 
 | Loại | Định nghĩa | Ví dụ |
 |---|---|---|
-| **TASK** | Việc được giao (từ user / plan) | "Implement mgc-exec allowlist" |
-| **REQUIREMENT** | Yêu cầu ràng buộc phải thỏa (từ design MD trong sys-mgc/) | "Allowlist bất biến 25 tool, cấm npm" |
-| **DESIGN** | Thiết kế quyết định trước khi viết (trong sys-mgc/ hoặc docs/ của folder) | "mgc-exec module map, audit sanitizer" |
+| **TASK** | Việc được giao trực tiếp bởi user hoặc plan đã duyệt | "Implement mgc-exec allowlist" |
+| **REQUIREMENT** | Ràng buộc từ yêu cầu user hoặc spec đã được user duyệt trong docs/specs/ | "Allowlist bất biến 25 tool, cấm npm" |
+| **DESIGN** | Thiết kế đã được user duyệt trong spec hoặc tài liệu thuộc module | "mgc-exec module map, audit sanitizer" |
 
-- **Requirement/Design thiếu → KHÔNG được viết code** — hỏi user trước. No requirement/design = no code.
-- Mọi thay đổi code phải trỏ tới requirement trong sys-mgc/ (ghi số file + section). Every code change must reference its requirement.
+- Thiếu requirement/design cho thay đổi code → không viết code; hỏi user hoặc làm rõ trong DEFINE.
+- Mọi thay đổi code phải dẫn tới yêu cầu user hoặc spec đã duyệt; tài liệu lịch sử/nháp không tự trở thành authority.
 
 ---
 
@@ -161,8 +161,8 @@ Quy tắc:
 
 ## 9. ĐIỀU CẤM TUYỆT ĐỐI (Absolute Forbidden)
 
-1. Tự ý tạo folder/file ngoài cây đã duyệt. Creating files outside the approved tree.
-2. Tự ý sửa design MD trong sys-mgc/ khi chưa được duyệt. Editing design MDs without approval.
+1. Tạo file/folder ngoài phạm vi task hoặc thay đổi cấu trúc công khai khi chưa được user duyệt. Creating files outside task scope or changing public structure without user approval.
+2. Tự ý sửa requirement/design đã được user duyệt trong docs/specs/ khi chưa có phê duyệt thay đổi.
 3. Đoán mò khi không chắc — phải dừng hỏi user. Guessing when unsure — ask.
 4. Commit/push khi chưa được yêu cầu. Committing without being asked.
 5. Viết code khi thiếu REQUIREMENT/DESIGN. Writing code without requirements.
@@ -176,14 +176,18 @@ Quy tắc:
 
 ## 10. THAM CHIẾU (References)
 
-| File | Vai trò |
+| File / nguồn | Vai trò |
 |---|---|
-| `sys-mgc/11-folder-structure.md` | Cây folder tổng thể — nguồn chân lý |
-| `sys-mgc/00-index.md` | 24 quyết định Q1–Q24 + exec policy + phase |
-| `sys-mgc/14-module-map.md` | Module map từng crate |
-| `sys-mgc/21-repo-ops.md` | Quality gates, CI, PR convention |
-| `CONTRIBUTING.md` | Hướng dẫn contribute (đã có) |
-| `LICENSE` | MIT (đã có) |
+| AGENTS.md | Hướng dẫn tác vụ, parity và quy trình agent |
+| RULE.md | Quy tắc bắt buộc của repository |
+| README.md | Hướng dẫn và claim dành cho người dùng |
+| Cargo.toml và manifests module | Workspace và metadata hiện tại |
+| Source code và tests | Hành vi triển khai thực tế |
+| docs/README.md | Mục lục, phân biệt tài liệu hiện hành và lịch sử |
+| docs/specs/ | Spec/design; chỉ tài liệu được user duyệt mới có hiệu lực |
+| LICENSE | Điều khoản sử dụng |
+
+---
 
 ## 11. 2 CÂU HỎI PHẢN BIỆN BẮT BUỘC (bước 2 và 4 — bài học phản biện v2)
 

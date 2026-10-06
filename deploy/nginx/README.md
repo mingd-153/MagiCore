@@ -1,3 +1,3 @@
 # Nginx reverse proxy (P2)
 
-Content tạo Phase 6 (sys-mgc/12).
+Nginx reverse proxy configuration for the registry deployment.

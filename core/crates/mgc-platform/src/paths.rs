@@ -70,16 +70,29 @@ pub struct GlobalPaths {
     pub quarantine: PathBuf,
     pub registry: PathBuf,
     pub lock_signatures: PathBuf,
+    /// Core-identity attestations by project (`identities/<path-hash>/attestation.json`).
+    /// Chứng thực identity core theo project.
+    pub identities: PathBuf,
 }
 
 impl GlobalPaths {
+    /// Resolve user-global paths; `MAGICORE_STORE_ROOT` overrides only `store`.
+    /// Tìm các đường dẫn global; `MAGICORE_STORE_ROOT` chỉ thay đường dẫn `store`.
     pub fn new() -> std::io::Result<Self> {
         let home = dirs::home_dir()
             .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no home dir"))?;
         let mgc_dir = home.join(".magicore");
+        // Keep shared ecosystem stores aligned with the CAS override used by
+        // mgc-store, including isolated Windows test and CI sandboxes.
+        // Đồng bộ store ecosystem với override CAS của mgc-store, kể cả
+        // sandbox test/CI Windows được cô lập.
+        let store = std::env::var_os("MAGICORE_STORE_ROOT")
+            .filter(|path| !path.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| mgc_dir.join("store"));
         Ok(Self {
             root: mgc_dir.clone(),
-            store: mgc_dir.join("store"),
+            store,
             cache: mgc_dir.join("cache"),
             logs: mgc_dir.join("logs"),
             locks: mgc_dir.join("locks"),
@@ -89,6 +102,7 @@ impl GlobalPaths {
             quarantine: mgc_dir.join("quarantine"),
             registry: mgc_dir.join("registry"),
             lock_signatures: mgc_dir.join("lock-signatures.json"),
+            identities: mgc_dir.join("identities"),
         })
     }
 

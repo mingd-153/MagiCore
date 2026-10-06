@@ -1,6 +1,10 @@
 use crate::wizard::engine::{Answer, Question, QuestionKind, ScaffoldConfig, WizardEngine};
 use std::path::PathBuf;
 
+#[cfg(test)]
+#[path = "../test/wizard_iot_test.rs"]
+mod tests;
+
 pub struct IotWizard;
 
 impl IotWizard {
@@ -34,31 +38,22 @@ impl IotWizard {
             prompt: "\n  Select IoT framework:".to_string(),
             kind: QuestionKind::Select {
                 options: vec![
-                    Answer::new("esp32-rust (no_std / cargo)", "esp32-rust").with_questions(vec![
-                        Self::board_question(vec![
-                            Answer::new("ESP32-C3 (riscv32imac)", "esp32c3"),
-                            Answer::new("ESP32-S3 (xtensa)", "esp32s3"),
-                            Answer::new("ESP32 (xtensa)", "esp32"),
-                        ]),
-                    ]),
-                    Answer::new("platformio (pio)", "platformio").with_questions(vec![
-                        Self::board_question(vec![
-                            Answer::new("ESP32 DevKit (esp32dev)", "esp32dev"),
-                            Answer::new("NodeMCU-32S", "nodemcu-32s"),
-                        ]),
-                    ]),
-                    Answer::new("zephyr (west / ARM)", "zephyr-arm").with_questions(vec![
-                        Self::board_question(vec![
-                            Answer::new("nRF52 DK (nrf52dk_nrf52832)", "nrf52dk_nrf52832"),
-                            Answer::new("STM32F4 Discovery", "stm32f4_disc"),
-                        ]),
-                    ]),
+                    Answer::new("esp32-rust (no_std / cargo)", "esp32-rust")
+                        .with_questions(vec![Self::board_question("esp32-rust")]),
+                    Answer::new("platformio (pio)", "platformio")
+                        .with_questions(vec![Self::board_question("platformio")]),
+                    Answer::new("zephyr (west / ARM)", "zephyr-arm")
+                        .with_questions(vec![Self::board_question("zephyr")]),
                 ],
             },
         }
     }
 
-    fn board_question(options: Vec<Answer>) -> Question {
+    fn board_question(framework: &str) -> Question {
+        let options = mgc_iot_adapter::boards_for_framework(framework)
+            .into_iter()
+            .map(|board| Answer::new(&board.label, &board.id))
+            .collect();
         Question {
             prompt: "\n  Select target board:".to_string(),
             kind: QuestionKind::Select { options },

@@ -2,7 +2,7 @@
 //! Tests cho module ed25519_signer
 
 use mgc_crypto::ed25519_signer::{
-    verify_signature, verify_string_signature, Ed25519PublicKey, Ed25519Signature, Ed25519Signer,
+    Ed25519PublicKey, Ed25519Signature, Ed25519Signer, verify_signature, verify_string_signature,
 };
 use ring::rand::SystemRandom;
 use ring::signature::Ed25519KeyPair;

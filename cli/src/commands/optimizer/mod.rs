@@ -1,20 +1,92 @@
-//! `optimizer/mod.rs` — MagiCore Hardware-Aware Optimizer Engine.
+//! `optimizer/mod.rs` — MagiCore Core-Neutral Optimizer Engine (Runtime Detection + Adapter Pattern)
 
+pub mod adapters;
 pub mod detect;
+pub mod env_loader;
 pub mod generators;
+pub mod runtime_detect;
 
 use anyhow::Result;
 use std::path::Path;
 
-/// Chạy tối ưu hóa dự án dựa trên Core và Hardware detect
+/// Run optimization for project based on Core and Hardware detection — chạy tối ưu hóa dự án dựa trên Core và phát hiện Hardware
+/// REFACTORED: Runtime detection → adapter dispatch (no hardcoded language/runtime) — đã refactor: phát hiện runtime → dispatch adapter
 pub fn optimize_project(project_root: &Path, core: &str, force: bool) -> Result<()> {
     let hw = detect::HardwareInfo::detect();
+    if hw.total_memory_gb.is_none() {
+        mgc_ui::warning(
+            "RAM size could not be detected on this machine — profile degraded to Constrained and memory-derived tuning is skipped (no fabricated values).",
+        );
+    }
+    if hw.cpu_cores.is_none() {
+        mgc_ui::warning(
+            "Logical CPU count could not be detected — CPU-derived tuning is omitted (no fabricated core count).",
+        );
+    }
     mgc_ui::info(&format!(
-        "Detected System: {} ({}), {} Cores, ~{}GB RAM -> Profile: {:?}",
-        hw.os, hw.arch, hw.cpu_cores, hw.total_memory_gb, hw.profile
+        "Detected System: {} ({}), {} Logical Cores, {} RAM -> Profile: {:?}",
+        hw.os,
+        hw.arch,
+        hw.cpu_cores
+            .map(|cores| cores.to_string())
+            .unwrap_or_else(|| "unknown".to_string()),
+        hw.total_memory_gb
+            .map(|gb| format!("~{gb}GB"))
+            .unwrap_or_else(|| "unknown".to_string()),
+        hw.profile
+    ));
+    if hw.gpus.is_empty() {
+        let message = match hw.gpu_detection_status {
+            detect::GpuDetectionStatus::Available => {
+                "GPU inventory complete: no PCI display device detected."
+            }
+            detect::GpuDetectionStatus::Partial => {
+                "GPU inventory is partial; no device was fully identified."
+            }
+            detect::GpuDetectionStatus::Unavailable => {
+                "GPU inventory unavailable on this platform; no hardware claim made."
+            }
+        };
+        mgc_ui::info(message);
+    } else {
+        let names: Vec<String> = hw
+            .gpus
+            .iter()
+            .map(|g| match (g.vendor.as_deref(), g.vram_mb) {
+                (Some(v), Some(mb)) => format!("{} [{} | {} MiB]", g.name, v, mb),
+                (Some(v), None) => format!("{} [{}]", g.name, v),
+                (None, _) => g.name.clone(),
+            })
+            .collect();
+        mgc_ui::info(&format!("Detected GPUs: {}", names.join("; ")));
+    }
+
+    // Detect runtimes for this project — phát hiện runtimes cho project này
+    let detected_runtimes = runtime_detect::detect_runtimes(project_root, core);
+    if detected_runtimes.is_empty()
+        || matches!(
+            detected_runtimes[0],
+            runtime_detect::DetectedRuntime::Unknown
+        )
+    {
+        // Fail closed: automation reading Ok(()) here would report a
+        // successful optimization that never happened (V1.2: no success
+        // without verifiable state change).
+        // (Fail-closed: automation đọc Ok(()) ở đây sẽ báo tối ưu thành
+        // công trong khi chưa có gì xảy ra.)
+        anyhow::bail!(
+            "No runtime detected for `{core}` core in {} — nothing was optimized (not a success).",
+            project_root.display()
+        );
+    }
+
+    mgc_ui::info(&format!(
+        "Detected runtimes for `{core}`: {:?}",
+        detected_runtimes
     ));
 
-    let files = generators::generate_optimizations_for_core(core, &hw);
+    // Generate optimizations via adapters — tạo optimizations qua adapters
+    let files = generators::generate_optimizations_for_core(core, &hw, project_root);
     if files.is_empty() {
         mgc_ui::info(&format!(
             "No specific hardware optimizations needed for `{core}` core."
@@ -36,6 +108,41 @@ pub fn optimize_project(project_root: &Path, core: &str, force: bool) -> Result<
     Ok(())
 }
 
+/// CLI entry point for `mgc optimizer` command — điểm vào CLI cho lệnh `mgc optimizer`
+/// Run optimizer on current project, auto-detect core from .mgc.core or use --core flag
+pub async fn run(core: Option<&str>, force: bool) -> Result<()> {
+    let ctx = crate::context::ProjectContext::load_with_core(core)?;
+    let project_root = ctx.root();
+    let ecosystem = ctx.adapter().ecosystem();
+    let detected_core = match ecosystem {
+        mgc_types::Ecosystem::Web => "web",
+        mgc_types::Ecosystem::Game => "game",
+        mgc_types::Ecosystem::Ai => "ai",
+        mgc_types::Ecosystem::Cloud => "cloud",
+        mgc_types::Ecosystem::Cicd => "cicd",
+        mgc_types::Ecosystem::Iot => "iot",
+        mgc_types::Ecosystem::App => "app",
+        mgc_types::Ecosystem::Lib => "lib",
+        mgc_types::Ecosystem::Hardware => "hardware",
+    };
+
+    mgc_ui::info(&format!(
+        "Running MagiCore Optimizer for `{}` core in {}",
+        detected_core,
+        project_root.display()
+    ));
+
+    optimize_project(project_root, detected_core, force)
+}
+
 #[cfg(test)]
 #[path = "test/optimizer.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "test/runtime_detect_test.rs"]
+mod runtime_detect_tests;
+
+#[cfg(test)]
+#[path = "test/adapters_test.rs"]
+mod adapters_tests;

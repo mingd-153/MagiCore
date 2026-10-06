@@ -6,6 +6,7 @@ pub mod app;
 pub mod cicd;
 pub mod clo;
 pub mod game;
+pub mod hardware;
 pub mod iot;
 pub mod lib;
 

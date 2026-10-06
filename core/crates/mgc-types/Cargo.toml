@@ -17,3 +17,19 @@ anyhow = { workspace = true }
 
 [lints]
 workspace = true
+
+# Global Gate 1 negative-enforcement tests construct the REAL adapters
+# (dev-dependency cycles are allowed by Cargo) — no new external deps.
+# Test ràng buộc âm tính Global Gate 1 dựng adapter THẬT (dev-dependency
+# cycle được Cargo cho phép) — không thêm dependency ngoài mới.
+[dev-dependencies]
+futures-util = { workspace = true }
+mgc-web-adapter = { path = "../../../adapters/web" }
+mgc-lib-adapter = { path = "../../../adapters/lib" }
+mgc-ai-adapter = { path = "../../../adapters/ai" }
+mgc-app-adapter = { path = "../../../adapters/app" }
+mgc-game-adapter = { path = "../../../adapters/game" }
+mgc-iot-adapter = { path = "../../../adapters/iot" }
+mgc-cloud-adapter = { path = "../../../adapters/cloud" }
+mgc-cicd-adapter = { path = "../../../adapters/cicd" }
+mgc-hardware-adapter = { path = "../../../adapters/hardware" }

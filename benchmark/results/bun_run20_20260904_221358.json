@@ -1,0 +1,26 @@
+{
+  "pm": "bun",
+  "run": 20,
+  "timestamp": "20260904_221358",
+  "machine": {
+  "cpu": "Apple M2",
+  "cores": 8,
+  "memory_gb": 16,
+  "os": "Darwin 25.5.0",
+  "node_version": "v25.9.0",
+  "timestamp": "20260904_221358"
+},
+  "cold_install": {
+    "duration_seconds": .465760000,
+    "disk_mb": 0,
+    "memory_delta_mb": 0
+  },
+  "warm_install": {
+    "duration_seconds": .038125000
+  },
+  "package_count": 20,
+  "logs": {
+    "cold": "bun install v1.3.14 (0d9b296a) Resolving dependencies Resolved, downloaded and extracted [120] error: ConnectionRefused downloading package manifest react  error: ConnectionRefused downloading package manifest react-dom  error: ConnectionRefused downloading package manifest react-hook-form  error: ConnectionRefused downloading package manifest zod  error: ConnectionRefused downloading package manifest date-fns  error: ConnectionRefused downloading package manifest framer-motion  error: ConnectionRefused downloading package manifest lodash  error: ConnectionRefused downloading package manifest next  error: ConnectionRefused downloading package manifest typescript ",
+    "warm": "bun install v1.3.14 (0d9b296a) Resolving dependencies Resolved, downloaded and extracted [120] error: FailedToOpenSocket downloading package manifest @types/lodash  error: FailedToOpenSocket downloading package manifest zod  error: ConnectionRefused downloading package manifest next  error: ConnectionRefused downloading package manifest react  error: ConnectionRefused downloading package manifest react-dom  error: ConnectionRefused downloading package manifest react-hook-form  error: FailedToOpenSocket downloading package manifest lodash  error: ConnectionRefused downloading package manifest axios  error: ConnectionRefused downloading package manifest clsx "
+  }
+}

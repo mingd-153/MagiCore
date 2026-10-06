@@ -100,34 +100,35 @@ pub fn read_package_manifest(
             name: String,
         }
         let contents = std::fs::read_to_string(&cargo_path)?;
-        if let Ok(raw) = toml::from_str::<CargoRaw>(&contents) {
-            if let Some(pkg) = raw.package {
-                let mut deps = HashMap::new();
-                for (k, v) in raw.dependencies {
-                    let val_str = match v {
-                        toml::Value::String(s) => s,
-                        toml::Value::Table(t) => {
-                            if t.contains_key("path") {
-                                "workspace:*".to_string()
-                            } else {
-                                t.get("version")
-                                    .and_then(|ver| ver.as_str())
-                                    .unwrap_or("*")
-                                    .to_string()
-                            }
+        // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+        if let Ok(raw) = toml::from_str::<CargoRaw>(&contents)
+            && let Some(pkg) = raw.package
+        {
+            let mut deps = HashMap::new();
+            for (k, v) in raw.dependencies {
+                let val_str = match v {
+                    toml::Value::String(s) => s,
+                    toml::Value::Table(t) => {
+                        if t.contains_key("path") {
+                            "workspace:*".to_string()
+                        } else {
+                            t.get("version")
+                                .and_then(|ver| ver.as_str())
+                                .unwrap_or("*")
+                                .to_string()
                         }
-                        _ => "*".to_string(),
-                    };
-                    deps.insert(k, val_str);
-                }
-                return Ok(Some(WorkspacePackageManifest {
-                    name: pkg.name,
-                    dependencies: deps,
-                    dev_dependencies: HashMap::new(),
-                    peer_dependencies: HashMap::new(),
-                    optional_dependencies: HashMap::new(),
-                }));
+                    }
+                    _ => "*".to_string(),
+                };
+                deps.insert(k, val_str);
             }
+            return Ok(Some(WorkspacePackageManifest {
+                name: pkg.name,
+                dependencies: deps,
+                dev_dependencies: HashMap::new(),
+                peer_dependencies: HashMap::new(),
+                optional_dependencies: HashMap::new(),
+            }));
         }
     }
 
@@ -143,16 +144,17 @@ pub fn read_package_manifest(
             name: String,
         }
         let contents = std::fs::read_to_string(&py_path)?;
-        if let Ok(raw) = toml::from_str::<PyRaw>(&contents) {
-            if let Some(proj) = raw.project {
-                return Ok(Some(WorkspacePackageManifest {
-                    name: proj.name,
-                    dependencies: HashMap::new(),
-                    dev_dependencies: HashMap::new(),
-                    peer_dependencies: HashMap::new(),
-                    optional_dependencies: HashMap::new(),
-                }));
-            }
+        // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+        if let Ok(raw) = toml::from_str::<PyRaw>(&contents)
+            && let Some(proj) = raw.project
+        {
+            return Ok(Some(WorkspacePackageManifest {
+                name: proj.name,
+                dependencies: HashMap::new(),
+                dev_dependencies: HashMap::new(),
+                peer_dependencies: HashMap::new(),
+                optional_dependencies: HashMap::new(),
+            }));
         }
     }
 

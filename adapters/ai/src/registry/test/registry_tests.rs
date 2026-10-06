@@ -124,3 +124,34 @@ async fn test_query_huggingface_live() {
     assert_eq!(meta.id, "gpt2");
     assert_eq!(meta.registry, Registry::HuggingFace);
 }
+
+// Fail-closed: registry chưa có client thật PHẢI trả Unsupported —
+// không được bịa metadata (version/format fabricated là lắp liếm).
+// (Fail-closed: registries without a real client MUST answer
+// Unsupported — never fabricated metadata.)
+#[tokio::test]
+async fn test_query_tfhub_fail_closed() {
+    let err = query_tfhub("any").await.unwrap_err();
+    assert!(
+        matches!(err, MgError::Unsupported { .. }),
+        "tfhub phải Unsupported, không bịa metadata"
+    );
+}
+
+#[tokio::test]
+async fn test_query_onnx_fail_closed() {
+    let err = query_onnx("any").await.unwrap_err();
+    assert!(
+        matches!(err, MgError::Unsupported { .. }),
+        "onnx phải Unsupported, không bịa metadata"
+    );
+}
+
+#[tokio::test]
+async fn test_query_pytorch_fail_closed() {
+    let err = query_pytorch("any").await.unwrap_err();
+    assert!(
+        matches!(err, MgError::Unsupported { .. }),
+        "pytorch phải Unsupported, không bịa metadata"
+    );
+}

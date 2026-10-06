@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="/Users/doanmihh/Documents/Workspace/MagiCore"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 RVS="$ROOT/templates/web/frontend/react-vite/sources"
 
 SHARED_FILES=(

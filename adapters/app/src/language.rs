@@ -24,57 +24,88 @@ impl AppLanguage {
             AppLanguage::Multi => "multi",
         }
     }
+
+    /// Canonical C0 firewall ecosystem id — the ONLY string
+    /// `dep_gate::owner_for` matches on. NOTE: ReactNative maps to "rn",
+    /// NOT the display name "react-native": passing `as_str()` to the
+    /// gate would silently miss the Unsupported rule (P0 bypass fix).
+    /// (Id ecosystem chuẩn cho tường lửa C0 — ReactNative map sang "rn".)
+    pub fn ecosystem(&self) -> &'static str {
+        match self {
+            AppLanguage::Flutter => "flutter",
+            AppLanguage::Kotlin => "kotlin",
+            AppLanguage::Swift => "swift",
+            AppLanguage::ReactNative => "rn",
+            AppLanguage::ObjC => "objc",
+            AppLanguage::Multi => "multi",
+        }
+    }
 }
 
 pub fn detect_language(root: &Path) -> Option<AppLanguage> {
-    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml")) {
-        if let Ok(v) = toml::from_str::<toml::Value>(&content) {
-            if let Some(p) = v
-                .get("app")
-                .and_then(|c| c.get("language"))
-                .and_then(|p| p.as_str())
-            {
-                return match p {
-                    "flutter" => Some(AppLanguage::Flutter),
-                    "kotlin" => Some(AppLanguage::Kotlin),
-                    "swift" => Some(AppLanguage::Swift),
-                    "multi" => Some(AppLanguage::Multi),
-                    _ => None,
-                };
-            }
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Ok(Some(content)) =
+        mgc_config::project::read_regular_project_text(&root.join("mgc.toml"), "project config")
+        && let Ok(v) = toml::from_str::<toml::Value>(&content)
+        && let Some(p) = v
+            .get("app")
+            .and_then(|c| c.get("language"))
+            .and_then(|p| p.as_str())
+    {
+        return match p {
+            "flutter" => Some(AppLanguage::Flutter),
+            "kotlin" => Some(AppLanguage::Kotlin),
+            "swift" => Some(AppLanguage::Swift),
+            "react-native" => Some(AppLanguage::ReactNative),
+            "objc" => Some(AppLanguage::ObjC),
+            "multi" => Some(AppLanguage::Multi),
+            _ => None,
+        };
     }
-    if root.join("pubspec.yaml").exists() {
+    if is_regular_manifest(&root.join("pubspec.yaml")) {
         return Some(AppLanguage::Flutter);
     }
-    if root.join("build.gradle.kts").exists() || root.join("build.gradle").exists() {
+    if is_regular_manifest(&root.join("build.gradle.kts"))
+        || is_regular_manifest(&root.join("build.gradle"))
+    {
         return Some(AppLanguage::Kotlin);
     }
-    if root.join("Package.swift").exists() {
+    if is_regular_manifest(&root.join("Package.swift")) {
         return Some(AppLanguage::Swift);
     }
-    if let Ok(content) = std::fs::read_to_string(root.join("package.json")) {
-        if content.contains("\"react-native\"") {
-            return Some(AppLanguage::ReactNative);
-        }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Ok(Some(content)) = mgc_config::project::read_regular_project_text(
+        &root.join("package.json"),
+        "package manifest",
+    ) && content.contains("\"react-native\"")
+    {
+        return Some(AppLanguage::ReactNative);
     }
-    if root.join("ObjcBridge.h").exists() && root.join("ObjcBridge.m").exists() {
+    if is_regular_manifest(&root.join("ObjcBridge.h"))
+        && is_regular_manifest(&root.join("ObjcBridge.m"))
+    {
         return Some(AppLanguage::ObjC);
     }
     None
 }
 
+/// Ignore symlinked and special-file framework markers during core selection.
+/// Bỏ qua marker framework là symlink hoặc file đặc biệt khi chọn core.
+fn is_regular_manifest(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_file())
+}
+
 pub(crate) fn manifest_is_app(root: &Path) -> bool {
-    if let Ok(content) = std::fs::read_to_string(root.join("mgc.toml")) {
-        if let Ok(v) = toml::from_str::<toml::Value>(&content) {
-            if let Some(eco) = v.get("ecosystem").and_then(|e| e.as_str()) {
-                if eco == "app" {
-                    return true;
-                }
-            }
-            if v.get("app").is_some() {
-                return true;
-            }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Ok(Some(content)) =
+        mgc_config::project::read_regular_project_text(&root.join("mgc.toml"), "project config")
+        && let Ok(v) = toml::from_str::<toml::Value>(&content)
+    {
+        if v.get("ecosystem").and_then(|e| e.as_str()) == Some("app") {
+            return true;
+        }
+        if v.get("app").is_some() {
+            return true;
         }
     }
     detect_language(root).is_some()

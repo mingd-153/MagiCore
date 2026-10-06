@@ -34,7 +34,12 @@ impl HttpCache {
     }
 
     pub fn get(&self, key: &str) -> Option<Vec<u8>> {
-        let cache = self.cache.lock().expect("lock poisoned");
+        // Poisoned lock: continue with the recovered guard (a cache miss
+        // or stale entry at worst) instead of panicking readers.
+        let cache = self
+            .cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         cache.get(key).and_then(|entry| {
             if entry.is_valid() {
                 Some(entry.data.clone())
@@ -45,7 +50,11 @@ impl HttpCache {
     }
 
     pub fn insert(&self, key: String, data: Vec<u8>, ttl: Duration) {
-        let mut cache = self.cache.lock().expect("lock poisoned");
+        // Same poison policy as `get` above.
+        let mut cache = self
+            .cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         cache.insert(
             key,
             CacheEntry {

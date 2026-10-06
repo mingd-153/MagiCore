@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Fill missing source files for react-* and vue-* split fullstack templates."""
 import os
+from pathlib import Path
 
-BASE = "/Users/doanmihh/Documents/Workspace/MagiCore/templates/web/fullstack/split"
+# Resolve templates from this checkout on every developer and CI runner.
+# (Tìm template theo checkout hiện tại trên laptop và CI.)
+BASE = str(Path(__file__).resolve().parents[1] / "templates" / "web" / "fullstack" / "split")
 
 def ensure_dir(path):
     os.makedirs(path, exist_ok=True)

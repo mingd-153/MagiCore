@@ -1,7 +1,25 @@
-# MagiCore Benchmark Methodology
+# Benchmark Methodology - INVALIDATED
 
-**Version**: 1.0-final  
-**Date**: 2026-08-28  
+> **⚠️ NOTICE (2026-09-05)**: This methodology is **INVALIDATED**. Original benchmark data collected using this methodology was withdrawn due to validation gaps (RC-2.1 audit). This document preserved for audit trail and transparency. **DO NOT USE** for new benchmarks.
+
+## Invalidation Reason
+
+Audit findings (2026-09-05):
+- Analyzer accepted negative metrics, NaN, failed exit codes
+- Run counts inconsistent, high CV (>100%)
+- Workload normalization incomplete
+- No provenance tracking (commit SHA, session ID, hashes)
+- Mixed cold/warm conditions
+
+See [`BENCHMARK_STATUS.md`](BENCHMARK_STATUS.md) for replacement methodology.
+
+---
+
+# Original Methodology (ARCHIVED)
+
+
+**Version**: 1.0-final
+**Date**: 2026-08-28
 **Status**: Production
 
 ---
@@ -26,11 +44,13 @@ This document describes the methodology used to benchmark MagiCore against other
 - **Documented**: Platform specs + methodology recorded
 - **Open**: Raw JSON data committed for verification
 
-### 3. Statistical Rigor
-- **Multiple runs**: Minimum 5 runs per PM per phase
-- **Variance reporting**: Mean + StdDev + CV (Coefficient of Variation)
+### 3. Statistical Rigor (P1.1 Update)
+- **Multiple runs**: **20-30 runs per PM per phase** (increased from 5 for P1.1)
+- **Variance reporting**: Mean + StdDev + CV (Coefficient of Variation) + **Median + P95**
 - **Outlier handling**: Report all runs, note anomalies
 - **No cherry-picking**: Report all data, including failures
+- **P95 confidence**: 95th percentile for worst-case analysis
+- **Median robustness**: More resistant to outliers than mean
 
 ### 4. Honesty
 - **Caveats disclosed**: Known issues documented (vitest crash, cache speedup)

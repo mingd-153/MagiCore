@@ -8,6 +8,7 @@ authors.workspace = true
 description = "Workspace discovery, graph, filter and topo ordering (T4)"
 
 [dependencies]
+mgc-adapter-base = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 toml = { workspace = true }

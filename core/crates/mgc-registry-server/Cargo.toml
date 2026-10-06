@@ -18,6 +18,9 @@ mgc-oci = { workspace = true }
 mgc-config = { workspace = true }
 mgc-store = { workspace = true }
 mgc-lockfile = { workspace = true }
+mgc-crypto = { workspace = true }
+mgc-oidc = { workspace = true }
+sigstore-sign = "0.11.0"
 axum = { workspace = true }
 tower-http = { workspace = true }
 notify = { workspace = true }
@@ -53,6 +56,10 @@ path = "tests/registry.rs"
 [[test]]
 name = "proxy_parse"
 path = "tests/proxy_parse.rs"
+
+[[test]]
+name = "trusted_publishing"
+path = "tests/trusted_publishing.rs"
 
 [lints]
 workspace = true

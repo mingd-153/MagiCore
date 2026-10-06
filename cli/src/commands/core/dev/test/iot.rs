@@ -14,6 +14,20 @@ fn chip_resolves_from_registry() {
 }
 
 #[test]
+fn flash_target_override_cannot_bypass_board_registry() {
+    assert_eq!(
+        resolve_target("esp32-rust", "esp32c3", None).unwrap(),
+        "riscv32imac-unknown-none-elf"
+    );
+    assert_eq!(
+        resolve_target("esp32-rust", "esp32c3", Some("custom-target")).unwrap(),
+        "custom-target"
+    );
+    assert!(resolve_target("esp32-rust", "unknown-board", Some("custom-target")).is_err());
+    assert!(resolve_target("esp32-rust", "nrf52dk_nrf52832", Some("custom-target")).is_err());
+}
+
+#[test]
 fn find_elf_locates_release_binary() {
     let dir = tmp_dir("elf");
     std::fs::write(
@@ -45,9 +59,10 @@ fn find_elf_prefers_requested_target() {
         std::fs::write(target.join("firmware.elf"), "ELF").unwrap();
     }
     let elf = find_elf(&dir, "riscv32imac-unknown-none-elf").unwrap();
-    assert!(elf
-        .to_string_lossy()
-        .contains("riscv32imac-unknown-none-elf"));
+    assert!(
+        elf.to_string_lossy()
+            .contains("riscv32imac-unknown-none-elf")
+    );
 }
 
 #[test]

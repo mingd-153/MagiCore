@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 use crate::Cli;
 use crate::Commands;
@@ -34,7 +34,13 @@ pub async fn run(cli: Cli) -> Result<()> {
         if let Some(command) = cli.command.as_ref() {
             reject_unsupported_audit_strict(command)?;
         }
-        std::env::set_var("MGC_AUDIT_STRICT", "1");
+        // SAFETY: dispatch entry runs before any worker thread is spawned;
+        // MGC_AUDIT_STRICT is read later but not concurrently mutated elsewhere.
+        // AN TOÀN: ghi ở entry dispatch trước khi spawn worker thread.
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("MGC_AUDIT_STRICT", "1");
+        }
     }
 
     match cli.command {
@@ -44,13 +50,114 @@ pub async fn run(cli: Cli) -> Result<()> {
             dispatch_command(command, core, cli.recursive).await
         }
         Some(command) if cli.recursive => run_recursive(command, core, cli.filter.as_deref()).await,
-        Some(command) => dispatch_command(command, core, false).await,
+        Some(command) => {
+            if let Some(command_core) = explicit_dependency_core(&command) {
+                let cwd = std::env::current_dir()?;
+                let root =
+                    mgc_config::project::ProjectConfig::find_project_root(&cwd).unwrap_or(cwd);
+                validate_explicit_dependency_core(&root, command_core, core)?;
+            }
+            dispatch_command(command, core, false).await
+        }
         None => {
             let cores = crate::factory::available_cores();
             mgc_ui::help::print_custom_help(&cores);
             Ok(())
         }
     }
+}
+
+/// package.json name (web) — dùng cho --filter match. Non-web fallback: None.
+/// Web package name for --filter matching; None for non-web workspaces.
+fn workspace_package_name(project_root: &Path) -> Option<String> {
+    mgc_workspace::read_package_manifest(project_root)
+        .ok()
+        .flatten()
+        .map(|m| m.name)
+}
+
+/// Resolve a recursive workspace's core without allowing a global selector to
+/// contradict its persisted MGC identity.
+/// Xác định core workspace đệ quy, không cho cờ toàn cục trái identity đã lưu.
+fn resolve_recursive_workspace_core(
+    workspace: &Path,
+    requested: Option<&str>,
+) -> Result<Option<String>> {
+    let marker = mgc_config::project::ProjectConfig::read_core_marker(workspace)?;
+    let Some(requested) = requested else {
+        return Ok(marker);
+    };
+    // Marker reading already cross-checks mgc.toml; only load config separately
+    // for a legacy workspace that has config but no marker.
+    // (Marker reader đã đối chiếu mgc.toml; chỉ load riêng project legacy thiếu marker.)
+    let persisted = match marker.as_deref() {
+        Some(core) => Some(core.to_string()),
+        None => mgc_config::project::ProjectConfig::load(workspace)?.map(|config| config.ecosystem),
+    };
+
+    let requested_core = mgc_types::Ecosystem::from_str(requested)
+        .ok_or_else(|| crate::error::unknown_ecosystem(requested))?;
+    if let Some(persisted) = persisted {
+        let persisted_core = mgc_types::Ecosystem::from_str(&persisted)
+            .ok_or_else(|| crate::error::unknown_ecosystem(&persisted))?;
+        if requested_core != persisted_core {
+            bail!(
+                "recursive --core '{}' conflicts with workspace '{}' identity '{}'; refusing cross-core dispatch",
+                requested_core.as_str(),
+                workspace.display(),
+                persisted_core.as_str(),
+            );
+        }
+    }
+    Ok(Some(requested_core.as_str().to_string()))
+}
+
+/// Return the core selected by a core-specific dependency command.
+/// Lấy core được chọn bởi lệnh dependency định danh sẵn.
+fn explicit_dependency_core(command: &Commands) -> Option<&'static str> {
+    let (operation, core) = command_name(command).split_once('-')?;
+    matches!(operation, "install" | "add" | "remove" | "update" | "list")
+        .then(|| mgc_types::Ecosystem::from_str(core).map(|ecosystem| ecosystem.as_str()))
+        .flatten()
+}
+
+/// Refuse a core-specific dependency command that contradicts either the
+/// global selector or the workspace's persisted/detected owner.
+/// Từ chối lệnh dependency trái cờ toàn cục hoặc owner đã lưu của workspace.
+fn validate_explicit_dependency_core(
+    workspace: &Path,
+    command_core: &str,
+    global_core: Option<&str>,
+) -> Result<()> {
+    let command_core = mgc_types::Ecosystem::from_str(command_core)
+        .ok_or_else(|| crate::error::unknown_ecosystem(command_core))?;
+    if let Some(global_core) = global_core {
+        let global_core = mgc_types::Ecosystem::from_str(global_core)
+            .ok_or_else(|| crate::error::unknown_ecosystem(global_core))?;
+        if command_core != global_core {
+            return Err(crate::error::core_selector_conflicts_command(
+                command_core.as_str(),
+                global_core.as_str(),
+            ));
+        }
+    }
+
+    let Some(actual) = mgc_config::project::ProjectConfig::detect_core(workspace)? else {
+        return Err(crate::error::project_core_identity_missing(
+            workspace,
+            command_core.as_str(),
+        ));
+    };
+    let actual = mgc_types::Ecosystem::from_str(&actual)
+        .ok_or_else(|| crate::error::unknown_ecosystem(&actual))?;
+    if command_core != actual {
+        return Err(crate::error::project_core_identity_mismatch(
+            workspace,
+            command_core.as_str(),
+            actual.as_str(),
+        ));
+    }
+    Ok(())
 }
 
 /// Các lệnh workspace-aware khi chạy `--recursive` (pnpm -r parity).
@@ -70,7 +177,7 @@ async fn run_recursive(command: Commands, core: Option<&str>, filter: Option<&st
         let mut selected: Vec<PathBuf> = Vec::new();
         for ws in &workspaces {
             let relative = ws.strip_prefix(&project_root).unwrap_or(ws);
-            let name = crate::commands::install::workspace_package_name(ws).unwrap_or_else(|| {
+            let name = workspace_package_name(ws).unwrap_or_else(|| {
                 ws.file_name()
                     .map(|s| s.to_string_lossy().into_owned())
                     .unwrap_or_default()
@@ -97,21 +204,22 @@ async fn run_recursive(command: Commands, core: Option<&str>, filter: Option<&st
     }
 
     // Xây dựng đồ thị phụ thuộc workspace và sắp xếp topo (level-by-level)
-    if let Ok(graph) = mgc_workspace::build_workspace_graph(&workspaces) {
-        if let Ok(levels) = mgc_workspace::topo_levels(&graph) {
-            let mut ordered = Vec::new();
-            for level in levels {
-                for idx in level {
-                    let node_path = &graph.nodes[idx].path;
-                    if let Some(pos) = workspaces.iter().position(|w| w == node_path) {
-                        ordered.push(workspaces.remove(pos));
-                    }
+    // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+    if let Ok(graph) = mgc_workspace::build_workspace_graph(&workspaces)
+        && let Ok(levels) = mgc_workspace::topo_levels(&graph)
+    {
+        let mut ordered = Vec::new();
+        for level in levels {
+            for idx in level {
+                let node_path = &graph.nodes[idx].path;
+                if let Some(pos) = workspaces.iter().position(|w| w == node_path) {
+                    ordered.push(workspaces.remove(pos));
                 }
             }
-            // Thêm các workspace còn lại (nếu có)
-            ordered.append(&mut workspaces);
-            workspaces = ordered;
         }
+        // Thêm các workspace còn lại (nếu có)
+        ordered.append(&mut workspaces);
+        workspaces = ordered;
     }
 
     let name = command_name(&command);
@@ -122,36 +230,34 @@ async fn run_recursive(command: Commands, core: Option<&str>, filter: Option<&st
         std::collections::BTreeMap::new();
 
     for ws in &workspaces {
-        // T4 core-aware: nếu --core flag không có, đọc .mgc.core marker của workspace này.
-        // Ưu tiên: CLI --core > marker file > None.
-        let ws_core: Option<String> = if core.is_some() {
-            core.map(|s| s.to_string())
-        } else {
-            // Đọc marker .mgc.core trong workspace folder
-            read_core_marker(ws)
-        };
+        if let Some(command_core) = explicit_dependency_core(&command) {
+            validate_explicit_dependency_core(ws, command_core, core)?;
+        }
+        // An explicit selector may select only unclaimed workspaces; it must
+        // never override a workspace's persisted marker/config identity.
+        // (Cờ chỉ chọn workspace chưa claim, không được ghi đè owner đã lưu.)
+        let ws_core = resolve_recursive_workspace_core(ws, core)?;
         let ws_core_str = ws_core.as_deref();
 
-        let ws_name = crate::commands::install::workspace_package_name(ws).unwrap_or_else(|| {
+        let ws_name = workspace_package_name(ws).unwrap_or_else(|| {
             ws.file_name()
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_default()
         });
 
-        if is_build_cmd {
-            if let Ok((should_rebuild, _src_hash, comp_hash)) =
+        // let-chain edition 2024 — gộp điều kiện theo clippy 1.98.
+        if is_build_cmd
+            && let Ok((should_rebuild, _src_hash, comp_hash)) =
                 mgc_workspace::check_package_build_freshness(ws, &ws_composite_hashes)
-            {
-                if !should_rebuild {
-                    mgc_ui::info(&format!(
-                        "⚡ [cached] {} (core: {}) — source & deps unchanged",
-                        ws.display(),
-                        ws_core_str.unwrap_or("auto")
-                    ));
-                    ws_composite_hashes.insert(ws_name.clone(), comp_hash);
-                    continue;
-                }
-            }
+            && !should_rebuild
+        {
+            mgc_ui::info(&format!(
+                "⚡ [cached] {} (core: {}) — source & deps unchanged",
+                ws.display(),
+                ws_core_str.unwrap_or("auto")
+            ));
+            ws_composite_hashes.insert(ws_name.clone(), comp_hash);
+            continue;
         }
 
         mgc_ui::info(&format!(
@@ -167,16 +273,12 @@ async fn run_recursive(command: Commands, core: Option<&str>, filter: Option<&st
         if let Err(e) = result {
             failed += 1;
             mgc_ui::error(&format!("{name} failed in '{}': {e:#}", ws.display()));
-        } else if is_build_cmd {
-            if let Ok(src_hash) = mgc_workspace::compute_package_source_hash(ws) {
-                if let Ok(cache) = mgc_workspace::save_package_build_cache(
-                    ws,
-                    src_hash,
-                    ws_composite_hashes.clone(),
-                ) {
-                    ws_composite_hashes.insert(ws_name, cache.composite_hash);
-                }
-            }
+        } else if is_build_cmd
+            && let Ok(src_hash) = mgc_workspace::compute_package_source_hash(ws)
+            && let Ok(cache) =
+                mgc_workspace::save_package_build_cache(ws, src_hash, ws_composite_hashes.clone())
+        {
+            ws_composite_hashes.insert(ws_name, cache.composite_hash);
         }
     }
     std::env::set_current_dir(&original_cwd)?;
@@ -185,21 +287,6 @@ async fn run_recursive(command: Commands, core: Option<&str>, filter: Option<&st
         return Err(crate::error::workspace_failed(failed));
     }
     Ok(())
-}
-
-/// Đọc nội dung `.mgc.core` marker file trong thư mục `dir` — trả về tên core nếu hợp lệ.
-/// Format: 1 dòng plain text = tên core (có thể có comment `# ...` sau tên).
-fn read_core_marker(dir: &Path) -> Option<String> {
-    let marker = dir.join(mgc_config::project::ProjectConfig::CORE_MARKER_FILE);
-    let content = std::fs::read_to_string(marker).ok()?;
-    // Lấy dòng đầu, bỏ comment
-    let first_line = content.lines().next()?.trim();
-    let core_name = first_line.split('#').next()?.trim();
-    if core_name.is_empty() {
-        None
-    } else {
-        Some(core_name.to_string())
-    }
 }
 
 fn recursive_supported(command: &Commands) -> bool {
@@ -212,9 +299,11 @@ fn recursive_supported(command: &Commands) -> bool {
             | Commands::Add { .. }
             | Commands::Remove { .. }
             | Commands::Update { .. }
-            | Commands::List
+            | Commands::List { .. }
             | Commands::Build { .. }
             | Commands::Run { .. }
+            | Commands::Test { .. }
+            | Commands::Optimizer { .. }
             | Commands::Audit { .. }
             | Commands::Outdated { .. }
             | Commands::Dev { .. }
@@ -244,6 +333,7 @@ fn recursive_supported(command: &Commands) -> bool {
             | Commands::RemoveIot { .. }
             | Commands::RemoveApp { .. }
             | Commands::RemoveLib { .. }
+            | Commands::RemoveHardware { .. }
             | Commands::UpdateWeb { .. }
             | Commands::UpdateGame { .. }
             | Commands::UpdateAi { .. }
@@ -252,15 +342,16 @@ fn recursive_supported(command: &Commands) -> bool {
             | Commands::UpdateIot { .. }
             | Commands::UpdateApp { .. }
             | Commands::UpdateLib { .. }
-            | Commands::ListWeb
-            | Commands::ListGame
-            | Commands::ListAi
-            | Commands::ListClo
-            | Commands::ListCicd
-            | Commands::ListIot
-            | Commands::ListApp
-            | Commands::ListLib
-            | Commands::ListHardware
+            | Commands::UpdateHardware { .. }
+            | Commands::ListWeb { .. }
+            | Commands::ListGame { .. }
+            | Commands::ListAi { .. }
+            | Commands::ListClo { .. }
+            | Commands::ListCicd { .. }
+            | Commands::ListIot { .. }
+            | Commands::ListApp { .. }
+            | Commands::ListLib { .. }
+            | Commands::ListHardware { .. }
     )
 }
 
@@ -279,28 +370,66 @@ fn reject_unsupported_recursive(command: Option<&Commands>) -> Result<()> {
 
 fn reject_unsupported_filter(command: &Commands) -> Result<()> {
     bail!(
-        "--filter is not wired into '{}' yet (publish recursive pipeline chưa nhận filter). Refusing a silent no-op.",
+        "--filter is not wired into '{}' yet (the publish recursive pipeline does not accept filter). Refusing a silent no-op.",
         command_name(command)
     )
 }
 
 fn reject_filter_without_recursive() -> Result<()> {
-    bail!("--filter requires --recursive (it filters workspace targets). Use `mgc <cmd> --recursive --filter <glob>`.")
+    bail!(
+        "--filter requires --recursive (it filters workspace targets). Use `mgc <cmd> --recursive --filter <glob>`."
+    )
 }
 
 fn reject_unsupported_audit_strict(command: &Commands) -> Result<()> {
-    let _ = command;
-    Ok(())
+    // `--audit-strict` is meaningful exactly where the codebase consults
+    // strictness: the audit command (`StrictMode`), the verify chain
+    // (`run_strict`), and install/add flows (`prepare_install_execution`
+    // → `enforce_audit_strict_policy`). Everywhere else the flag would be
+    // silently ignored — refuse loudly with the supported set instead.
+    // (Chỉ cho phép cờ ở lệnh có dùng strict; nơi khác từ chối rõ ràng.)
+    if matches!(
+        command,
+        Commands::Audit { .. }
+            | Commands::Verify
+            | Commands::Install { .. }
+            | Commands::Add { .. }
+            | Commands::InstallWeb { .. }
+            | Commands::InstallGame { .. }
+            | Commands::InstallAi { .. }
+            | Commands::InstallClo { .. }
+            | Commands::InstallCicd { .. }
+            | Commands::InstallIot { .. }
+            | Commands::InstallApp { .. }
+            | Commands::InstallLib { .. }
+            | Commands::InstallHardware { .. }
+            | Commands::AddWeb { .. }
+            | Commands::AddGame { .. }
+            | Commands::AddAi { .. }
+            | Commands::AddClo { .. }
+            | Commands::AddCicd { .. }
+            | Commands::AddIot { .. }
+            | Commands::AddApp { .. }
+            | Commands::AddLib { .. }
+            | Commands::AddHardware { .. }
+    ) {
+        return Ok(());
+    }
+    Err(crate::error::audit_strict_unsupported_command(
+        command_name(command),
+    ))
 }
 
 fn command_name(command: &Commands) -> &'static str {
     match command {
         Commands::Init { .. } => "init",
+        Commands::Capabilities { .. } => "capabilities",
         Commands::Info { .. } => "info",
         Commands::Search { .. } => "search",
         Commands::Outdated { .. } => "outdated",
         Commands::Audit { .. } => "audit",
-        Commands::SelfUpdate => "self-update",
+        Commands::SelfUpdate { .. } => "self-update",
+        Commands::SignRelease { .. } => "sign-release",
         Commands::Config { .. } => "config",
         Commands::Stage { .. } => "stage",
         Commands::Publish { .. } => "publish",
@@ -315,6 +444,7 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::Trust { .. } => "trust",
         Commands::Hooks { .. } => "hooks",
         Commands::Docs { .. } => "docs",
+        Commands::Completion { .. } => "completion",
         Commands::Telemetry { .. } => "telemetry",
         Commands::Sbom { .. } => "sbom",
         Commands::Login { .. } => "login",
@@ -323,6 +453,8 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::Mcp => "mcp",
         Commands::Dev { .. } => "dev",
         Commands::Run { .. } => "run",
+        Commands::Test { .. } => "test",
+        Commands::Optimizer { .. } => "optimizer",
         Commands::Build { .. } => "build",
         Commands::Flash { .. } => "flash",
         Commands::Deploy { .. } => "deploy",
@@ -336,7 +468,7 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::Add { .. } => "add",
         Commands::Remove { .. } => "remove",
         Commands::Update { .. } => "update",
-        Commands::List => "list",
+        Commands::List { .. } => "list",
         Commands::Link { .. } => "link",
         Commands::Unlink { .. } => "unlink",
         Commands::Why { .. } => "why",
@@ -375,15 +507,16 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::RemoveIot { .. } => "remove-iot",
         Commands::RemoveApp { .. } => "remove-app",
         Commands::RemoveLib { .. } => "remove-lib",
-        Commands::ListWeb => "list-web",
-        Commands::ListGame => "list-game",
-        Commands::ListAi => "list-ai",
-        Commands::ListClo => "list-clo",
-        Commands::ListCicd => "list-cicd",
-        Commands::ListIot => "list-iot",
-        Commands::ListApp => "list-app",
-        Commands::ListLib => "list-lib",
-        Commands::ListHardware => "list-hardware",
+        Commands::RemoveHardware { .. } => "remove-hardware",
+        Commands::ListWeb { .. } => "list-web",
+        Commands::ListGame { .. } => "list-game",
+        Commands::ListAi { .. } => "list-ai",
+        Commands::ListClo { .. } => "list-clo",
+        Commands::ListCicd { .. } => "list-cicd",
+        Commands::ListIot { .. } => "list-iot",
+        Commands::ListApp { .. } => "list-app",
+        Commands::ListLib { .. } => "list-lib",
+        Commands::ListHardware { .. } => "list-hardware",
         Commands::UpdateWeb { .. } => "update-web",
         Commands::UpdateGame { .. } => "update-game",
         Commands::UpdateAi { .. } => "update-ai",
@@ -392,7 +525,9 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::UpdateIot { .. } => "update-iot",
         Commands::UpdateApp { .. } => "update-app",
         Commands::UpdateLib { .. } => "update-lib",
+        Commands::UpdateHardware { .. } => "update-hardware",
         Commands::Import { .. } => "import",
+        Commands::Migrate { .. } => "migrate",
     }
 }
 

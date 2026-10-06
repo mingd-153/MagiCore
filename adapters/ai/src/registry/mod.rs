@@ -93,6 +93,45 @@ async fn query_huggingface(model_id: &str) -> MgResult<ModelMetadata> {
     Ok(metadata_from_hf_json(&json, model_id))
 }
 
+/// TensorFlow Hub: chưa có API client thật — fail-closed thay vì bịa
+/// metadata (version "1"/format bịa là lắp liếm — RULE: cấm trả kết quả
+/// giả vờ như đã query registry).
+/// (TensorFlow Hub: no real API client yet — fail closed instead of
+/// fabricating metadata that pretends a real registry query happened.)
+async fn query_tfhub(_model_id: &str) -> MgResult<ModelMetadata> {
+    Err(MgError::Unsupported {
+        core: "ai",
+        capability: "model query (tfhub)",
+        guidance:
+            "TensorFlow Hub has no query client implemented yet; use a huggingface.co model id or a local path"
+                .to_string(),
+    })
+}
+
+/// ONNX Model Zoo: chưa có API client thật — fail-closed thay vì bịa
+/// metadata. (ONNX Model Zoo: no real query client — fail closed.)
+async fn query_onnx(_model_id: &str) -> MgResult<ModelMetadata> {
+    Err(MgError::Unsupported {
+        core: "ai",
+        capability: "model query (onnx)",
+        guidance:
+            "ONNX Model Zoo has no query client implemented yet; use a huggingface.co model id or a local path"
+                .to_string(),
+    })
+}
+
+/// PyTorch Hub: chưa có API client thật — fail-closed thay vì bịa
+/// metadata. (PyTorch Hub: no real query client — fail closed.)
+async fn query_pytorch(_model_id: &str) -> MgResult<ModelMetadata> {
+    Err(MgError::Unsupported {
+        core: "ai",
+        capability: "model query (pytorch)",
+        guidance:
+            "PyTorch Hub has no query client implemented yet; use a huggingface.co model id or a local path"
+                .to_string(),
+    })
+}
+
 /// Map JSON của /api/models/{id} → ModelMetadata — hàm thuần để test offline.
 // (Map /api/models/{id} JSON → ModelMetadata — pure fn for offline tests.)
 fn metadata_from_hf_json(json: &serde_json::Value, fallback_id: &str) -> ModelMetadata {
@@ -122,39 +161,6 @@ fn metadata_from_hf_json(json: &serde_json::Value, fallback_id: &str) -> ModelMe
             })
             .unwrap_or_default(),
     }
-}
-
-async fn query_tfhub(model_id: &str) -> MgResult<ModelMetadata> {
-    Ok(ModelMetadata {
-        id: model_id.to_string(),
-        registry: Registry::TensorFlowHub,
-        version: Some("1".into()),
-        size_bytes: None,
-        format: Some(ModelFormat::TensorFlow),
-        tags: vec![],
-    })
-}
-
-async fn query_onnx(model_id: &str) -> MgResult<ModelMetadata> {
-    Ok(ModelMetadata {
-        id: model_id.to_string(),
-        registry: Registry::OnnxZoo,
-        version: None,
-        size_bytes: None,
-        format: Some(ModelFormat::Onnx),
-        tags: vec![],
-    })
-}
-
-async fn query_pytorch(model_id: &str) -> MgResult<ModelMetadata> {
-    Ok(ModelMetadata {
-        id: model_id.to_string(),
-        registry: Registry::PyTorchHub,
-        version: None,
-        size_bytes: None,
-        format: Some(ModelFormat::PyTorch),
-        tags: vec![],
-    })
 }
 
 async fn query_local(path: &Path, model_id: &str) -> MgResult<ModelMetadata> {

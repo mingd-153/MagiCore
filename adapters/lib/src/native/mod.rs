@@ -2,6 +2,7 @@
 //! Direct HTTP clients for crates.io and PyPI (future: avoid cargo/pip exec).
 
 pub mod cargo_client;
+pub mod engine;
 pub mod pypi_client;
 
 use mgc_types::{MgResult, PackageId, PackageName, Version};

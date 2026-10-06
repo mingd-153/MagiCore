@@ -1,7 +1,25 @@
 /// Registry configuration
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Never Debug-print tokens: presence flags only.
+/// (Không bao giờ Debug-print token: chỉ cờ có/không.)
+impl fmt::Debug for Registry {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("Registry")
+            .field("name", &self.name)
+            .field("url", &self.url)
+            .field("priority", &self.priority)
+            .field("token", &self.token.as_ref().map(|_| "[REDACTED]"))
+            .field("username", &self.username)
+            .field("password", &self.password.as_ref().map(|_| "[REDACTED]"))
+            .field("auth_type", &self.auth_type)
+            .finish()
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Registry {
     pub name: String,
     pub url: String,

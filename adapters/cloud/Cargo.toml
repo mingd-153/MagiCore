@@ -8,6 +8,7 @@ authors.workspace = true
 description = "Cloud ecosystem adapter for MagiCore (cdk/pulumi/terraform)"
 
 [dependencies]
+mgc-audit = { workspace = true }
 # Core crates (W1-W6 support)
 mgc-types = { workspace = true }
 mgc-crypto = { workspace = true }
@@ -16,7 +17,6 @@ mgc-sbom = { workspace = true }
 mgc-cache = { workspace = true }
 mgc-config = { workspace = true }
 mgc-adapter-base = { workspace = true }
-mgc-exec = { workspace = true }
 
 # Web delegate (cdk/pulumi npm-format)
 mgc-web-adapter = { path = "../web" }

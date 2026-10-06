@@ -1,0 +1,543 @@
+name: Lifecycle Capability Matrix
+
+# P0-2 (Tech Lead 2026-09-11): the AUDIT capability matrix can never
+# justify product "supported" claims — lifecycle is a SEPARATE
+# dimensions including package operations (install/add/remove/update/list,
+# frozen/offline, integrity, store/GC) and project lifecycle probes.
+# with its own binary-driven evidence. This lane generates the
+# lifecycle matrix on every PR touching product code and refuses to
+# let lifecycle support regress silently. Java/.NET/Go scaffolds that
+# fall back to another language are FAILED creates here (honest).
+#
+# The earlier six-lane RC gate is historical only. V1.2 evaluates the
+# complete lane registry: release-blocking lanes require lifecycle evidence,
+# and native-PM evidence is required only for MGC-native package claims.
+# Named scope-outs remain visible with exact source-controlled reasons.
+# (Gate sáu lane RC trước đây chỉ còn là lịch sử. V1.2 đánh giá toàn registry:
+# lane chặn release cần lifecycle evidence; native-PM evidence chỉ bắt buộc
+# với claim package MGC-native. Scope-out vẫn hiện cùng lý do từ source.)
+#
+# P0-2: matrix audit KHÔNG BAO GIỜ suy ra năng lực product — lifecycle
+# là dimension RIÊNG với evidence binary riêng. Lane sinh matrix này
+# mỗi PR chạm code product; scaffold java/.net/go rơi fallback ngôn ngữ
+# khác sẽ là create FAILED (trung thực, không độn sự thật).
+# Every release-blocking lane is evaluated against its own required dimensions;
+# explicit scope-outs remain in the global inventory and cannot hide native claims.
+# (Mỗi lane chặn release được đánh giá theo dimensions riêng; scope-out tường
+# minh vẫn ở trong inventory toàn cục và không thể che giấu claim native.)
+#
+# Gate 11-C schema v7 (2026-09-29): framework-qualified lane identity plus
+# per-required-dimension lifecycle owner evidence (wrapper success is not native),
+# 23 dimensions × six-value status,
+# plus clean-source-tree provenance required for every platform gate.
+# vocabulary (native/managed/plain-delegation-pass, unverified,
+# unsupported, failed). Gate 11-D: the SAME lifecycle and native-PM
+# contract is enforced on Ubuntu, macOS, and Windows; each OS uploads
+# its artifact for diagnosis and a failing platform blocks the workflow.
+# (Gate 11-C schema v7: lane identity theo framework, owner từng lifecycle dimension,
+# 23 dimension × bộ 6 trạng thái, kèm provenance
+# source tree sạch bắt buộc cho mọi platform gate. Gate 11-D enforce
+# cùng lifecycle và native-PM contract trên Ubuntu, macOS, Windows; mỗi
+# OS tải artifact để chẩn đoán và platform lỗi sẽ làm workflow thất bại.)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "cli/**"
+      - "core/**"
+      - "adapters/**"
+      - "scripts/**"
+      - ".github/workflows/lifecycle-matrix.yml"
+  push:
+    branches: [main, "fix/**"]
+    paths:
+      - "cli/**"
+      - "core/**"
+      - "adapters/**"
+      - "scripts/**"
+      - ".github/workflows/lifecycle-matrix.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lifecycle-matrix:
+    name: lifecycle matrix (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Swiftly-backed setup-swift v3 installs Swift 6.4 on Ubuntu 24.04.
+        # setup-swift v3 dùng Swiftly để cài Swift 6.4 trên Ubuntu 24.04.
+        os: [ubuntu-24.04, macos-latest, windows-latest]
+        include:
+          # Windows runners resolve `python` (setup-python shims `python3`
+          # unreliably across shells); POSIX runners keep `python3`.
+          # (Runner Windows gọi `python` (shim `python3` không ổn định
+          # giữa các shell); runner POSIX giữ `python3`.)
+          - os: windows-latest
+            python_cmd: python
+          - os: ubuntu-24.04
+            python_cmd: python3
+          - os: macos-latest
+            python_cmd: python3
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-03
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Setup Python runtime (AI/Lib Python build and test)
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Test native-PM verdict and matrix provenance guards
+        run: ${{ matrix.python_cmd }} scripts/test_native_pm_verdict.py
+
+      - name: Test binary-to-matrix ownership cross-check
+        run: ${{ matrix.python_cmd }} scripts/test_dep_gate_consistency.py
+
+      - name: Setup Node.js (web lane)
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+
+      - name: Setup Pulumi CLI (cloud lifecycle lane)
+        uses: pulumi/actions@8e5e406f4007fca908480587cb9893c07090f58d # v7.0.0
+        with:
+          pulumi-version: "3.267.0"
+
+      - name: Setup Go (lib/go lane toolchain)
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.1"
+          cache: false
+
+      - name: Setup Swift installer Python (Windows)
+        if: matrix.os == 'windows-latest'
+        id: swift_python_310
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.10"
+
+      - name: Preserve Swift Python 3.10 runtime (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        env:
+          MGC_SWIFT_PYTHON_PATH: ${{ steps.swift_python_310.outputs.python-path }}
+        run: |
+          $pythonPath = $env:MGC_SWIFT_PYTHON_PATH
+          if ([string]::IsNullOrWhiteSpace($pythonPath) -or !(Test-Path -LiteralPath $pythonPath -PathType Leaf)) { throw "setup-python did not return an existing Python executable" }
+          $version = & $pythonPath --version
+          if ($version -notmatch '^Python 3\.10\.') { throw "Swift requires Python 3.10.x; found $version" }
+          $sourceBin = Split-Path -Parent $pythonPath
+          $pythonBin = Join-Path $env:RUNNER_TEMP "mgc-swift-python-3.10"
+          # Keep Swift's Python independent from installers that may mutate setup-python's toolcache.
+          # Tách Python của Swift khỏi toolcache setup-python mà các installer sau có thể thay đổi.
+          $PSNativeCommandUseErrorActionPreference = $false
+          & robocopy.exe $sourceBin $pythonBin /E /COPY:DAT /R:2 /W:1 /NFL /NDL /NJH /NJS
+          if ($LASTEXITCODE -gt 7) { throw "Failed to preserve Python 3.10 runtime (robocopy exit $LASTEXITCODE)" }
+          $preservedPython = Join-Path $pythonBin "python.exe"
+          if (!(Test-Path -LiteralPath $preservedPython -PathType Leaf)) { throw "Preserved Python 3.10 executable is missing" }
+          $preservedVersion = & $preservedPython --version
+          if ($preservedVersion -notmatch '^Python 3\.10\.') { throw "Preserved Swift Python must be 3.10.x; found $preservedVersion" }
+          Add-Content -Path $env:GITHUB_ENV -Value "MGC_SWIFT_PYTHON_BIN=$pythonBin" -Encoding utf8
+
+      # Import official Swift keys and pin both expected signing fingerprints before verification.
+      # Nạp khóa Swift chính thức và đối chiếu hai fingerprint ký dự kiến trước khi xác minh.
+      - name: Import Swift.org signing keys (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --silent --show-error --compressed \
+            https://www.swift.org/keys/all-keys.asc | gpg --batch --import -
+          for expected in \
+            E813C892820A6FA13755B268F167DF1ACF9CE069 \
+            52BB7E3DE28A71BE22EC05FFEF80A866B47A981F; do
+            actual="$(gpg --batch --with-colons --fingerprint "$expected" | awk -F: '$1 == "fpr" { print $10; exit }')"
+            if [[ "$actual" != "$expected" ]]; then
+              echo "Expected official Swift signing key $expected was not imported" >&2
+              exit 1
+            fi
+          done
+
+      # Pin SwiftPM to one current stable toolchain on POSIX runners.
+      # Cố định SwiftPM ở một toolchain stable hiện hành trên runner POSIX.
+      - name: Setup Swift toolchain (Ubuntu/macOS)
+        if: runner.os != 'Windows'
+        uses: swift-actions/setup-swift@364295d9c23900ce04d4e5cc708387921b4e50f9 # v3.0.0-beta.1
+        with:
+          swift-version: "6.4.0"
+
+      # Swift.org's Windows installer is distributed through WinGet.
+      # Installer Windows của Swift.org được phân phối qua WinGet.
+      - name: Setup Swift toolchain (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          winget install --id Swift.Toolchain --exact --source winget --scope user --version 6.4.0 --accept-source-agreements --accept-package-agreements
+          if ($LASTEXITCODE -ne 0) { throw "WinGet failed to install Swift 6.4.0" }
+          $swiftRoot = Join-Path $env:LOCALAPPDATA "Programs\Swift\Toolchains"
+          $toolchain = Get-ChildItem -Path $swiftRoot -Directory | Where-Object { $_.Name -like "6.4.0*" } | Select-Object -First 1
+          if ($null -eq $toolchain) { throw "Swift 6.4.0 toolchain directory was not installed" }
+          $swiftBin = Join-Path $toolchain.FullName "usr\bin"
+          if (!(Test-Path (Join-Path $swiftBin "swift.exe"))) { throw "Swift executable is missing from the installed toolchain" }
+          $swiftRuntimeVersion = $toolchain.Name -replace '\+.*$', ''
+          $swiftRuntimeBin = Join-Path (Split-Path -Parent $swiftRoot) "Runtimes\$swiftRuntimeVersion\usr\bin"
+          if (!(Test-Path -LiteralPath (Join-Path $swiftRuntimeBin "swiftCore.dll") -PathType Leaf)) { throw "Swift runtime DLL is missing: $swiftRuntimeBin" }
+          # The installer writes SDKROOT at User scope; copy it into later workflow steps.
+          # Installer ghi SDKROOT ở cấp User; chuyển nó sang các bước workflow tiếp theo.
+          $sdkRoot = [Environment]::GetEnvironmentVariable('SDKROOT', 'User')
+          if ([string]::IsNullOrWhiteSpace($sdkRoot) -or !(Test-Path -LiteralPath $sdkRoot -PathType Container)) { throw "Swift installer did not configure a usable User SDKROOT: $sdkRoot" }
+          Add-Content -Path $env:GITHUB_ENV -Value "SDKROOT=$sdkRoot" -Encoding utf8
+          Write-Host "Swift SDKROOT: $sdkRoot"
+          Add-Content -Path $env:GITHUB_PATH -Value $swiftBin -Encoding utf8
+          # Swift packages load DLLs from the separate runtime installation.
+          # Gói Swift nạp DLL từ thư mục runtime cài riêng.
+          Add-Content -Path $env:GITHUB_PATH -Value $swiftRuntimeBin -Encoding utf8
+          Write-Host "Swift runtime directory: $swiftRuntimeBin"
+          & (Join-Path $swiftBin "swift.exe") --version
+
+      # Restore the Python lane's pinned runtime after Swift's installer.
+      # Khôi phục runtime Python của lane sau khi cài Swift.
+      - name: Restore Python runtime (AI/Lib lanes)
+        if: matrix.os == 'windows-latest'
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      # App lane: flutter toolchain for create→install→test→build.
+      # Lane App: toolchain flutter cho create→install→test→build.
+      - name: Setup Flutter (app lane)
+        uses: subosito/flutter-action@44ac965b96f18d999802d4b807e3256d5a3f9fa1 # v2.16.0 (latest, node24)
+        with:
+          flutter-version: "3.47.4"
+          channel: "stable"
+
+      # Resolve SDK-owned Pub packages before mgc-exec monitors app operations.
+      # Giải quyết Pub thuộc SDK trước khi mgc-exec giám sát thao tác app.
+      - name: Resolve Flutter SDK dependencies before MGC process guard
+        shell: bash
+        run: bash scripts/bootstrap_flutter_sdk.sh
+        env:
+          HOME: ${{ runner.temp }}/flutter-sdk-home
+          USERPROFILE: ${{ runner.temp }}/flutter-sdk-home
+          FLUTTER_SDK_HOME: ${{ runner.temp }}/flutter-sdk-home
+          PUB_CACHE: ${{ runner.temp }}/flutter-pub-cache
+
+      - name: Install Linux build deps (flutter lane)
+        if: matrix.os == 'ubuntu-24.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev
+
+      - name: Build mgc binary
+        run: cargo build --bin mgc --locked
+
+      - name: Generate lifecycle matrix (real binary, real steps)
+        # The script resolves the Windows binary (mgc.exe) itself, so the
+        # POSIX-spelled MGC_LIFECYCLE_BIN works on every OS.
+        # (Script tự quy về binary Windows (mgc.exe), nên MGC_LIFECYCLE_BIN
+        # viết kiểu POSIX chạy trên mọi OS.)
+        run: ${{ matrix.python_cmd }} scripts/lifecycle_capability_matrix.py
+        env:
+          MGC_LIFECYCLE_BIN: ./target/debug/mgc
+          MGC_LIFECYCLE_MATRIX_OUT: docs/specs/lifecycleCapabilityMatrix.json
+          FLUTTER_SDK_HOME: ${{ runner.temp }}/flutter-sdk-home
+          PUB_CACHE: ${{ runner.temp }}/flutter-pub-cache
+
+      - name: Print per-lane verdicts into the log (evidence, incl. Windows)
+        # Print every lane before the cross-platform gate for actionable CI logs.
+        # In verdict từng lane trước gate đa nền tảng để log CI đủ thông tin xử lý.
+        shell: python {0}
+        run: |
+          import json
+          data = json.load(open("docs/specs/lifecycleCapabilityMatrix.json"))
+          print(f"lifecycle matrix schema_version={data.get('schema_version')} "
+                f"dimensions={len(data.get('dimensions', []))}")
+          for lane in data["lanes"]:
+              print(f"{lane['core']}/{lane['language']}: "
+                    f"verdict={lane['verdict']} native_pm={lane.get('native_pm_verdict')}")
+              for dim, status in lane["dimensions"].items():
+                  print(f"  {dim:<14} {status}")
+
+      - name: Upload lifecycle matrix
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: lifecycle-capability-matrix-${{ runner.os }}
+          path: docs/specs/lifecycleCapabilityMatrix.json
+
+      - name: Enforce global v1.2 lifecycle and native-PM gate
+        # Every declared lane stays in the matrix. Release-blocking lanes must
+        # pass lifecycle evidence; native-PM evidence is required only for
+        # MGC-native claims, including claims on scoped-out lanes. Scoped-out
+        # lanes/frameworks remain visible with source-controlled reasons.
+        # Missing or unknown required evidence still fails.
+        # (Mọi lane đã khai vẫn nằm trong matrix. Lane chặn release phải qua
+        # lifecycle. Claim MGC-native phải có native-PM evidence, kể cả khi
+        # lane scope-out. Scope-out vẫn hiện cùng
+        # lý do từ source; thiếu evidence bắt buộc hoặc không rõ vẫn fail.)
+        # setup-python exposes the same `python` launcher on every runner OS.
+        # setup-python cung cấp cùng lệnh `python` trên mọi hệ điều hành runner.
+        shell: python {0}
+        run: |
+          import json, sys
+          sys.path.insert(0, "scripts")
+          from lifecycle_capability_matrix import (
+              ALL_STATUSES,
+              ALL_DIMENSIONS,
+              SCHEMA_VERSION,
+              LIFECYCLE_OWNER_VALUES,
+              PASS_STATUSES,
+              PLATFORM_EVIDENCE_RELEASE_SCOPE,
+              native_pm_claim_errors,
+              native_pm_claim_scope,
+              required_dimensions_for_lane,
+              lifecycle_status_for_owner,
+              lifecycle_status_owner_matches,
+              framework_catalog_errors,
+              native_pm_lane_errors,
+              lifecycle_lane_owner_contract_errors,
+              release_scope_out_reason,
+              github_actions_error_annotations,
+          )
+
+          data = json.load(open("docs/specs/lifecycleCapabilityMatrix.json"))
+          failures = []
+          if data.get("schema_version") != SCHEMA_VERSION:
+              failures.append(
+                  f"matrix schema {data.get('schema_version')!r} does not match {SCHEMA_VERSION}"
+              )
+          # V1.2 global scope is derived from the same declared lane registry.
+          # Phạm vi toàn cục V1.2 lấy từ cùng registry lane.
+          RELEASE_SCOPE = set(PLATFORM_EVIDENCE_RELEASE_SCOPE)
+          seen = set()
+          release_blocking_seen = set()
+          # Every lane that declares mgc-native ownership is release-gated
+          # against its runtime native-PM evidence. Deriving this set from
+          # the matrix prevents a hand-maintained allowlist from leaving
+          # claimed languages/cores outside the gate.
+          # Mọi lane tự khai MGC-native phải qua gate evidence runtime;
+          # lấy tập trực tiếp từ matrix để không bỏ sót core/ngôn ngữ.
+          NATIVE_PM_SCOPE = native_pm_claim_scope(data["lanes"])
+          failures.extend(
+              framework_catalog_errors(data.get("framework_catalog"), data["lanes"])
+          )
+          for lane in data["lanes"]:
+              key = (lane["core"], lane["language"], lane.get("framework_id", ""))
+              label = f"{key[0]}/{key[1]}" + (f"#{key[2]}" if key[2] else "")
+              if key not in RELEASE_SCOPE:
+                  failures.append(f"unexpected lane outside global v1.2 scope: {key}")
+                  continue
+              if key in seen:
+                  failures.append(f"duplicate lane in lifecycle matrix: {key}")
+                  continue
+              seen.add(key)
+              failures.extend(lifecycle_lane_owner_contract_errors(lane))
+              expected_scope_out_reason = release_scope_out_reason(*key)
+              scope_out = expected_scope_out_reason is not None
+              if not scope_out:
+                  release_blocking_seen.add(key)
+              if lane.get("release_scope_out_reason") != expected_scope_out_reason:
+                  failures.append(
+                      f"{label} release scope-out reason differs from the source contract"
+                  )
+              expected_gate_role = "scoped-out" if scope_out else "release-blocking"
+              if lane.get("gate_role") != expected_gate_role:
+                  failures.append(
+                      f"{label} gate_role = {lane.get('gate_role')!r} "
+                      f"(expected {expected_gate_role!r})"
+                  )
+              if lane.get("evidence_only") is not scope_out:
+                  failures.append(
+                      f"{label} evidence_only differs from the source scope contract"
+                  )
+              if not scope_out and lane.get("toolchain_available") is not True:
+                  failures.append(
+                      f"{label} required toolchain is unavailable or unverified"
+                  )
+              source_required = required_dimensions_for_lane(*key)
+              required = lane.get("required_dimensions")
+              if source_required is None or required != list(source_required):
+                  failures.append(
+                      f"{label} required_dimensions differ from the source contract"
+                  )
+              lifecycle_owners = lane.get("lifecycle_owners")
+              dimensions = lane.get("dimensions", {})
+              if not isinstance(dimensions, dict):
+                  failures.append(f"{label} dimensions must be an object")
+                  dimensions = {}
+              if not isinstance(lifecycle_owners, dict):
+                  failures.append(f"{label} is missing lifecycle owner evidence")
+              else:
+                  unknown_owner_dimensions = sorted(
+                      set(lifecycle_owners) - set(ALL_DIMENSIONS)
+                  )
+                  if unknown_owner_dimensions:
+                      failures.append(
+                          f"{label} has unknown lifecycle owner dimensions: "
+                          + ", ".join(unknown_owner_dimensions)
+                      )
+                  for dimension in source_required or ():
+                      owner = lifecycle_owners.get(dimension)
+                      if not isinstance(owner, str) or owner not in LIFECYCLE_OWNER_VALUES:
+                          failures.append(
+                              f"{label} {dimension} has missing/invalid lifecycle owner: {owner!r}"
+                          )
+                      elif (
+                          (not scope_out or lane.get("toolchain_available") is True)
+                          and not lifecycle_status_owner_matches(
+                              dimensions.get(dimension), owner
+                          )
+                      ):
+                          failures.append(
+                              f"{label} {dimension} status/owner mismatch: "
+                              f"{dimensions.get(dimension)!r} vs {owner!r}"
+                          )
+              unknown_dimensions = sorted(set(dimensions) - set(ALL_DIMENSIONS))
+              if unknown_dimensions:
+                  failures.append(
+                      f"{label} has unknown dimensions: "
+                      + ", ".join(unknown_dimensions)
+                  )
+              missing_dimensions = sorted(set(ALL_DIMENSIONS) - set(dimensions))
+              if missing_dimensions:
+                  failures.append(
+                      f"{label} is missing v1.2 dimensions: "
+                      + ", ".join(missing_dimensions)
+                  )
+              invalid_dimensions = sorted(
+                  name for name, status in dimensions.items()
+                  if status not in ALL_STATUSES
+              )
+              if invalid_dimensions:
+                  failures.append(
+                      f"{label} has invalid dimension statuses: "
+                      + ", ".join(
+                          f"{name}={dimensions.get(name)!r}"
+                          for name in invalid_dimensions
+                      )
+                  )
+              required_failures = [
+                  name for name in (source_required or ())
+                  if dimensions.get(name) not in PASS_STATUSES
+              ]
+              if required_failures and not scope_out:
+                  failures.append(
+                      f"{label} has non-passing required dimensions: "
+                      + ", ".join(
+                          f"{name}={dimensions.get(name, 'missing')}"
+                          for name in required_failures
+                      )
+                  )
+              if not scope_out and lane["verdict"] != "orchestration-lifecycle-passed":
+                  failures.append(
+                      f"{label} lifecycle verdict = {lane['verdict']} "
+                      f"(expected orchestration-lifecycle-passed) — dimensions: {lane['dimensions']}"
+                  )
+              if lane.get("dependency_owner") != "mgc-native":
+                  failures.extend(native_pm_lane_errors(lane))
+              # Taxonomy contract (P0-D): every lane MUST declare its
+              # install owner, including explicit unsupported lanes. A
+              # missing or contradictory owner is a matrix bug, not a pass.
+              # (Hợp đồng taxonomy: mọi lane PHẢI khai chủ sở hữu
+              # install, kể cả lane unsupported tường minh. Thiếu owner
+              # hoặc owner mâu thuẫn là lỗi matrix, không phải pass.)
+              owner = lane.get("install_owner")
+              if owner not in (
+                  "native-engine", "managed-delegation", "plain-delegation", "unsupported"
+              ):
+                  failures.append(
+                      f"{label} missing install_owner — the matrix "
+                      f"must name who owns the install (taxonomy P0-D)"
+                  )
+              elif key in NATIVE_PM_SCOPE and owner != "native-engine":
+                  failures.append(
+                      f"{label} install_owner = {owner} — a "
+                      f"native-PM claim lane must be native-engine"
+                  )
+          missing = RELEASE_SCOPE - seen
+          if missing:
+              failures.append(
+                  "release-scope lanes missing from matrix: "
+                  + ", ".join(
+                      f"{c}/{l}" + (f"#{f}" if f else "")
+                      for c, l, f in sorted(missing)
+                  )
+              )
+          failures.extend(native_pm_claim_errors(data["lanes"]))
+          if seen != RELEASE_SCOPE:
+              failures.append(
+                  "global v1.2 lane set mismatch: "
+                  f"missing={sorted(RELEASE_SCOPE - seen)}, "
+                  f"unexpected={sorted(seen - RELEASE_SCOPE)}"
+              )
+          if failures:
+              # Emit bounded, escaped annotations so public run metadata identifies
+              # failed evidence without weakening the fail-closed gate.
+              # Phát annotation có giới hạn và escape để chỉ rõ evidence lỗi mà
+              # không nới lỏng gate fail-closed.
+              for failure in failures:
+                  print("LIFECYCLE GATE FAILURE: " + json.dumps(failure))
+              for annotation in github_actions_error_annotations(failures):
+                  print(annotation)
+              print(f"LIFECYCLE NON-REGRESSION BLOCKED: {len(failures)} gate failures")
+              sys.exit(1)
+          print("OK: release-blocking lifecycle lanes passed: "
+                + ", ".join(
+                      f"{c}/{l}" + (f"#{f}" if f else "")
+                      for c, l, f in sorted(release_blocking_seen)
+                  ))
+          lane_scope_outs = [
+              f"{lane['core']}/{lane['language']}: {lane['release_scope_out_reason']}"
+              for lane in data["lanes"]
+              if lane.get("release_scope_out_reason")
+          ]
+          framework_scope_outs = [
+              f"{row['core']}/{row['framework']}: {row['evidence']}"
+              for row in data.get("framework_catalog", [])
+              if row.get("status") == "scaffold-only"
+          ]
+          if lane_scope_outs:
+              print(
+                  "Lifecycle-scoped-out lanes (native-PM claims remain gated): "
+                  + " | ".join(lane_scope_outs)
+              )
+          if framework_scope_outs:
+              print(
+                  "Explicitly scoped-out frameworks: "
+                  + " | ".join(framework_scope_outs)
+              )
+          native_pm_qualified = [
+              lane for lane in data["lanes"]
+              if lane.get("dependency_owner") == "mgc-native"
+              and lane.get("native_pm_verdict") == "native-pm-supported"
+          ]
+          native_pm_unqualified = [
+              lane for lane in data["lanes"]
+              if lane.get("dependency_owner") == "mgc-native"
+              and lane.get("native_pm_verdict") != "native-pm-supported"
+          ]
+          print("Fully native-PM qualified lanes: "
+                + (", ".join(
+                    f"{lane['core']}/{lane['language']}"
+                    + (f"#{lane.get('framework_id')}" if lane.get("framework_id") else "")
+                    for lane in native_pm_qualified
+                ) or "none"))
+          if native_pm_unqualified:
+              print("Native-PM claim withheld pending complete runtime evidence: "
+                    + ", ".join(
+                        f"{lane['core']}/{lane['language']}"
+                        + (f"#{lane.get('framework_id')}" if lane.get("framework_id") else "")
+                        for lane in native_pm_unqualified
+                    ))

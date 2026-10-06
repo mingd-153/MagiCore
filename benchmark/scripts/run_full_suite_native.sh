@@ -162,7 +162,7 @@ for PM in "${PMS[@]}"; do
         
         # Run benchmark
         RUN_START=$(date +%s)
-        if "$SCRIPT_DIR/run_benchmark_native.sh" "$PM" "$RUN" 2>&1 | tee -a "$LOG_FILE"; then
+        if /usr/bin/env -i PATH="$PATH" HOME="${HOME:-}" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-C.UTF-8}" MGC_BINARY="${MGC_BINARY:-}" "$SCRIPT_DIR/run_benchmark_native.sh" "$PM" "$RUN" 2>&1 | tee -a "$LOG_FILE"; then
             RUN_END=$(date +%s)
             RUN_DURATION=$((RUN_END - RUN_START))
             

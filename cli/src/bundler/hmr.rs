@@ -20,6 +20,12 @@ pub struct HmrManager {
     version: Arc<AtomicU64>,
 }
 
+impl Default for HmrManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HmrManager {
     pub fn new() -> Self {
         let (tx, _rx) = broadcast::channel(100);
@@ -37,7 +43,8 @@ impl HmrManager {
         self.tx.subscribe()
     }
 
-    /// Watch a directory for changes and broadcast events
+    /// Watch a directory for changes and broadcast events.
+    /// (Theo dõi thư mục thay đổi và phát sự kiện.)
     pub fn watch_dir(&self, path: &Path) -> anyhow::Result<RecommendedWatcher> {
         let tx = self.tx.clone();
         let version = self.version.clone();
@@ -47,8 +54,49 @@ impl HmrManager {
                 Ok(event) => {
                     trace!("HMR File Event: {:?}", event);
                     if event.kind.is_modify() || event.kind.is_create() || event.kind.is_remove() {
-                        version.fetch_add(1, Ordering::SeqCst);
-                        let _ = tx.send(HmrEvent::Reload);
+                        // Noise filter (P3, fresh-context review
+                        // 2026-09-15): when the project has no src/ the
+                        // watcher falls back to the ROOT — and a root
+                        // watch fires on node_modules churn (installs,
+                        // .magicore store writes) which nobody can fix by
+                        // editing a file. Reload is only ever USEFUL
+                        // for edits a human makes; churn under
+                        // node_modules/.magicore/dist/build is machine
+                        // noise. Filter at the EVENT level: every event
+                        // path must NOT contain a noise component.
+                        // (Lọc nhiễu (P3): khi project không có src/,
+                        // watcher fallback về ROOT — và root watch kích
+                        // trên biến động node_modules (install, ghi
+                        // store .magicore) mà không ai sửa được bằng cách
+                        // sửa file. Reload chỉ hữu ích cho edit con
+                        // người; biến động dưới node_modules/.magicore/
+                        // dist/build là nhiễu máy móc. Lọc ở tầng
+                        // EVENT: mọi path của event phải KHÔNG chứa
+                        // component nhiễu.)
+                        let signal = event.paths.iter().all(|p| {
+                            !p.components().any(|c| {
+                                matches!(
+                                    c.as_os_str().to_str(),
+                                    Some("node_modules" | ".magicore" | "dist" | "build")
+                                )
+                            })
+                        });
+                        if signal {
+                            let n = version.fetch_add(1, Ordering::SeqCst) + 1;
+                            // Observable rebuild (vite parity): log every
+                            // applied edit to STDOUT so operators — and
+                            // health probes — see the watcher working.
+                            // Silent rebuilds look dead from outside.
+                            // (Log rebuild ra stdout như vite.)
+                            let files = event
+                                .paths
+                                .iter()
+                                .map(|p| p.display().to_string())
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            println!("[MgDevServer] hmr update {files} (version {n})");
+                            let _ = tx.send(HmrEvent::Reload);
+                        }
                     }
                 }
                 Err(e) => error!("watch error: {:?}", e),
@@ -69,6 +117,26 @@ pub async fn hmr_ws_handler(
 
 async fn handle_socket(mut socket: WebSocket, manager: Arc<HmrManager>) {
     let mut rx = manager.subscribe();
+
+    // Subscription-ready greeting (Gate 11, vòng-11 — found by the WS
+    // evidence test): a broadcast channel has NO replay — an event fired
+    // between the 101 handshake and the server-side `subscribe()` is
+    // LOST forever, so a client that edits immediately after connecting
+    // can silently miss the reload. Sending `{"type":"connected"}` once
+    // the subscription is live gives clients (and tests) a deterministic
+    // barrier: edit only after "connected", never miss an event.
+    // (Lời chào sẵn-sàng-đăng-ký: broadcast channel KHÔNG replay — event
+    // kích giữa handshake 101 và `subscribe()` phía server bị MẤT vĩnh
+    // viễn, nên client sửa file ngay sau khi connect có thể âm thầm lỡ
+    // reload. Gửi `{"type":"connected"}` khi subscription đã sống cho
+    // client (và test) một rào chắn tất định: chỉ sửa sau "connected",
+    // không bao giờ lỡ event.)
+    {
+        let greeting = serde_json::json!({ "type": "connected" }).to_string();
+        if socket.send(Message::Text(greeting)).await.is_err() {
+            return; // Client disconnected before the barrier.
+        }
+    }
 
     loop {
         tokio::select! {
@@ -107,6 +175,10 @@ pub const HMR_CLIENT_SCRIPT: &str = r#"
     const ws = new WebSocket(`ws://${window.location.host}/@magicore/hmr`);
     ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
+        if (data.type === 'connected') {
+            console.log('[MgDevServer] HMR connected.');
+            return;
+        }
         if (data.type === 'reload') {
             console.log('[MgDevServer] File changed, reloading...');
             window.location.reload();

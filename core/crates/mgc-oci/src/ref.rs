@@ -1,7 +1,7 @@
 //! OCI reference — parse `repo:tag` / `repo@sha256:digest` (17 §4)
 //! (Tham chiếu OCI: tên repository + tag/digest, dùng cho model push/pull)
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 /// Reference tới một artifact: tag (bền, có thể ghi đè) hoặc digest (bất biến).
 #[derive(Debug, Clone, PartialEq, Eq)]

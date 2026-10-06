@@ -124,24 +124,30 @@ fn web_project_cache_stats_reports_cache_breakdown() {
 }
 
 #[test]
-fn web_project_prune_removes_only_safe_cache_files() {
+fn web_project_prune_removes_only_unclaimed_cas_files() {
     let root = tempfile::tempdir().unwrap();
     let web = root.path().join(".magicore").join("cache").join("web");
     let cas_blob = web.join("cas").join("ab").join("live");
     let cas_orphan = web.join("cas").join("cd").join("orphan");
     let tarball = web.join("cache").join("pkg").join("1.0.0.tgz");
     let resolution = web.join("resolutions").join("graph.json");
-    let live_link = root.path().join("node_modules").join("live");
     std::fs::create_dir_all(cas_blob.parent().unwrap()).unwrap();
     std::fs::create_dir_all(cas_orphan.parent().unwrap()).unwrap();
     std::fs::create_dir_all(tarball.parent().unwrap()).unwrap();
     std::fs::create_dir_all(resolution.parent().unwrap()).unwrap();
-    std::fs::create_dir_all(live_link.parent().unwrap()).unwrap();
     std::fs::write(&cas_blob, b"live").unwrap();
     std::fs::write(&cas_orphan, b"orphan").unwrap();
     std::fs::write(&tarball, b"tarball").unwrap();
     std::fs::write(&resolution, b"resolution").unwrap();
-    std::fs::hard_link(&cas_blob, &live_link).unwrap();
+    // The blob is LIVE via a DB refcount claim, NOT via nlink: exports are
+    // independent copies since the hardlink removal, so a live blob has
+    // nlink == 1 — only the refcount can vouch for it (P0-C).
+    // Blob SỐNG qua claim refcount trong DB, KHÔNG qua nlink: export là
+    // bản sao độc lập từ khi bỏ hardlink nên blob sống có nlink == 1 — chỉ
+    // refcount mới bảo chứng được nó (P0-C).
+    let db = mgc_store::Database::open(&web.join("store.db")).unwrap();
+    let token = db.begin_cas_generation("/proj/demo").unwrap();
+    db.cas_claim("/proj/demo", token, "live").unwrap();
     let dry_run = prune_web_project_cache(&web, true).unwrap();
     assert_eq!(
         dry_run,
@@ -151,13 +157,13 @@ fn web_project_prune_removes_only_safe_cache_files() {
             resolution_files: 1,
         }
     );
+    assert!(cas_blob.exists());
     assert!(cas_orphan.exists());
     assert!(tarball.exists());
     assert!(resolution.exists());
     let pruned = prune_web_project_cache(&web, false).unwrap();
     assert_eq!(pruned, dry_run);
     assert!(cas_blob.exists());
-    assert!(live_link.exists());
     assert!(!cas_orphan.exists());
     assert!(!tarball.exists());
     assert!(!resolution.exists());
@@ -174,7 +180,8 @@ fn web_project_prune_keeps_refcount_claimed_cas_blobs() {
     std::fs::write(&claimed_blob, b"claimed").unwrap();
     std::fs::write(&orphan_blob, b"orphan").unwrap();
     let db = mgc_store::Database::open(&web.join("store.db")).unwrap();
-    db.cas_claim("/proj/demo", "claimed-hash").unwrap();
+    let token = db.begin_cas_generation("/proj/demo").unwrap();
+    db.cas_claim("/proj/demo", token, "claimed-hash").unwrap();
     let pruned = prune_web_project_cache(&web, false).unwrap();
     assert_eq!(pruned.cas_files, 1);
     assert!(claimed_blob.exists());
@@ -182,20 +189,96 @@ fn web_project_prune_keeps_refcount_claimed_cas_blobs() {
 }
 
 #[test]
-fn web_project_prune_corrupt_db_falls_back_to_nlink() {
+fn web_project_prune_crashed_install_keeps_previous_generation_claims() {
+    let root = tempfile::tempdir().unwrap();
+    let web = root.path().join(".magicore").join("cache").join("web");
+    let blob = web.join("cas").join("ab").join("kept-hash");
+    std::fs::create_dir_all(blob.parent().unwrap()).unwrap();
+    std::fs::write(&blob, b"kept").unwrap();
+    let db = mgc_store::Database::open(&web.join("store.db")).unwrap();
+    // Baseline: a previous install claimed the blob (promoted).
+    // (Baseline: install trước đã claim blob này (đã promote).)
+    let t0 = db.begin_cas_generation("/proj/demo").unwrap();
+    db.cas_claim("/proj/demo", t0, "kept-hash").unwrap();
+    db.promote_cas_generation("/proj/demo", t0).unwrap();
+    // A NEW install crashes mid-flight: it began a staging generation but
+    // never promoted — the OLD claims must still protect the blob from
+    // prune (P0-A: a staging generation, dead or alive, keeps protecting).
+    // (Install MỚI crash giữa chừng: đã begin một staging generation
+    // nhưng chưa promote — claim CŨ vẫn phải bảo vệ blob khỏi prune
+    // (P0-A: staging generation, chết hay sống, đều tiếp tục bảo vệ).)
+    let t_crashed = db.begin_cas_generation("/proj/demo").unwrap();
+    assert_ne!(t_crashed, t0, "each install owns a distinct token");
+    let pruned = prune_web_project_cache(&web, false).unwrap();
+    assert_eq!(pruned.cas_files, 0);
+    assert!(
+        blob.exists(),
+        "un-promoted generation must not orphan the previous refset (P0-C)"
+    );
+    // The crashed staging generation's own ABORT retires IT (and only
+    // it). The baseline's claim survives — the v3 contract: abort of a
+    // staging token NEVER touches a promoted generation's claims (the
+    // round-10 abort ate them; Gate 11-A P0-3 pins the fix).
+    // (ABORT của chính staging generation đứt nghỉ hưu NÓ (và chỉ nó).
+    // Claim của baseline sống sót — hợp đồng v3: abort token staging
+    // KHÔNG BAO GIỜ đụng claim của generation đã promote (abort vòng-10
+    // từng ăn chúng; Gate 11-A P0-3 ghim bản sửa).)
+    db.abort_cas_generation("/proj/demo", t_crashed).unwrap();
+    let pruned = prune_web_project_cache(&web, false).unwrap();
+    assert_eq!(
+        pruned.cas_files, 0,
+        "the PROMOTED baseline claim must keep the blob after the crashed install's abort"
+    );
+    assert!(blob.exists());
+    // And the v3 hard gate: aborting the PROMOTED token is a typed error,
+    // the claims untouched.
+    // (Và cổng cứng v3: abort token ĐÃ PROMOTE là lỗi có type, claim
+    // nguyên vẹn.)
+    assert!(matches!(
+        db.abort_cas_generation("/proj/demo", t0),
+        Err(mgc_store::CasGenerationError::AlreadyPromoted { .. })
+    ));
+    let live = db.list_cas_live_refs().unwrap();
+    assert_eq!(live, vec!["kept-hash".to_string()]);
+}
+
+#[test]
+fn web_project_prune_corrupt_db_refuses_instead_of_nlink_fallback() {
     let root = tempfile::tempdir().unwrap();
     let web = root.path().join(".magicore").join("cache").join("web");
     let blob = web.join("cas").join("ab").join("blob-hash");
-    let live_link = root.path().join("node_modules").join("live");
     std::fs::create_dir_all(blob.parent().unwrap()).unwrap();
-    std::fs::create_dir_all(live_link.parent().unwrap()).unwrap();
     std::fs::write(&blob, b"blob").unwrap();
-    std::fs::hard_link(&blob, &live_link).unwrap();
     std::fs::write(web.join("store.db"), b"not a sqlite db").unwrap();
-    let pruned = prune_web_project_cache(&web, false).unwrap();
-    assert_eq!(pruned.cas_files, 0);
-    assert!(blob.exists());
-    assert!(live_link.exists());
+    // P0-C fail-closed contract: with the DB unreadable, prune REFUSES —
+    // it must never fall back to nlink (exports are independent copies, so
+    // live blobs also have nlink == 1 and would be deleted as orphans).
+    // Hợp đồng fail-closed P0-C: DB không đọc được thì prune TỪ CHỐI —
+    // tuyệt đối không fallback về nlink (export là bản sao độc lập nên
+    // blob sống cũng nlink == 1 và sẽ bị xóa như orphan).
+    let result = prune_web_project_cache(&web, false);
+    assert!(
+        result.is_err(),
+        "prune must refuse when store.db is unreadable (P0-C fail-closed)"
+    );
+    assert!(blob.exists(), "refused prune must not delete anything");
+}
+
+#[test]
+fn web_project_prune_missing_db_refuses() {
+    let root = tempfile::tempdir().unwrap();
+    let web = root.path().join(".magicore").join("cache").join("web");
+    let orphan = web.join("cas").join("ab").join("orphan-hash");
+    std::fs::create_dir_all(orphan.parent().unwrap()).unwrap();
+    std::fs::write(&orphan, b"orphan").unwrap();
+    // No store.db at all — prune must refuse rather than guess (P0-C).
+    // (Hoàn toàn không có store.db — prune phải từ chối thay vì đoán (P0-C).)
+    let result = prune_web_project_cache(&web, false);
+    assert!(
+        result.is_err(),
+        "prune must refuse when store.db is missing"
+    );
+    assert!(orphan.exists());
 }
 
 #[test]

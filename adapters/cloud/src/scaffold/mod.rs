@@ -49,7 +49,10 @@ async fn scaffold_pulumi(name: &str, dir: &Path) -> MgResult<()> {
 }
 
 async fn scaffold_terraform(name: &str, dir: &Path) -> MgResult<()> {
-    let tf = format!("terraform {{\n  required_version = \">= 1.0\"\n}}\n\nresource \"null_resource\" \"{}\" {{}}\n", name);
+    let tf = format!(
+        "terraform {{\n  required_version = \">= 1.0\"\n}}\n\nresource \"null_resource\" \"{}\" {{}}\n",
+        name
+    );
     std::fs::write(dir.join("main.tf"), tf)?;
     Ok(())
 }
