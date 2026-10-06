@@ -127,23 +127,30 @@ OPTIMIZATION_SUMMARY.md
 CODEBASE_REVIEW.md
 REPORT.md
 
-# System design docs (working drafts — read internally, never push)
-sys-mgc/
-
 # Internal specs, guides and notes
 docs/*
 docs/internal-reports/  # Week reports, audit reports (nội bộ)
 docs/guides/
 scripts/notes/
 
-# Per-component internal docs
-cli/docs/
-adapters/*/docs/
-core/crates/*/docs/
-tools/*/docs/
+# Module docs are private by default; expose only the bilingual folder guides.
+# Tài liệu module mặc định là nội bộ; chỉ mở cặp README hướng dẫn song ngữ.
+cli/docs/*
+!cli/docs/README.md
+!cli/docs/READMEVN.md
+adapters/*/docs/*
+!adapters/*/docs/README.md
+!adapters/*/docs/READMEVN.md
+core/crates/*/docs/*
+!core/crates/*/docs/README.md
+!core/crates/*/docs/READMEVN.md
+tools/*/docs/*
+!tools/*/docs/README.md
+!tools/*/docs/READMEVN.md
 
 # Allow all public-facing documentation
 !**/README.md
+!**/READMEVN.md
 !README.md
 !CHANGELOG.md
 !CONTRIBUTING.md
@@ -153,3 +160,7 @@ packaging/artifacts/
 
 # Local registry serve runtime state (E2E creates this live)
 data/registry/
+
+# Root docs are private project notes and stay ignored, including README files.
+# docs/ ở repo root là ghi chú nội bộ, tiếp tục bị ignore kể cả README.
+/docs/

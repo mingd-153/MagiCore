@@ -1,6 +1,6 @@
 //! mgc-registry-server — private registry server (MagiCore)
 //! /npm + /v2 endpoints, private-only (404 for public), client-side scoping.
-//! (Server registry private-only — binary riêng `mgc-registry`, sys-mgc/12 A14)
+//! Private registry server exposed by the separate mgc-registry binary — registry riêng tư chạy trong binary mgc-registry.
 
 pub mod auth;
 pub mod model;

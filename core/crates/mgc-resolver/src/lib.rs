@@ -5,7 +5,7 @@
 //!
 //! All registry HTTP goes through `mgc_http::HttpClient` (bounded
 //! timeouts + retries) — raw `reqwest` is banned here by the module
-//! hygiene gate (sys-mgc/14-module-map.md: no reqwest outside mgc-http).
+//! Outbound HTTP is owned by mgc-http — các request HTTP đi qua mgc-http.
 //! (Mọi HTTP registry qua `mgc_http::HttpClient` — cấm reqwest trực tiếp.)
 
 pub mod cache;

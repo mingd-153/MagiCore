@@ -50,7 +50,7 @@ mgc install react
 
 ### Adding Tools to Allowlist
 
-Adding tools requires security review. See `sys-mgc/00-index.md` §5 for process.
+Adding tools requires security review before they are enabled in an execution path. Record the threat model and evidence in the reviewed change.
 
 ### Error Messages
 
@@ -391,4 +391,4 @@ All security gates are **fail-closed**: operations blocked unless explicitly all
 
 ---
 
-**Questions?** See `sys-mgc/20-security-deep.md` for technical deep-dive or open a discussion on GitHub.
+**Questions?** Open a discussion on GitHub.

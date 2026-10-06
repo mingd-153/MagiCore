@@ -1,6 +1,6 @@
 //! mgc-exec — exec passthrough + allowlist + audit sanitizer (MagiCore)
 //! Forwards to trusted tools (allowlist), records exec audit with secret sanitization.
-//! (Passthrough exec + allowlist + ghi audit có sanitize bí mật — sys-mgc/00 §5, sys-mgc/20 §3)
+//! Passthrough execution with an allowlist and sanitized audit — thực thi passthrough theo allowlist và audit đã lọc bí mật.
 
 pub mod allowlist;
 pub mod audit;

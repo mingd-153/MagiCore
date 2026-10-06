@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Module hygiene check (sys-mgc/21-repo-ops §1, 99-report 7.1)
+# Module hygiene check — kiểm tra ranh giới và quy ước giữa module.
 # L0 (mgc-platform) + L1 (core/crates) cấm import L2/L3 (adapters/, cli/)
 # Chạy: bash scripts/check-module-hygiene.sh
 set -u

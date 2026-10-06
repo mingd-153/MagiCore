@@ -1,5 +1,5 @@
 /// .npmrc parser — chuẩn npm, mgc tự parse (không chạy npm CLI).
-/// (npmrc reader — sys-mgc/01 §3; env expansion ${VAR} + $VAR)
+/// Read npmrc and expand environment placeholders — đọc npmrc và khai triển biến môi trường.
 use anyhow::Result;
 use std::collections::HashMap;
 use std::path::Path;

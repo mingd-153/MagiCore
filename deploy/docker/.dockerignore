@@ -1,7 +1,6 @@
-# Chống phình build context (sys-mgc/17 §6)
+# Reduce the Docker build context — giảm kích thước build context.
 target/
 _archive/
-sys-mgc/
 .git/
 .gitignore
 *.md

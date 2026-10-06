@@ -1,6 +1,6 @@
 //! mgc-platform — L0 OS layer (MagiCore)
 //! OS layer, symlink handling, shell abstraction, standard paths, permissions.
-//! (Lớp OS: os, symlink, shell, path chuẩn, quyền — chi tiết sys-mgc/11 §6, sys-mgc/14)
+//! OS layer for paths, symlinks, shells, and permissions — lớp OS quản lý path, symlink, shell và quyền.
 //!
 //! Modules: paths (standard paths), os, symlink, shell, perms, reflink.
 
